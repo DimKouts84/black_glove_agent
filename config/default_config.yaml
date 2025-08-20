@@ -1,0 +1,28 @@
+# Black Glove Default Configuration Template
+# This template is used to create ~/.homepentest/config.yaml on first run
+
+# LLM Settings
+llm_provider: "lmstudio"
+llm_endpoint: "http://localhost:1234/v1"
+llm_model: "local-model"
+llm_temperature: 0.7
+
+# Scan Settings
+default_rate_limit: 50
+max_rate_limit: 100
+scan_timeout: 300
+
+# Logging Settings
+log_level: "INFO"
+log_retention_days: 90
+
+# Safety Settings
+require_lab_mode_for_exploits: true
+enable_exploit_adapters: false
+
+# Evidence Storage
+evidence_storage_path: "~/.homepentest/evidence"
+
+# Additional Settings
+# extra_settings:
+#   custom_field: "value"

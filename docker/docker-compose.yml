@@ -1,0 +1,91 @@
+version: '3.8'
+
+# Black Glove Tooling Containers
+# Docker Compose configuration for lab environment tools
+
+services:
+  # Nmap container for network scanning
+  nmap:
+    image: instrumentisto/nmap
+    container_name: black-glove-nmap
+    network_mode: host
+    volumes:
+      - ../data/evidence:/evidence:rw
+    command: ["--help"]
+    profiles: ["tools"]
+
+  # Gobuster container for directory brute forcing
+  gobuster:
+    image: ghcr.io/oj/gobuster:latest
+    container_name: black-glove-gobuster
+    volumes:
+      - ../data/evidence:/evidence:rw
+    command: ["--help"]
+    profiles: ["tools"]
+
+  # OWASP ZAP container for web application scanning
+  zap:
+    image: owasp/zap2docker-stable
+    container_name: black-glove-zap
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../data/evidence:/zap/wrk:rw
+    command: ["zap.sh", "-help"]
+    profiles: ["tools"]
+
+  # Nikto container for web server scanning
+  nikto:
+    image: sullo/nikto
+    container_name: black-glove-nikto
+    volumes:
+      - ../data/evidence:/evidence:rw
+    command: ["-H"]
+    profiles: ["tools"]
+
+  # Masscan container for fast port scanning
+  masscan:
+    image: instrumentisto/masscan
+    container_name: black-glove-masscan
+    network_mode: host
+    volumes:
+      - ../data/evidence:/evidence:rw
+    command: ["--help"]
+    profiles: ["tools"]
+
+  # OpenVAS container for vulnerability scanning (if available)
+  openvas:
+    image: securecompliance/gvm:latest
+    container_name: black-glove-openvas
+    ports:
+      - "9392:9392"
+    volumes:
+      - openvas-data:/data-oss
+    environment:
+      - USERNAME=admin
+      - PASSWORD=admin
+    profiles: ["tools"]
+    restart: unless-stopped
+
+  # Local LLM service (LMStudio alternative)
+  llm-service:
+    image: ghcr.io/ollama/ollama:latest
+    container_name: black-glove-llm
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    profiles: ["llm"]
+    restart: unless-stopped
+
+volumes:
+  openvas-data:
+    driver: local
+  ollama-data:
+    driver: local
+
+# Networks configuration
+networks:
+  default:
+    name: black-glove-network
+    driver: bridge

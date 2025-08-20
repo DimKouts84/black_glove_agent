@@ -1,0 +1,26 @@
+# Black Glove Example Assets Configuration
+# Sample asset configuration for testing and demonstration
+
+assets:
+  - name: "home-router"
+    type: "host"
+    value: "192.168.1.1"
+    description: "Home network router"
+
+  - name: "personal-website"
+    type: "domain"
+    value: "example.com"
+    description: "Personal website for testing"
+
+  - name: "lab-vm"
+    type: "vm"
+    value: "192.168.1.100"
+    description: "Intentionally vulnerable lab VM"
+
+  - name: "docker-host"
+    type: "host"
+    value: "192.168.1.50"
+    description: "Docker container host for testing"
+
+# Example usage:
+# agent add-asset --name home-router --type host --value 192.168.1.1

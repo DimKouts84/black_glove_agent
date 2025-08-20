@@ -1,0 +1,36 @@
+# Black Glove Agent Dockerfile
+# Containerized version of the Black Glove pentest agent
+
+FROM python:3.12-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY . .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -e .
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash agent
+USER agent
+
+# Set environment variables
+ENV HOME=/home/agent
+ENV BLACK_GLOVE_HOME=/home/agent/.homepentest
+
+# Create necessary directories
+RUN mkdir -p ${BLACK_GLOVE_HOME} ${BLACK_GLOVE_HOME}/evidence ${BLACK_GLOVE_HOME}/logs
+
+# Expose port for LLM API (if needed)
+EXPOSE 8000
+
+# Default command
+ENTRYPOINT ["agent"]
+CMD ["--help"]
