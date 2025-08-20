@@ -3,7 +3,7 @@
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-25%2F25-brightgreen.svg)](https://github.com/mitsos-pc/black-glove/actions)
+[![Tests](https://img.shields.io/badge/tests-42%2F42-brightgreen.svg)](https://github.com/mitsos-pc/black-glove/actions)
 [![Local First](https://img.shields.io/badge/local-first-purple)](#)
 [![Human in the Loop](https://img.shields.io/badge/human--in--the--loop-orange)](#)
 [![Docker](https://img.shields.io/badge/docker-containerization-blue)](https://www.docker.com/)
@@ -271,4 +271,4 @@ For issues, questions, or feature requests, please open a GitHub issue.
 
 ---
 
-*Built with ❤️ for the security research community*
+*Built with ❤️ for the Dimitris Koutsomichalis & an AI Assistant*

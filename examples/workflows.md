@@ -2,6 +2,27 @@
 
 This document provides example workflows for using the Black Glove pentest agent.
 
+## Core Architecture Demonstration
+
+A comprehensive demonstration script is available to showcase the core architecture components working together:
+
+```bash
+# Run the core architecture demonstration
+python examples/core_architecture_demo.py
+```
+
+This demonstration includes:
+- Orchestrator initialization with all core components
+- Policy engine target validation and rate limiting
+- Plugin manager adapter discovery
+- LLM client integration (mocked)
+- Complete passive reconnaissance workflow
+- Safety control enforcement and violation logging
+- Results processing and reporting
+- Resource cleanup
+
+The demo script provides detailed output showing each component's functionality and interaction.
+
 ## Basic Setup Workflow
 
 1. **Initialize the agent:**

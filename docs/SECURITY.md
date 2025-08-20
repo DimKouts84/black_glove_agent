@@ -48,6 +48,14 @@ By using this tool, you acknowledge that:
 Type 'I AGREE' to acknowledge and proceed, or anything else to exit:
 ```
 
+### Policy Engine Implementation
+The Policy Engine (`src/agent/policy_engine.py`) provides comprehensive safety controls:
+
+- **Target Validation**: IP network and domain authorization using allow-lists
+- **Rate Limiting**: Configurable per-adapter and global rate limits
+- **Exploit Controls**: Lab mode gating for high-risk operations
+- **Violation Logging**: Complete audit trail of policy violations
+
 ### Human-in-the-Loop Approval
 All active scanning and high-risk operations require explicit human approval:
 

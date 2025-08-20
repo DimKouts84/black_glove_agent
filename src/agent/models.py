@@ -3,8 +3,10 @@ Pydantic models for Black Glove pentest agent.
 Provides data validation and configuration management.
 """
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from enum import Enum
+from dataclasses import dataclass, asdict
+from datetime import datetime
 
 class AssetType(str, Enum):
     """Enumeration of supported asset types."""
@@ -69,6 +71,102 @@ class ConfigModel(BaseModel):
     
     # Additional settings
     extra_settings: Optional[Dict[str, Any]] = Field(default=None, description="Additional configuration settings")
+
+@dataclass
+class Asset:
+    """
+    Simple asset class for policy engine usage.
+    
+    Attributes:
+        target: Target IP address, domain, or identifier
+        tool_name: Name of the tool/adapter to use
+        parameters: Tool execution parameters
+    """
+    target: str
+    tool_name: str
+    parameters: Dict[str, Any]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert asset to dictionary."""
+        return asdict(self)
+
+@dataclass
+class WorkflowStep:
+    """
+    Represents a single step in the reconnaissance workflow.
+    
+    Attributes:
+        name: Unique identifier for the step
+        description: Human-readable description
+        tool: Tool/adapter to use
+        target: Target for the scan
+        parameters: Tool execution parameters
+        priority: Step priority (higher numbers = higher priority)
+    """
+    name: str
+    description: str
+    tool: str
+    target: str
+    parameters: Dict[str, Any]
+    priority: int = 0
+
+@dataclass
+class ScanResult:
+    """
+    Represents the result of a scan operation.
+    
+    Attributes:
+        asset: Asset that was scanned
+        tool_name: Name of the tool used
+        status: Scan status (completed, failed, timeout)
+        findings: Security findings identified
+        raw_output: Raw tool output
+        metadata: Additional result metadata
+        evidence_path: Path to stored evidence
+        execution_time: Time taken to execute
+        error_message: Error details if applicable
+    """
+    asset: Asset
+    tool_name: str
+    status: str
+    findings: List[Dict[str, Any]]
+    raw_output: Any
+    metadata: Dict[str, Any]
+    evidence_path: Optional[str] = None
+    execution_time: Optional[float] = None
+    error_message: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert scan result to dictionary."""
+        return {
+            "asset": self.asset.to_dict(),
+            "tool_name": self.tool_name,
+            "status": self.status,
+            "findings": self.findings,
+            "raw_output": self.raw_output,
+            "metadata": self.metadata,
+            "evidence_path": self.evidence_path,
+            "execution_time": self.execution_time,
+            "error_message": self.error_message
+        }
+
+@dataclass
+class OrchestrationContext:
+    """
+    Contains orchestration context for workflow execution.
+    
+    Attributes:
+        assets: List of assets to scan
+        current_workflow_state: Current workflow state
+        llm_client: LLM client instance
+        database_connection: Database connection
+        configuration: Agent configuration
+    """
+    assets: List[Asset]
+    current_workflow_state: str
+    llm_client: Any  # LLM client instance
+    database_connection: Any  # Database connection
+    configuration: Dict[str, Any]
 
 class DatabaseManager:
     """

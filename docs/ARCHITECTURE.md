@@ -54,6 +54,13 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Coordinate between components
   - Handle state management
   - Implement safety controls
+- **Key Features**:
+  - Passive reconnaissance workflow management
+  - Active scan planning with LLM integration
+  - Scan step execution with approval workflow
+  - Results processing and normalization
+  - Comprehensive reporting capabilities
+  - Asset management and workflow state tracking
 
 ### 3. LLM Abstraction Layer (`src/agent/llm_client.py`)
 - **Purpose**: Unified interface for different LLM providers
@@ -65,6 +72,14 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Conversation history management
   - System prompt handling
   - Temperature and token limit controls
+  - Standardized response parsing
+  - Error handling and fallback mechanisms
+  - Health checks and connection validation
+- **Key Methods**:
+  - `plan_next_steps()`: Generate scan planning suggestions
+  - `analyze_findings()`: Interpret tool output and identify issues
+  - `explain_exploit()`: Provide safe exploit explanations
+  - `handle_failure()`: Manage LLM service unavailability
 
 ### 4. Plugin Manager (`src/agent/plugin_manager.py`)
 - **Purpose**: Discover and manage tool adapters
@@ -72,6 +87,12 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Load and unload adapters
   - Validate adapter interfaces
   - Provide adapter metadata
+  - Execute adapters with parameters
+- **Key Features**:
+  - Dynamic adapter discovery from `src/adapters/` directory
+  - Adapter validation against standardized interface
+  - Metadata retrieval and capability reporting
+  - Safe adapter execution with error handling
 
 ### 5. Tool Adapters (`src/adapters/`)
 - **Purpose**: Standardized interfaces for security tools
@@ -80,12 +101,15 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Two-layer input sanitization
   - Container sandboxing
   - Rate limiting enforcement
-- **Example Adapters**:
-  - Nmap
-  - Gobuster
-  - OWASP ZAP
-  - Masscan
-  - Nikto
+- **Implemented Base Classes**:
+  - `AdapterInterface`: Abstract base class defining adapter contract
+  - `BaseAdapter`: Common functionality for all adapters
+  - `ExampleAdapter`: Demonstration implementation
+- **Adapter Structure**:
+  - Standardized `AdapterResult` for consistent output
+  - Configuration and parameter validation
+  - Evidence storage and integrity verification
+  - Cleanup and resource management
 
 ### 6. Database Layer (`src/agent/db.py`)
 - **Purpose**: Persistent storage for assets, findings, and audit logs
@@ -103,6 +127,17 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Exploit tool gating
   - Lab mode enforcement
   - Human approval requirements
+- **Key Components**:
+  - `RateLimiter`: Implements per-adapter and global rate limiting
+  - `TargetValidator`: Validates scan targets against asset lists
+  - `PolicyRule`: Configurable safety policy definitions
+  - `PolicyViolation`: Standardized violation reporting
+- **Features**:
+  - Configurable rate limiting windows and thresholds
+  - IP network and domain authorization validation
+  - Exploit permission management with lab mode
+  - Comprehensive audit logging of violations
+  - Real-time rate monitoring and reporting
 
 ### 8. Evidence Store (`src/utils/evidence_store.py`)
 - **Purpose**: Manage raw tool output storage
