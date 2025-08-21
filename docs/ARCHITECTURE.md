@@ -63,23 +63,28 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Asset management and workflow state tracking
 
 ### 3. LLM Abstraction Layer (`src/agent/llm_client.py`)
-- **Purpose**: Unified interface for different LLM providers
+- **Purpose**: Enhanced unified interface for different LLM providers with advanced features
 - **Supported Providers**:
   - LMStudio (local OpenAI-compatible endpoint)
   - Ollama (local)
   - OpenRouter (optional cloud service)
-- **Features**:
-  - Conversation history management
-  - System prompt handling
-  - Temperature and token limit controls
-  - Standardized response parsing
-  - Error handling and fallback mechanisms
-  - Health checks and connection validation
+  - OpenAI (cloud)
+  - Anthropic (cloud)
+- **Enhanced Features**:
+  - **Conversation Memory**: Automatic context management with configurable limits
+  - **Retrieval-Augmented Generation (RAG)**: Document-based context enhancement
+  - **Streaming Responses**: Real-time output processing
+  - **Advanced Configuration**: Extended parameter control (top_p, frequency_penalty, etc.)
+  - **Standardized response parsing**: Enhanced response handling with usage tracking
+  - **Error handling and fallback mechanisms**: Robust error management
+  - **Health checks and connection validation**: Service availability monitoring
 - **Key Methods**:
-  - `plan_next_steps()`: Generate scan planning suggestions
-  - `analyze_findings()`: Interpret tool output and identify issues
-  - `explain_exploit()`: Provide safe exploit explanations
-  - `handle_failure()`: Manage LLM service unavailability
+  - `plan_next_steps()`: Generate scan planning suggestions with context awareness
+  - `analyze_findings()`: Interpret tool output and identify issues with RAG support
+  - `explain_exploit()`: Provide safe exploit explanations with security guidelines
+  - `handle_failure()`: Manage LLM service unavailability with troubleshooting
+  - `add_rag_document()`: Add documents to RAG system for enhanced context
+  - `search_rag_documents()`: Search for relevant documents in RAG system
 
 ### 4. Plugin Manager (`src/agent/plugin_manager.py`)
 - **Purpose**: Discover and manage tool adapters

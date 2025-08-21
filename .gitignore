@@ -1,6 +1,9 @@
 # Virtual Environment
 .venv/
+.env
 
+# Database files
+*.db
 
 # Byte-compiled files
 *.pyc
@@ -59,9 +62,6 @@ Thumbs.db
 # Logs
 *.log
 
-# Environment files
-.env
-.venv
-
+# Coverage reports
 .coverage
 evidence/

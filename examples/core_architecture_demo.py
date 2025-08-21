@@ -45,7 +45,7 @@ def demonstrate_core_architecture():
             },
             "allowed_exploits": ["safe_exploit"]
         },
-        "passive_tools": ["whois", "dns_lookup", "ssl_check"],
+        "passive_tools": ["example"],
         "scan_mode": "passive"
     }
     
@@ -63,13 +63,13 @@ def demonstrate_core_architecture():
     assets = [
         Asset(
             target="192.168.1.50",
-            tool_name="nmap",
-            parameters={"port": 80}
+            tool_name="example",
+            parameters={"command": "echo 'Hello from 192.168.1.50'"}
         ),
         Asset(
             target="test.com",
-            tool_name="whois",
-            parameters={}
+            tool_name="example",
+            parameters={"command": "echo 'Hello from test.com'"}
         )
     ]
     

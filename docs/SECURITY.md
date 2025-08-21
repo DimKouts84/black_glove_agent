@@ -216,6 +216,24 @@ Tool output processing:
 - **Validation**: Output schema validation
 - **Encoding**: Proper encoding for display
 
+## CLI Security
+
+### Command Line Interface Protection
+The CLI interface implements several security measures:
+
+- **Argument Validation**: Strict validation of all command-line arguments
+- **Progress Bar Safety**: No sensitive data displayed in progress indicators
+- **Rich Formatting Controls**: Sanitized output for color-coded displays
+- **Interactive Prompts**: Secure handling of user input and confirmations
+
+### User Input Sanitization
+CLI input processing includes:
+
+- **Command Injection Prevention**: Safe argument parsing and validation
+- **Path Traversal Protection**: Secure file path handling
+- **Shell Escape Prevention**: Proper escaping of special characters
+- **Input Length Limits**: Reasonable limits on user input size
+
 ## Error Handling Security
 
 ### Failure Containment

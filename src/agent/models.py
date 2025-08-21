@@ -69,6 +69,20 @@ class ConfigModel(BaseModel):
     # Evidence storage
     evidence_storage_path: str = Field(default="~/.homepentest/evidence", description="Path to store evidence files")
     
+    # Asset management settings
+    authorized_networks: List[str] = Field(
+        default=["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
+        description="Authorized IP networks for scanning"
+    )
+    authorized_domains: List[str] = Field(
+        default=[],
+        description="Authorized domains for scanning"
+    )
+    blocked_targets: List[str] = Field(
+        default=[],
+        description="Explicitly blocked targets"
+    )
+    
     # Additional settings
     extra_settings: Optional[Dict[str, Any]] = Field(default=None, description="Additional configuration settings")
 
@@ -251,5 +265,22 @@ class DatabaseManager:
                 )
                 for row in rows
             ]
+        finally:
+            conn.close()
+    
+    def remove_asset(self, asset_id: int) -> bool:
+        """
+        Remove an asset from the database by ID.
+        
+        Args:
+            asset_id: ID of the asset to remove
+            
+        Returns:
+            bool: True if asset was removed, False if not found
+        """
+        from .db import remove_asset
+        conn = self.get_db_connection()
+        try:
+            return remove_asset(conn, asset_id)
         finally:
             conn.close()

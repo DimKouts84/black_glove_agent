@@ -1,9 +1,9 @@
 # 🖤 Black Glove 🖤
-*An amateur pentest agent for home security testing*
+*A pentest agent for home and small business security testing that uses natural language*
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-42%2F42-brightgreen.svg)](https://github.com/mitsos-pc/black-glove/actions)
+[![Tests](https://img.shields.io/badge/tests-245%2F245-brightgreen.svg)](https://github.com/mitsos-pc/black-glove/actions)
 [![Local First](https://img.shields.io/badge/local-first-purple)](#)
 [![Human in the Loop](https://img.shields.io/badge/human--in--the--loop-orange)](#)
 [![Docker](https://img.shields.io/badge/docker-containerization-blue)](https://www.docker.com/)
@@ -12,7 +12,7 @@
 [![CLI](https://img.shields.io/badge/cli-typer-blue)](https://typer.tiangolo.com/)
 
 <p align="center">
-  <img src="assets/black_glove_main_image_square.png" alt="Black Glove Logo" width="600"/>
+  <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
 </p>
 
 ## 🎯 Purpose
@@ -71,10 +71,13 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 - **Lab Mode**: Special restrictions for exploit tools
 
 ### 🧠 LLM-Powered Analysis
-- **Local LLM Support**: Works with LMStudio, Ollama, and OpenRouter
-- **Intelligent Planning**: LLM suggests next steps based on findings
-- **Result Interpretation**: Converts raw tool output into actionable insights
+- **Local LLM Support**: Works with LMStudio, Ollama, OpenAI, and Anthropic
+- **Intelligent Planning**: LLM suggests next steps based on findings with context awareness
+- **Result Interpretation**: Converts raw tool output into actionable insights with RAG support
 - **Risk Assessment**: Provides clear explanations of potential impact
+- **Conversation Memory**: Maintains context across multiple interactions
+- **Retrieval-Augmented Generation**: Enhances responses with security knowledge base
+- **Streaming Responses**: Real-time output processing for better user experience
 
 ### 🛠️ Modular Architecture
 - **Tool Adapters**: Standardized interface for security tools (Nmap, Gobuster, ZAP, etc.)
@@ -221,6 +224,32 @@ python -m pytest tests/ --cov=agent
 # Run specific test file
 python -m pytest tests/test_init_command.py -v
 ```
+
+## 🚀 Deployment
+
+Simplified deployment scripts are provided for both Unix-like systems and Windows:
+
+```bash
+# Unix-like systems (Linux/macOS)
+./scripts/deploy.sh --full
+
+# Windows
+scripts\deploy.bat --full
+```
+
+Deployment options:
+- `--check-only`: Verify system prerequisites
+- `--setup`: Setup environment and dependencies
+- `--test`: Run complete test suite
+- `--package`: Create deployment package
+- `--full`: Complete deployment process (default)
+
+The deployment process will:
+1. Check prerequisites (Python 3.8+, Docker)
+2. Setup virtual environment
+3. Install dependencies
+4. Run all tests (245/245 passing)
+5. Create deployment package
 
 ## 📚 Documentation
 

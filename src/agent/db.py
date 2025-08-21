@@ -111,6 +111,41 @@ def get_db_connection() -> sqlite3.Connection:
     """
     return sqlite3.connect(DB_PATH)
 
+def remove_asset(conn: sqlite3.Connection, asset_id: int) -> bool:
+    """
+    Remove an asset from the database by ID.
+    
+    Args:
+        conn: Database connection
+        asset_id: ID of the asset to remove
+        
+    Returns:
+        bool: True if asset was removed, False if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+    rows_affected = cursor.rowcount
+    conn.commit()
+    return rows_affected > 0
+
+def archive_asset(conn: sqlite3.Connection, asset_id: int) -> bool:
+    """
+    Archive an asset instead of deleting it (soft delete).
+    This function would require adding an 'archived' column to the assets table.
+    
+    Args:
+        conn: Database connection
+        asset_id: ID of the asset to archive
+        
+    Returns:
+        bool: True if asset was archived, False if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute("UPDATE assets SET archived = 1 WHERE id = ?", (asset_id,))
+    rows_affected = cursor.rowcount
+    conn.commit()
+    return rows_affected > 0
+
 def run_migrations() -> None:
     """
     Handle schema migrations for future updates.
