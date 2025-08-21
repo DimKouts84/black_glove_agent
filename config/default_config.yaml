@@ -39,6 +39,13 @@ authorized_domains:
   # - "your-domain.com"
   # - "test-environment.com"
   - "localhost"  # Local testing
+  # Training/testing public domains (opt-in; uncomment if you accept their policies):
+  # - "example.com"          # IANA reserved; safe for WHOIS/DNS/HTTP GETs
+  # - "example.net"          # IANA reserved; safe for WHOIS/DNS/HTTP GETs
+  # - "example.org"          # IANA reserved; safe for WHOIS/DNS/HTTP GETs
+  # - "scanme.nmap.org"      # Nmap only; light scans per Nmap policy
+  # - "badssl.com"           # SSL checks only; use subdomains like expired.badssl.com
+  # - "dnssec-failed.org"    # DNSSEC validation testing
 
 authorized_networks:
   # Add IP networks you are authorized to scan (CIDR notation)

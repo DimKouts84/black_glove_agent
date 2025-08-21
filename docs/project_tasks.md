@@ -40,10 +40,10 @@
 
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
-| **5** | **Tool Adapters** | Section 12 interface | Develop adapter ecosystem | In Progress 🔄 |
-| 5.1 | Nmap Adapter | Section 12 example | Implement with 2-layer sanitization | In Progress 🔄 |
-| 5.2 | Gobuster Adapter | Section 12 spec | Create web directory scanning adapter | In Progress 🔄 |
-| 5.3 | Docker Runner | Sandbox execution | Create utility to run tools in containers | In Progress 🔄 |
+| **5** | **Tool Adapters** | Section 12 interface | Develop adapter ecosystem | Completed ✅ |
+| 5.1 | Nmap Adapter | Section 12 example | Implement with 2-layer sanitization | Completed ✅ |
+| 5.2 | Gobuster Adapter | Section 12 spec | Create web directory scanning adapter | Completed ✅ |
+| 5.3 | Docker Runner | Sandbox execution | Create utility to run tools in containers | Completed ✅ |
 
 ---
 
@@ -94,8 +94,8 @@
 
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
-| **11** | **User Acceptance Testing** | Production validation | Validate with real-world scenarios | Not Started |
-| 11.1 | CLI Usability Testing | Interface validation | Test enhanced CLI features | Not Started |
+| **11** | **User Acceptance Testing** | Production validation | Validate with real-world scenarios | In Progress 🔄 |
+| 11.1 | CLI Usability Testing | Interface validation | Test enhanced CLI features | Completed ✅ |
 | 11.2 | Deployment Validation | Installation process | Verify deployment scripts work | Not Started |
 | 11.3 | End-to-End Workflows | Complete scenarios | Test full pentest workflows | Not Started |
 
@@ -154,21 +154,17 @@
 - **Documentation**: All required documentation completed
 
 ### 🔄 **In Progress / Partially Implemented**
-- **Reconnaissance Modules**: 
-  - Passive Recon Adapter (4.1) - Needs crt.sh/Wayback integration
-- **Tool Adapters**: 
-  - Nmap Adapter (5.1) - ❌ Missing
-  - Gobuster Adapter (5.2) - ❌ Missing  
-  - Docker Runner (5.3) - ❌ Missing
-- **Active Scanning**: Requires missing tool adapters for full functionality
+- **User Acceptance Testing (11)**:
+  - 11.1 CLI Usability Testing — Completed ✅
+  - 11.2 Deployment Validation — Not Started
+  - 11.3 End-to-End Workflows — Not Started
+- References: docs/uat_plan.md, docs/uat_cli_audit.md, docs/uat_report.md
 
 ### ⚠️ **Critical Missing Components**
-1. **Active Scanning Tools**: nmap.py, gobuster.py adapters not implemented
-2. **Docker Runner Utility**: No utility to execute containerized tools
-3. **Additional Recon Adapters**: crt.sh, Wayback Machine integration missing
+- None currently identified.
 
 ### 📋 **Next Implementation Priorities**
-1. Implement missing tool adapters (nmap, gobuster) for active scanning
-2. Create Docker runner utility to leverage containerized security tools
-3. Complete passive recon adapter with crt.sh/Wayback integration
-4. Implement additional security tool adapters (nikto, sqlmap, masscan)
+1. Execute Task 11.2 Deployment Validation across Windows shells and record results in docs/uat_report.md.
+2. Execute Task 11.3 End-to-End Workflows (nmap/gobuster) on authorized targets; verify evidence persistence and reporting output.
+3. Keep docs/current_implementation_tasks.md and docs/project_tasks.md synchronized as UAT milestones progress.
+4. Prepare Task 12 release packaging prerequisites based on UAT outcomes.

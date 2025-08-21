@@ -1,9 +1,3 @@
-<p align="center">
-  <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
-</p>
-
----
-
 # 🖤 Black Glove 🖤
 *A pentest agent for home and small business security testing that uses natural language*
 
@@ -22,6 +16,9 @@
 
 Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent designed for authorized security testing of home-hosted services and small business networks. It helps you safely discover and prioritize vulnerabilities while maintaining full auditability and human oversight.
 
+<p align="center">
+  <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
+</p>
 
 > **⚠️ Legal Notice**: 
 > <br>This tool is designed exclusively for authorized security testing of systems you own or have explicit written permission to test.
@@ -82,7 +79,7 @@ flowchart TD
 
 ```
 
-> **Note:** Nodes highlighted in dark red (Docker Sandbox and Exploit Adapters) indicate high-risk execution paths — these steps run in isolated containers, are subject to rate-limiting and lab-mode gating, and require explicit, typed human approval before any active or exploit-class scans are executed. All approvals and raw outputs are recorded in the append-only audit log for full traceability.
+> **Note:** Nodes highlighted in dark red (Docker Sandbox and Exploit Adapters) indicate high-risk execution paths — these steps run in isolated containers, are subject to rate-limiting and lab-mode gating, and require explicit, typed human approval before any active or exploit-class scans are executed. <br>All approvals and raw outputs are recorded in the append-only audit log for full traceability.
 
 <br>
 
