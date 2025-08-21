@@ -38,7 +38,7 @@ class TestDeploymentScripts:
         deploy_sh_content = Path("scripts/deploy.sh").read_text(encoding='utf-8')
         assert "Black Glove Deployment Script" in deploy_sh_content
         assert "deployment package" in deploy_sh_content
-        assert "tar -czf" in deploy_sh_content
+        assert "cp -r" in deploy_sh_content  # File copying instead of tar
         
         # Test batch script
         deploy_bat_content = Path("scripts/deploy.bat").read_text(encoding='utf-8')
@@ -60,12 +60,12 @@ class TestDeploymentScripts:
         # Bash script should have key commands
         assert "mkdir -p" in deploy_sh_content
         assert "cp -r" in deploy_sh_content
-        assert "pip freeze" in deploy_sh_content
+        assert "pip install -e ." in deploy_sh_content
         
         # Batch script should have key commands
         assert "mkdir" in deploy_bat_content
         assert "xcopy" in deploy_bat_content
-        assert "pip freeze" in deploy_bat_content
+        assert "pip install -e ." in deploy_bat_content
 
 
 if __name__ == "__main__":

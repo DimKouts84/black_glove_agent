@@ -1,59 +1,56 @@
 # 🖤 Black Glove 🖤
 *A pentest agent for home and small business security testing that uses natural language*
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-245%2F245-brightgreen.svg)](https://github.com/mitsos-pc/black-glove/actions)
-[![Local First](https://img.shields.io/badge/local-first-purple)](#)
-[![Human in the Loop](https://img.shields.io/badge/human--in--the--loop-orange)](#)
-[![Docker](https://img.shields.io/badge/docker-containerization-blue)](https://www.docker.com/)
-[![SQLite](https://img.shields.io/badge/sqlite-database-green)](https://www.sqlite.org/)
-[![LLM](https://img.shields.io/badge/llm-local-purple)](https://lmstudio.ai/)
-[![CLI](https://img.shields.io/badge/cli-typer-blue)](https://typer.tiangolo.com/)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=mit&logoColor=white)](https://opensource.org/licenses/MIT)
+[![Human in the Loop](https://img.shields.io/badge/human--in--the--loop-orange?style=for-the-badge)](#)
+[![Docker](https://img.shields.io/badge/docker-containerization-blue?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![SQLite](https://img.shields.io/badge/sqlite-database-green?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![LMStudio](https://img.shields.io/badge/LMStudio-000000?style=for-the-badge&logo=lmstudio&logoColor=white)](https://lmstudio.ai/)
+[![Ollama](https://img.shields.io/badge/Ollama-222222?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.ai/)
+[![CLI](https://img.shields.io/badge/cli-typer-blue?style=for-the-badge&logo=typer&logoColor=white)](https://typer.tiangolo.com/)
 
-<p align="center">
-  <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
-</p>
 
 ## 🎯 Purpose
 
 Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent designed for authorized security testing of home-hosted services and small business networks. It helps you safely discover and prioritize vulnerabilities while maintaining full auditability and human oversight.
 
-> **⚠️ Legal Notice**: This tool is designed exclusively for authorized security testing of systems you own or have explicit written permission to test. Unauthorized scanning or penetration testing is illegal and unethical.
+<p align="center">
+  <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
+</p>
 
+> **⚠️ Legal Notice**: 
+> <br>This tool is designed exclusively for authorized security testing of systems you own or have explicit written permission to test.
+> <br>Unauthorized scanning or penetration testing is illegal and unethical.
+
+---
 
 ## How It Works
 
+```mermaid
+graph TD
+    A[CLI Frontend<br/>Typer Interface] <-- Commands --> B[Agent Orchestrator<br/>Workflow Management]
+    B <-- AI Planning --> C[LLM Client<br/>LMStudio/Ollama/OpenRouter]
+    B --> D[Plugin Manager<br/>Adapter Discovery]
+    D --> E[Tool Adapters<br/>Security Tools]
+    E <-- Containerized --> F[Docker Sandbox<br/>Isolated Execution]
+    B --> G[Results Processor<br/>Finding Normalization]
+    G --> H[SQLite Database<br/>Findings Storage]
+    B --> I[Reporting Engine<br/>Report Generation]
+    I --> J[Audit Logger<br/>Immutable Records]
+
+    style A fill:#000000
+    style B fill:#390D0D
+    style C fill:#000000
+    style D fill:#000000
+    style E fill:#000000
+    style F fill:#000000
+    style G fill:#000000
+    style H fill:#000000
+    style I fill:#000000
+    style J fill:#000000
 ```
-┌─────────────────┐    ┌────────────────────┐    ┌──────────────────┐
-│   CLI Frontend  │◄──►│ Agent Orchestrator │◄──►│ LLM Abstraction  │
-│   (Typer)       │    │                    │    │ (LMStudio/Ollama)│
-└─────────────────┘    └────────────────────┘    └──────────────────┘
-                                │
-                                ▼
-                        ┌────────────────────┐
-                        │  Plugin Manager    │
-                        │                    │
-                        └────────────────────┘
-                                │
-                                ▼
-                        ┌────────────────────┐    ┌──────────────────┐
-                        │  Tool Adapters     │◄──►│ Container        │
-                        │                    │    │ Sandboxing       │
-                        └────────────────────┘    └──────────────────┘
-                                │
-                                ▼
-                        ┌────────────────────┐    ┌──────────────────┐
-                        │ Results Processing │◄──►│ Findings DB      │
-                        │                    │    │ (SQLite)         │
-                        └────────────────────┘    └──────────────────┘
-                                │
-                                ▼
-                        ┌────────────────────┐    ┌──────────────────┐
-                        │  Reporting Module  │◄──►│ Audit Log        │
-                        │                    │    │ (Append-only)    │
-                        └────────────────────┘    └──────────────────┘
-```
+<br>
 
 1. **Add Assets**: Define your targets (IPs, domains) via CLI
 2. **Passive Recon**: Automatically gather public information
