@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
+</p>
+
+---
+
 # 🖤 Black Glove 🖤
 *A pentest agent for home and small business security testing that uses natural language*
 
@@ -10,14 +16,12 @@
 [![Ollama](https://img.shields.io/badge/Ollama-222222?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.ai/)
 [![CLI](https://img.shields.io/badge/cli-typer-blue?style=for-the-badge&logo=typer&logoColor=white)](https://typer.tiangolo.com/)
 
+---
 
 ## 🎯 Purpose
 
 Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent designed for authorized security testing of home-hosted services and small business networks. It helps you safely discover and prioritize vulnerabilities while maintaining full auditability and human oversight.
 
-<p align="center">
-  <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
-</p>
 
 > **⚠️ Legal Notice**: 
 > <br>This tool is designed exclusively for authorized security testing of systems you own or have explicit written permission to test.
@@ -87,6 +91,8 @@ flowchart TD
 3. **Active Scanning**: Review and approve suggested scans
 4. **Analysis**: LLM interprets results and identifies vulnerabilities
 5. **Reporting**: Get prioritized findings with remediation steps
+
+---
 
 ## 🚀 Key Features
 
@@ -159,8 +165,12 @@ flowchart TD
    agent init
    ```
 
-2. **Configure LLM settings:**
-   Edit `~/.homepentest/config.yaml` to set your LLM endpoint.
+   This creates `~/.homepentest/config.yaml` from the template at `config/default_config.yaml`.
+
+2. **Edit configuration:**
+   Open `~/.homepentest/config.yaml` and adjust settings as needed (see full sample below). You can also copy the template directly:
+   - Linux/macOS: `cp config/default_config.yaml ~/.homepentest/config.yaml`
+   - Windows PowerShell: `Copy-Item -Path config/default_config.yaml -Destination "$HOME/.homepentest/config.yaml" -Force`
 
 ## 🎮 Basic Usage
 
@@ -196,6 +206,8 @@ agent recon active --asset home-router --preset fingerprint
 agent report --asset home-router
 ```
 
+---
+
 ## 🏗️ Project Structure
 
 ```
@@ -216,26 +228,81 @@ black-glove/
 └── assets/             # Images and media
 ```
 
+---
+
 ## 🔧 Configuration
 
-The agent uses `~/.homepentest/config.yaml` for configuration. Key settings include:
+Black Glove reads settings from `~/.homepentest/config.yaml`. On first run, this file is created from `config/default_config.yaml`. Here’s the full sample with inline guidance:
 
 ```yaml
+# Black Glove Default Configuration Template
+# This template is used to create ~/.homepentest/config.yaml on first run
+# Customize this file with your specific settings and authorized targets
+
 # LLM Settings
-llm_provider: "lmstudio"
-llm_endpoint: "http://localhost:1234/v1"
-llm_model: "local-model"
-llm_temperature: 0.7
+# Configure your LLM provider and endpoint
+llm_provider: "llmlocal_or_cloud_provider"  # Options: lmstudio, ollama, openrouter
+llm_endpoint: "http://localhost:1234/v1"  # Update with your LLM service URL
+llm_model: "local-model"  # Specify your local model name
+llm_temperature: 0.1  # Controls randomness (0.0 = deterministic, 1.0 = creative)
 
 # Scan Settings
-default_rate_limit: 50
-max_rate_limit: 100
-scan_timeout: 300
+# Configure scanning behavior and limits
+default_rate_limit: 50  # Default packets per second
+max_rate_limit: 100  # Maximum allowed rate limit
+scan_timeout: 300  # Scan timeout in seconds
+
+# Logging Settings
+# Configure logging behavior
+log_level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+log_retention_days: 90  # Log retention period in days
 
 # Safety Settings
-require_lab_mode_for_exploits: true
-enable_exploit_adapters: false
+# Security and safety controls
+require_lab_mode_for_exploits: true  # Require lab mode for exploit tools
+enable_exploit_adapters: false  # Enable exploit adapters (disabled by default for safety)
+
+# Evidence Storage
+# Configure where evidence files are stored
+evidence_storage_path: "~/.homepentest/evidence"
+
+# Asset Management Settings
+# IMPORTANT: Configure authorized targets for security
+# Only targets in these lists will be allowed for scanning
+
+authorized_domains:
+   # Add domains you are authorized to scan
+   # Example:
+   # - "your-domain.com"
+   # - "test-environment.com"
+   - "localhost"  # Local testing
+
+authorized_networks:
+   # Add IP networks you are authorized to scan (CIDR notation)
+   # Example:
+   # - "192.168.1.0/24"  # Your local network
+   # - "10.0.0.0/8"      # Private network range
+   - "192.168.0.0/16"    # Default private network range
+   - "10.0.0.0/8"        # Default private network range
+   - "172.16.0.0/12"     # Default private network range
+
+blocked_targets:
+   # Explicitly block specific targets (takes precedence over authorized lists)
+   # Example:
+   # - "192.168.1.1"     # Block specific IP
+   # - "blocked-domain.com"  # Block specific domain
+
+# Additional Settings
+# Uncomment and customize as needed
+# extra_settings:
+#   custom_field: "value"
+#   api_keys:
+#     shodan: "your-shodan-api-key"
+#     virustotal: "your-virustotal-api-key"
 ```
+
+---
+
 
 ## 🧪 Testing
 
@@ -278,12 +345,16 @@ The deployment process will:
 4. Run all tests (245/245 passing)
 5. Create deployment package
 
+---
+
 ## 📚 Documentation
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed system architecture
 - [SECURITY.md](docs/SECURITY.md) - Security policies and safety controls
 - [examples/workflows.md](examples/workflows.md) - Example usage workflows
 - [examples/assets.yml](examples/assets.yml) - Sample asset configurations
+
+---
 
 ## 🛡️ Safety Controls
 
@@ -303,6 +374,8 @@ The deployment process will:
 - Input sanitization (allow-list validation)
 - Container sandboxing
 
+---
+
 ## 🤝 Contributing
 
 1. Fork the repository
@@ -312,6 +385,10 @@ The deployment process will:
 5. Create a Pull Request
 
 Please ensure all tests pass and follow the existing code style.
+
+---
+
+# Other Information
 
 ## 📄 License
 
