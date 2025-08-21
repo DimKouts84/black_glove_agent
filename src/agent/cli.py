@@ -210,7 +210,8 @@ def load_config() -> ConfigModel:
         ConfigModel: Loaded configuration
     """
     try:
-        return ConfigModel()
+        from .models import load_config_from_file
+        return load_config_from_file()
     except Exception as e:
         typer.echo(f"⚠️  Configuration load failed: {e}")
         typer.echo("  Using default configuration")

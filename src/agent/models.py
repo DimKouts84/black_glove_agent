@@ -7,6 +7,8 @@ from typing import Optional, Dict, Any, List
 from enum import Enum
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from pathlib import Path
+import yaml
 
 class AssetType(str, Enum):
     """Enumeration of supported asset types."""
@@ -244,6 +246,35 @@ class DatabaseManager:
         finally:
             conn.close()
     
+    def get_asset_by_name(self, name: str) -> Optional[AssetModel]:
+        """
+        Retrieve an asset from the database by name.
+        
+        Args:
+            name: Name of the asset to retrieve
+            
+        Returns:
+            AssetModel: Asset model instance, or None if not found
+        """
+        conn = self.get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, name, type, value FROM assets WHERE name = ?",
+                (name,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return AssetModel(
+                    id=row[0],
+                    name=row[1],
+                    type=AssetType(row[2]),
+                    value=row[3]
+                )
+            return None
+        finally:
+            conn.close()
+    
     def list_assets(self) -> list[AssetModel]:
         """
         List all assets in the database.
@@ -284,3 +315,38 @@ class DatabaseManager:
             return remove_asset(conn, asset_id)
         finally:
             conn.close()
+
+
+def load_config_from_file() -> ConfigModel:
+    """
+    Load configuration from YAML file with error handling.
+    
+    Returns:
+        ConfigModel: Loaded configuration
+    """
+    import logging
+    logger = logging.getLogger("black_glove.config")
+    
+    config_path = Path.home() / ".homepentest" / "config.yaml"
+    
+    if not config_path.exists():
+        logger.warning(f"Configuration file not found at {config_path}, using defaults")
+        return ConfigModel()
+    
+    try:
+        with open(config_path, 'r') as f:
+            config_data = yaml.safe_load(f)
+        
+        if not isinstance(config_data, dict):
+            logger.warning("Invalid configuration file format, using defaults")
+            return ConfigModel()
+        
+        # Create ConfigModel instance with loaded data
+        config = ConfigModel(**config_data)
+        logger.info("Configuration loaded successfully from file")
+        return config
+        
+    except Exception as e:
+        logger.error(f"Failed to load configuration from {config_path}: {e}")
+        logger.info("Using default configuration")
+        return ConfigModel()

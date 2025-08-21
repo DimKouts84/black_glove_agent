@@ -191,11 +191,34 @@ class TargetValidator:
         networks = self.config.get("authorized_networks", [])
         for network_str in networks:
             try:
+                # Handle host:port format by extracting just the host
+                if ":" in network_str and not network_str.startswith("["):
+                    # Check if it's IPv6 with port [::1]:8080 or IPv4 with port 192.168.1.1:8080
+                    if network_str.count(":") > 1 and not network_str.startswith("["):
+                        # IPv6 without brackets - this is malformed, skip it
+                        self.logger.warning(f"Invalid network format (IPv6 without brackets): {network_str}")
+                        continue
+                    elif network_str.count(":") == 1:
+                        # IPv4 with port - extract just the IP part
+                        host_part = network_str.split(":")[0]
+                        network_str = host_part
+                
                 network = ipaddress.ip_network(network_str, strict=False)
                 self._authorized_networks.append(network)
                 self.logger.debug(f"Added authorized network: {network}")
             except ValueError as e:
-                self.logger.warning(f"Invalid network in config: {network_str} - {e}")
+                # Try to parse as individual IP address instead of network
+                try:
+                    ip = ipaddress.ip_address(network_str)
+                    # Convert single IP to /32 network for consistent handling
+                    if isinstance(ip, ipaddress.IPv4Address):
+                        network = ipaddress.ip_network(f"{ip}/32", strict=False)
+                    else:  # IPv6
+                        network = ipaddress.ip_network(f"{ip}/128", strict=False)
+                    self._authorized_networks.append(network)
+                    self.logger.debug(f"Added authorized IP as network: {network}")
+                except ValueError:
+                    self.logger.warning(f"Invalid network/IP in config: {network_str} - {e}")
     
     def _load_authorized_domains(self) -> None:
         """Load authorized domains from configuration."""

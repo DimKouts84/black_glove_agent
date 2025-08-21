@@ -233,12 +233,36 @@ class TestDatabaseAssetOperations:
         
         assert asset_id > 0
         
-        # Retrieve and verify
+        # Retrieve and verify by ID
         retrieved_asset = db_manager.get_asset(asset_id)
         assert retrieved_asset is not None
         assert retrieved_asset.name == "test"
         assert retrieved_asset.type == AssetType.HOST
         assert retrieved_asset.value == "192.168.1.50"
+    
+    def test_get_asset_by_name(self):
+        """Test retrieving asset by name."""
+        from src.agent.models import DatabaseManager, AssetModel, AssetType
+        
+        db_manager = DatabaseManager()
+        asset = AssetModel(name="test-host", type=AssetType.HOST, value="192.168.1.50")
+        asset_id = db_manager.add_asset(asset)
+        
+        # Retrieve by name
+        retrieved_asset = db_manager.get_asset_by_name("test-host")
+        assert retrieved_asset is not None
+        assert retrieved_asset.id == asset_id
+        assert retrieved_asset.name == "test-host"
+        assert retrieved_asset.type == AssetType.HOST
+        assert retrieved_asset.value == "192.168.1.50"
+    
+    def test_get_asset_by_name_not_found(self):
+        """Test retrieving non-existent asset by name."""
+        from src.agent.models import DatabaseManager
+        
+        db_manager = DatabaseManager()
+        retrieved_asset = db_manager.get_asset_by_name("non-existent")
+        assert retrieved_asset is None
 
 
 class TestCLIAssetCommands:

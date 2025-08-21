@@ -1,28 +1,64 @@
 # Black Glove Default Configuration Template
 # This template is used to create ~/.homepentest/config.yaml on first run
+# Customize this file with your specific settings and authorized targets
 
 # LLM Settings
-llm_provider: "lmstudio"
-llm_endpoint: "http://localhost:1234/v1"
-llm_model: "local-model"
-llm_temperature: 0.7
+# Configure your LLM provider and endpoint
+llm_provider: "lmstudio"  # Options: lmstudio, ollama, openrouter
+llm_endpoint: "http://localhost:1234/v1"  # Update with your LLM service URL
+llm_model: "local-model"  # Specify your local model name
+llm_temperature: 0.7  # Controls randomness (0.0 = deterministic, 1.0 = creative)
 
 # Scan Settings
-default_rate_limit: 50
-max_rate_limit: 100
-scan_timeout: 300
+# Configure scanning behavior and limits
+default_rate_limit: 50  # Default packets per second
+max_rate_limit: 100  # Maximum allowed rate limit
+scan_timeout: 300  # Scan timeout in seconds
 
 # Logging Settings
-log_level: "INFO"
-log_retention_days: 90
+# Configure logging behavior
+log_level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+log_retention_days: 90  # Log retention period in days
 
 # Safety Settings
-require_lab_mode_for_exploits: true
-enable_exploit_adapters: false
+# Security and safety controls
+require_lab_mode_for_exploits: true  # Require lab mode for exploit tools
+enable_exploit_adapters: false  # Enable exploit adapters (disabled by default for safety)
 
 # Evidence Storage
+# Configure where evidence files are stored
 evidence_storage_path: "~/.homepentest/evidence"
 
+# Asset Management Settings
+# IMPORTANT: Configure authorized targets for security
+# Only targets in these lists will be allowed for scanning
+
+authorized_domains:
+  # Add domains you are authorized to scan
+  # Example:
+  # - "your-domain.com"
+  # - "test-environment.com"
+  - "localhost"  # Local testing
+
+authorized_networks:
+  # Add IP networks you are authorized to scan (CIDR notation)
+  # Example:
+  # - "192.168.1.0/24"  # Your local network
+  # - "10.0.0.0/8"      # Private network range
+  - "192.168.0.0/16"    # Default private network range
+  - "10.0.0.0/8"        # Default private network range
+  - "172.16.0.0/12"     # Default private network range
+
+blocked_targets:
+  # Explicitly block specific targets (takes precedence over authorized lists)
+  # Example:
+  # - "192.168.1.1"     # Block specific IP
+  # - "blocked-domain.com"  # Block specific domain
+
 # Additional Settings
+# Uncomment and customize as needed
 # extra_settings:
 #   custom_field: "value"
+#   api_keys:
+#     shodan: "your-shodan-api-key"
+#     virustotal: "your-virustotal-api-key"

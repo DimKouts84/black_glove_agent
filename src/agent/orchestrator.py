@@ -153,6 +153,21 @@ class Orchestrator:
         for asset in self.assets:
             self.logger.info(f"Running passive recon on {asset.target}")
             
+            # Determine asset type from parameters or target
+            asset_type = asset.parameters.get("asset_type", "host")
+            if "." in asset.target and not asset.target.replace(".", "").isdigit():
+                asset_type = "domain"
+            elif ":" in asset.target:
+                asset_type = "host"  # host:port format
+            else:
+                # Check if it's an IP address
+                import ipaddress
+                try:
+                    ipaddress.ip_address(asset.target)
+                    asset_type = "host"
+                except ValueError:
+                    asset_type = "domain"
+            
             for tool_name in passive_tools:
                 try:
                     # Check rate limits before execution
@@ -160,8 +175,19 @@ class Orchestrator:
                         self.logger.warning(f"Rate limit exceeded for {tool_name}")
                         continue
                     
+                    # Map asset parameters to tool-specific parameters
+                    params = self._map_asset_to_tool_params(asset, tool_name, asset_type)
+                    
+                    # Validate required parameters before execution
+                    adapter_info = self.plugin_manager.get_adapter_info(tool_name)
+                    if adapter_info:
+                        required_params = adapter_info.get("example_usage", {}).keys()
+                        missing_params = [param for param in required_params if param not in params]
+                        if missing_params:
+                            self.logger.warning(f"Missing required parameters for {tool_name}: {missing_params}")
+                            continue
+                    
                     # Run adapter
-                    params = {"target": asset.target, **asset.parameters}
                     adapter_result = self.plugin_manager.run_adapter(tool_name, params)
                     
                     # Record rate limit usage
@@ -504,6 +530,33 @@ class Orchestrator:
         
         return True  # Auto-approve by default
     
+    def _count_findings_by_severity(self, findings: List[Dict[str, Any]]) -> Dict[str, int]:
+        """
+        Count findings by severity level.
+        
+        Args:
+            findings: List of findings
+            
+        Returns:
+            Dictionary mapping severity levels to counts
+        """
+        counts = {
+            'critical': 0,
+            'high': 0,
+            'medium': 0,
+            'low': 0,
+            'info': 0
+        }
+        
+        for finding in findings:
+            severity = finding.get('severity', 'medium').lower()
+            if severity in counts:
+                counts[severity] += 1
+            else:
+                counts['medium'] += 1
+                
+        return counts
+    
     def generate_report(self, format_type: str = "json") -> Dict[str, Any]:
         """
         Create findings report from scan results.
@@ -516,11 +569,15 @@ class Orchestrator:
         """
         self.logger.info(f"Generating {format_type} report")
         
+        # Count findings by severity
+        findings_by_severity = self._count_findings_by_severity(self.result_processor.findings)
+        
         report_data = {
             "summary": {
                 "total_assets": len(self.assets),
                 "total_scans": len(self.scan_results),
                 "total_findings": len(self.result_processor.findings),
+                "findings_by_severity": findings_by_severity,
                 "scan_duration": self._calculate_scan_duration(),
                 "timestamp": datetime.now().isoformat()
             },
@@ -565,6 +622,64 @@ class Orchestrator:
         self.result_processor.findings.clear()
         
         self.logger.info("Orchestrator cleanup completed")
+    
+    def _map_asset_to_tool_params(self, asset: Asset, tool_name: str, asset_type: str) -> Dict[str, Any]:
+        """
+        Map asset parameters to tool-specific parameters.
+        
+        Args:
+            asset: Asset to map
+            tool_name: Name of the tool
+            asset_type: Type of asset (host, domain, vm)
+            
+        Returns:
+            Dictionary of tool-specific parameters
+        """
+        params = {"target": asset.target, **asset.parameters}
+        
+        # Add default timeout if not provided
+        if "timeout" not in params:
+            params["timeout"] = 30
+        
+        # Map based on tool type and asset type
+        if tool_name == "whois":
+            if asset_type == "domain":
+                params["domain"] = asset.target
+            else:
+                # For IP addresses, try to extract domain if possible
+                # or skip WHOIS for IPs (WHOIS is primarily for domains)
+                self.logger.debug(f"Skipping WHOIS for non-domain target: {asset.target}")
+                params["domain"] = asset.target  # Fallback - let adapter handle validation
+                
+        elif tool_name == "dns_lookup":
+            if asset_type == "domain":
+                params["domain"] = asset.target
+                params["record_types"] = ["A", "MX", "NS", "TXT", "CNAME"]
+            else:
+                # For IP addresses, we might want reverse DNS lookup
+                # For now, treat as domain for testing
+                params["domain"] = asset.target
+                params["record_types"] = ["A", "PTR"]  # Reverse lookup for IPs
+                
+        elif tool_name == "ssl_check":
+            # SSL check works with both domains and IPs
+            if asset_type == "domain":
+                params["host"] = asset.target
+            else:
+                # For IP addresses, extract host and port if present
+                if ":" in asset.target:
+                    host, port = asset.target.rsplit(":", 1)
+                    if port.isdigit():
+                        params["host"] = host
+                        params["port"] = int(port)
+                    else:
+                        params["host"] = asset.target
+                        params["port"] = 443
+                else:
+                    params["host"] = asset.target
+                    params["port"] = 443
+        
+        return params
 
 
 def create_orchestrator(config: Dict[str, Any] = None, db_connection=None) -> Orchestrator:
@@ -595,6 +710,19 @@ def create_orchestrator(config: Dict[str, Any] = None, db_connection=None) -> Or
             "passive_tools": ["whois", "dns_lookup", "ssl_check"],
             "scan_mode": "passive"
         }
+    else:
+        # Ensure policy configuration includes target validation from main config
+        if "policy" not in config:
+            config["policy"] = {}
+        
+        if "target_validation" not in config["policy"]:
+            config["policy"]["target_validation"] = {}
+        
+        # Copy authorized networks and domains from main config to policy config
+        if "authorized_networks" in config and "target_validation" in config["policy"]:
+            config["policy"]["target_validation"]["authorized_networks"] = config["authorized_networks"]
+        if "authorized_domains" in config and "target_validation" in config["policy"]:
+            config["policy"]["target_validation"]["authorized_domains"] = config["authorized_domains"]
     
     return Orchestrator(config, db_connection)
 

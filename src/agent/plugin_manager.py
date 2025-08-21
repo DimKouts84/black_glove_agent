@@ -74,9 +74,21 @@ class AdapterManager:
                     issubclass(attr, AdapterInterface) and 
                     attr != AdapterInterface and 
                     attr != BaseAdapter):
-                    if attr_name.lower() == adapter_name.lower() + "adapter" or attr_name == adapter_name:
+                    # Check for exact match or adapter name + "Adapter" (case insensitive)
+                    expected_name = adapter_name.lower()
+                    expected_adapter_name = expected_name + "adapter"
+                    actual_name = attr_name.lower()
+                    
+                    if actual_name == expected_name or actual_name == expected_adapter_name:
                         adapter_class = attr
                         break
+                    
+                    # Also check for PascalCase conversion (e.g., dns_lookup -> DnsLookupAdapter)
+                    if '_' in adapter_name:
+                        pascal_case = ''.join(word.capitalize() for word in adapter_name.split('_')) + 'Adapter'
+                        if attr_name == pascal_case:
+                            adapter_class = attr
+                            break
             
             if adapter_class is None:
                 raise ImportError(f"No valid adapter class found in module {module_name}")

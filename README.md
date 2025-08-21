@@ -28,28 +28,58 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 ## How It Works
 
 ```mermaid
-graph TD
-    A[CLI Frontend<br/>Typer Interface] <-- Commands --> B[Agent Orchestrator<br/>Workflow Management]
-    B <-- AI Planning --> C[LLM Client<br/>LMStudio/Ollama/OpenRouter]
-    B --> D[Plugin Manager<br/>Adapter Discovery]
-    D --> E[Tool Adapters<br/>Security Tools]
-    E <-- Containerized --> F[Docker Sandbox<br/>Isolated Execution]
-    B --> G[Results Processor<br/>Finding Normalization]
-    G --> H[SQLite Database<br/>Findings Storage]
-    B --> I[Reporting Engine<br/>Report Generation]
-    I --> J[Audit Logger<br/>Immutable Records]
+flowchart TD
+   subgraph UserLayer["User"]
+      U[User CLI - Typer]
+   end
 
-    style A fill:#000000
-    style B fill:#390D0D
-    style C fill:#000000
-    style D fill:#000000
-    style E fill:#000000
-    style F fill:#000000
-    style G fill:#000000
-    style H fill:#000000
-    style I fill:#000000
-    style J fill:#000000
+   subgraph ControlLayer["Control / Orchestration"]
+      O[Agent Orchestrator - Validation, Policies, Scheduling]
+      PM[Plugin Manager - Adapter Discovery]
+   P[Planner LLM - Risk Assessment RAG]
+      HUI[Human Review - Typed Approval]
+   end
+
+   subgraph ExecutionLayer["Execution / Tools"]
+      TA[Tool Adapters - Nmap, Gobuster, ZAP]
+      CS[Docker Sandbox - Isolated Execution]
+      EX[Exploit Adapters - lab-mode gated]
+   end
+
+   subgraph DataLayer["Storage & Reporting"]
+      RP[Results Processor - Normalization]
+      DB[SQLite Findings DB]
+      RL[Audit Logger - append-only]
+      RE[Reporting Engine - Markdown/JSON]
+   end
+
+   U -->|cli command| O
+   O -->|request + context| P
+   P -->|proposed plan| O
+   O -->|present plan| HUI
+   HUI -->|approve / reject| O
+   O -->|assemble adapters| PM
+   PM --> TA
+   O -->|schedule| TA
+   TA -->|run in| CS
+   TA --> EX
+   CS -->|isolated run| TA
+   TA -->|raw output| RP
+   RP --> DB
+   RP --> RL
+   DB -->|context| P
+   DB --> RE
+   RP --> P
+   P --> RE
+   RL --> RE
+
+   classDef danger fill:#390D0D,stroke:#2b0000,color:#fff,font-weight:bold;
+   class CS,EX danger
+
 ```
+
+> **Note:** Nodes highlighted in dark red (Docker Sandbox and Exploit Adapters) indicate high-risk execution paths — these steps run in isolated containers, are subject to rate-limiting and lab-mode gating, and require explicit, typed human approval before any active or exploit-class scans are executed. All approvals and raw outputs are recorded in the append-only audit log for full traceability.
+
 <br>
 
 1. **Add Assets**: Define your targets (IPs, domains) via CLI
