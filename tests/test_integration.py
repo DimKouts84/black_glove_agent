@@ -11,6 +11,10 @@ import os
 from unittest.mock import Mock, patch
 from typing import Dict, Any
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from src.agent.orchestrator import Orchestrator, create_orchestrator, OrchestratorContext
 from src.agent.policy_engine import create_policy_engine
 from src.agent.plugin_manager import create_plugin_manager

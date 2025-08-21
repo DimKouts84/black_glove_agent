@@ -12,6 +12,10 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import json
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from src.agent.llm_client import (
     LLMClient, LLMConfig, LLMProvider, LLMMessage, LLMResponse, RAGDocument,
     ConversationMemory, RAGManager, create_llm_client, LLMError

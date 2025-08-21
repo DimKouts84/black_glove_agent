@@ -11,6 +11,11 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 from typing import Dict, Any, List
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
 from src.agent.orchestrator import (
     Orchestrator, WorkflowManager, ResultProcessor, WorkflowState, ScanMode,
     create_orchestrator, OrchestratorContext

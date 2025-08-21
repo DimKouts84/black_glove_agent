@@ -9,6 +9,10 @@ import pytest
 import time
 from typing import Dict, Any
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from src.adapters.interface import (
     AdapterInterface, AdapterResult, AdapterResultStatus, 
     AdapterError, AdapterConfigError, AdapterExecutionError

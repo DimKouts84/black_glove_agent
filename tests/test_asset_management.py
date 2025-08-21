@@ -11,6 +11,10 @@ import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from src.agent.models import AssetModel, AssetType, ConfigModel
 from src.agent.asset_validator import AssetValidator, ValidationResult, ValidationStatus
 from src.agent.db import init_db, get_db_connection, remove_asset

@@ -5,6 +5,11 @@ This module contains focused tests for the asset validation logic and allowlist 
 """
 
 import pytest
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from src.agent.asset_validator import (
     AssetValidator, AllowlistManager, ValidationResult, ValidationStatus
 )
