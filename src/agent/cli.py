@@ -14,6 +14,7 @@ from rich import print as rprint
 
 from .db import init_db
 from .models import ConfigModel, SeverityLevel
+from .exceptions import global_exception_handler, BlackGloveError, AdapterError, PolicyViolationError
 
 # Import orchestrator components
 try:
@@ -35,6 +36,60 @@ except ImportError:
 
 app = typer.Typer(help="Black Glove - An amateur pentest agent for home security testing")
 console = Console()
+
+# Version support and adapters subcommands
+try:
+    import importlib.metadata as importlib_metadata
+except Exception:
+    import importlib_metadata  # type: ignore
+
+def _get_version() -> str:
+    try:
+        return importlib_metadata.version("black-glove")
+    except Exception:
+        return "0.0.0"
+
+@app.callback(invoke_without_command=True)
+def _main_version(
+    version: bool = typer.Option(
+        False, "--version", help="Show version and exit", is_eager=True
+    )
+):
+    if version:
+        console.print(f"black-glove { _get_version() }")
+        raise typer.Exit(code=0)
+
+adapters_app = typer.Typer(help="Adapter-related commands")
+app.add_typer(adapters_app, name="adapters")
+
+@adapters_app.command("list")
+@global_exception_handler
+def adapters_list():
+    """
+    List available adapters discovered by the plugin manager.
+    """
+    try:
+        from .plugin_manager import create_plugin_manager
+        pm = create_plugin_manager()
+        names = pm.discover_adapters()
+        if not names:
+            console.print("[yellow]No adapters discovered.[/yellow]")
+            return
+        table = Table(title=f"Available Adapters ({len(names)})", show_header=True, header_style="bold magenta")
+        table.add_column("Name", style="cyan")
+        table.add_column("Category", style="green")
+        table.add_column("Requires Docker", style="yellow")
+        table.add_column("Description", style="white")
+        for name in names:
+            info = pm.get_adapter_info(name) or {}
+            category = info.get("category", "unknown")
+            requires_docker = "yes" if info.get("requires_docker", False) else "no"
+            description = info.get("description", "")
+            table.add_row(name, str(category), requires_docker, description)
+        console.print(table)
+    except Exception as e:
+        console.print(f"[red]❌ Failed to list adapters: {e}[/red]")
+        raise typer.Exit(code=1)
 
 def show_legal_notice() -> bool:
     """
@@ -217,10 +272,125 @@ def load_config() -> ConfigModel:
         typer.echo("  Using default configuration")
         return ConfigModel()
 
+def run_guided_setup():
+    """
+    Run the interactive guided setup after initialization.
+    """
+    console.print("\n[bold green]🚀 Starting Guided Setup...[/bold green]")
+    
+    # Offer to open config file
+    if typer.confirm("Open configuration file in editor?"):
+        config_path = Path.home() / ".homepentest" / "config.yaml"
+        import os
+        if os.name == 'nt':  # Windows
+            os.system(f"notepad {config_path}")
+        else:  # Unix-like systems
+            editor = os.environ.get('EDITOR', 'nano')
+            os.system(f"{editor} {config_path}")
+    
+    # Add first asset
+    if typer.confirm("Would you like to add your first asset now?"):
+        try:
+            asset_name = typer.prompt("Asset name")
+            asset_type = typer.prompt("Asset type", type=typer.Choice(["host", "domain", "vm"]))
+            asset_value = typer.prompt("Asset value (IP/domain)")
+            
+            # Call add_asset internally
+            from .models import AssetModel, DatabaseManager
+            from .db import init_db
+            from .asset_validator import create_asset_validator, ValidationStatus
+            
+            # Ensure database exists
+            init_db()
+            
+            # Create asset model
+            asset = AssetModel(name=asset_name, type=asset_type, value=asset_value)
+            
+            # Validate asset (load user configuration so authorized targets are respected)
+            config = load_config()
+            validator = create_asset_validator(config)
+            validation_result = validator.validate_asset(asset)
+            
+            if not validation_result.is_authorized:
+                console.print(f"[red]❌ Asset validation failed: {validation_result.message}[/red]")
+                if validation_result.suggestions:
+                    console.print("[yellow]💡 Suggestions:[/yellow]")
+                    for suggestion in validation_result.suggestions:
+                        console.print(f"   • {suggestion}")
+            else:
+                console.print(f"[green]✅ {validation_result.message}[/green]")
+                
+                # Add to database
+                db_manager = DatabaseManager()
+                asset_id = db_manager.add_asset(asset)
+                console.print(f"[green]✅ Asset added successfully with ID: {asset_id}[/green]")
+                
+                # Run passive recon on the new asset
+                if typer.confirm("Run passive reconnaissance on the new asset?"):
+                    try:
+                        from .orchestrator import create_orchestrator
+                        from .models import Asset
+                        
+                        # Create orchestrator
+                        orchestrator = create_orchestrator(config.model_dump())
+                        
+                        # Add asset to orchestrator
+                        agent_asset = Asset(
+                            target=asset.value,
+                            tool_name="recon",
+                            parameters={"asset_id": asset_id, "asset_name": asset_name}
+                        )
+                        orchestrator.add_asset(agent_asset)
+                        
+                        console.print("[yellow]📡 Starting passive reconnaissance...[/yellow]")
+                        with Progress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            TaskProgressColumn(),
+                            console=console
+                        ) as progress:
+                            task = progress.add_task("Running passive scans...", total=None)
+                            results = orchestrator.run_passive_recon()
+                            progress.update(task, description="Passive reconnaissance completed")
+                            progress.stop()
+                        
+                        console.print(f"[green]✅ Passive reconnaissance completed with {len(results)} results[/green]")
+                        
+                        # Generate report
+                        if typer.confirm("Generate security assessment report?"):
+                            console.print("[cyan]📊 Generating security assessment report...[/cyan]")
+                            try:
+                                with Progress(
+                                    SpinnerColumn(),
+                                    TextColumn("[progress.description]{task.description}"),
+                                    console=console
+                                ) as progress:
+                                    task = progress.add_task("Generating report...", total=None)
+                                    report_data = orchestrator.generate_report()
+                                    progress.update(task, description="Report generation completed")
+                                    progress.stop()
+                                
+                                findings_count = report_data['summary']['total_findings']
+                                console.print(f"[bold green]📊 Report generated: {findings_count} findings identified[/bold green]")
+                                
+                            except Exception as e:
+                                console.print(f"[yellow]⚠️  Report generation failed: {e}[/yellow]")
+                        
+                        orchestrator.cleanup()
+                        
+                    except Exception as e:
+                        console.print(f"[red]❌ Recon failed: {e}[/red]")
+                        
+        except Exception as e:
+            console.print(f"[red]❌ Failed to add asset: {e}[/red]")
+
 @app.command()
+@global_exception_handler
 def init(
     force: bool = typer.Option(False, "--force", "-f", help="Force reinitialization"),
-    skip_legal: bool = typer.Option(False, "--skip-legal", help="Skip legal notice (for testing only)")
+    skip_legal: bool = typer.Option(False, "--skip-legal", help="Skip legal notice (for testing only)"),
+    guided: bool = typer.Option(False, "--guided", help="Run setup wizard after initialization")
 ):
     """
     Initialize the Black Glove pentest agent.
@@ -312,17 +482,30 @@ def init(
         console.print(f"\n[red]❌ Database initialization failed: {e}[/red]")
         raise typer.Exit(code=1)
     
+    # Guided setup workflow
+    if guided:
+        run_guided_setup()
+    
     console.print("\n[bold green]🎉 Black Glove initialization completed successfully![/bold green]")
     console.print("[bold blue]📋 Next steps:[/bold blue]")
-    console.print("   1. Review and customize ~/.homepentest/config.yaml")
-    console.print("   2. Add assets using: [cyan]agent add-asset --name <name> --type <type> --value <value>[/cyan]")
-    console.print("   3. Run recon using: [cyan]agent recon passive --asset <asset-name>[/cyan]")
+    if guided:
+        console.print("   1. Review and customize ~/.homepentest/config.yaml")
+        console.print("   2. Add more assets using: [cyan]agent add-asset --name <name> --type <type> --value <value>[/cyan]")
+        console.print("   3. Run recon using: [cyan]agent recon passive --asset <asset-name>[/cyan]")
+    else:
+        console.print("   1. Review and customize ~/.homepentest/config.yaml")
+        console.print("   2. Add assets using: [cyan]agent add-asset --name <name> --type <type> --value <value>[/cyan]")
+        console.print("   3. Run recon using: [cyan]agent recon passive --asset <asset-name>[/cyan]")
+        console.print("\n[yellow]💡 Tip: Run 'agent init --guided' for an interactive setup wizard[/yellow]")
 
 @app.command()
+@global_exception_handler
 def recon(
     mode: str = typer.Argument(..., help="Recon mode: passive, active, or lab"),
     asset: str = typer.Option(None, "--asset", "-a", help="Asset name to scan"),
-    preset: str = typer.Option("default", "--preset", "-p", help="Scan preset to use")
+    preset: str = typer.Option("default", "--preset", "-p", help="Scan preset to use"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan/validate only; do not execute"),
+    adapters: Optional[str] = typer.Option(None, "--adapters", "-A", help="Comma-separated adapter names to execute (active/lab only)")
 ):
     """
     Run reconnaissance on specified assets.
@@ -374,6 +557,45 @@ def recon(
         )
         orchestrator.add_asset(agent_asset)
     
+    # Optional dry-run planning/validation
+    if dry_run:
+        mode_lower = mode.lower()
+        if mode_lower == "passive":
+            console.print("[yellow]📝 Dry-run:[/yellow] validated assets and permissions for passive recon. No execution performed.")
+            console.print(f"[cyan]Assets to process:[/cyan] {len(assets)}")
+            return
+        else:
+            try:
+                from .orchestrator import ScanMode as _ScanMode
+            except Exception:
+                _ScanMode = None  # type: ignore
+            if mode_lower == "lab" and _ScanMode is not None:
+                steps = orchestrator.plan_active_scans(_ScanMode.LAB)
+            else:
+                steps = orchestrator.plan_active_scans()
+            if adapters:
+                _filters = [s.strip().lower() for s in adapters.split(",") if s.strip()]
+                # Support both dict-like steps and WorkflowStep objects
+                steps = [
+                    s for s in steps
+                    if (
+                        (str(s.get("tool", "")).lower() if hasattr(s, "get") else str(getattr(s, "tool", "")).lower())
+                    ) in _filters
+                ]
+            table = Table(title=f"Planned {mode_lower} steps (dry-run)", show_header=True, header_style="bold magenta")
+            table.add_column("Index", justify="right")
+            table.add_column("Tool")
+            table.add_column("Target", overflow="fold")
+            table.add_column("Params", overflow="fold")
+            for idx, step in enumerate(steps, 1):
+                tool = (str(step.get("tool", "")) if hasattr(step, "get") else str(getattr(step, "tool", "")))
+                target = (str(step.get("target", "")) if hasattr(step, "get") else str(getattr(step, "target", "")))
+                # For dict-steps params key is 'params', for WorkflowStep it's 'parameters'
+                params = (str(step.get("params", "")) if hasattr(step, "get") else str(getattr(step, "parameters", "")))
+                table.add_row(str(idx), tool, target, params)
+            console.print(table)
+            return
+    
     # Run appropriate recon mode with progress
     if mode.lower() == "passive":
         console.print("[yellow]📡 Starting passive reconnaissance...[/yellow]")
@@ -390,11 +612,19 @@ def recon(
             progress.stop()
         
         console.print(f"[green]✅ Passive reconnaissance completed with {len(results)} results[/green]")
-        
+    
     elif mode.lower() == "active":
         console.print("[orange3]⚡ Starting active reconnaissance...[/orange3]")
         # Plan active scans
         steps = orchestrator.plan_active_scans()
+        if adapters:
+            _filters = [s.strip().lower() for s in adapters.split(",") if s.strip()]
+            steps = [
+                s for s in steps
+                if (
+                    (str(s.get("tool", "")).lower() if hasattr(s, "get") else str(getattr(s, "tool", "")).lower())
+                ) in _filters
+            ]
         console.print(f"[blue]📋 Planned {len(steps)} active scanning steps[/blue]")
         
         # Execute steps with progress
@@ -410,18 +640,39 @@ def recon(
             
             # Execute steps (in real implementation, this would require user approval)
             for i, step in enumerate(steps, 1):
-                progress.update(task, description=f"Executing step {i}/{len(steps)}: {step.get('tool', 'unknown')}")
-                result = orchestrator.execute_scan_step(step, approval_required=False)  # Auto-approve for demo
+                step_tool_display = (str(step.get("tool", "unknown")) if hasattr(step, "get") else str(getattr(step, "tool", "unknown")))
+                progress.update(task, description=f"Executing step {i}/{len(steps)}: {step_tool_display}")
+                # Ensure we pass a WorkflowStep object to orchestrator.execute_scan_step
+                if hasattr(step, "get"):
+                    step_obj = WorkflowStep(
+                        name=step.get("name") or f"step_{i}",
+                        description=step.get("description", ""),
+                        tool=step.get("tool"),
+                        target=step.get("target"),
+                        parameters=step.get("params") or step.get("parameters") or {},
+                        priority=step.get("priority", i)
+                    )
+                else:
+                    step_obj = step
+                result = orchestrator.execute_scan_step(step_obj, approval_required=False)  # Auto-approve for demo
                 if result:
                     executed_count += 1
                 progress.advance(task)
         
         console.print(f"[green]✅ Active scanning completed with {executed_count} successful steps[/green]")
-        
+    
     elif mode.lower() == "lab":
         console.print("[purple]🧪 Starting lab mode reconnaissance (enhanced scanning)...[/purple]")
         # In lab mode, more comprehensive scanning
         steps = orchestrator.plan_active_scans(ScanMode.LAB)
+        if adapters:
+            _filters = [s.strip().lower() for s in adapters.split(",") if s.strip()]
+            steps = [
+                s for s in steps
+                if (
+                    (str(s.get("tool", "")).lower() if hasattr(s, "get") else str(getattr(s, "tool", "")).lower())
+                ) in _filters
+            ]
         console.print(f"[blue]📋 Planned {len(steps)} lab scanning steps[/blue]")
         
         executed_count = 0
@@ -435,8 +686,21 @@ def recon(
             task = progress.add_task("Executing lab scans...", total=len(steps))
             
             for i, step in enumerate(steps, 1):
-                progress.update(task, description=f"Executing lab step {i}/{len(steps)}: {step.get('tool', 'unknown')}")
-                result = orchestrator.execute_scan_step(step, approval_required=False)
+                step_tool_display = (str(step.get("tool", "unknown")) if hasattr(step, "get") else str(getattr(step, "tool", "unknown")))
+                progress.update(task, description=f"Executing lab step {i}/{len(steps)}: {step_tool_display}")
+                # Normalize dict-step into WorkflowStep when needed
+                if hasattr(step, "get"):
+                    step_obj = WorkflowStep(
+                        name=step.get("name") or f"lab_step_{i}",
+                        description=step.get("description", ""),
+                        tool=step.get("tool"),
+                        target=step.get("target"),
+                        parameters=step.get("params") or step.get("parameters") or {},
+                        priority=step.get("priority", i)
+                    )
+                else:
+                    step_obj = step
+                result = orchestrator.execute_scan_step(step_obj, approval_required=False)
                 if result:
                     executed_count += 1
                 progress.advance(task)
@@ -490,6 +754,7 @@ def recon(
     orchestrator.cleanup()
 
 @app.command()
+@global_exception_handler
 def report(
     asset: str = typer.Option(None, "--asset", "-a", help="Asset name to generate report for"),
     format: str = typer.Option("json", "--format", "-f", help="Report format (json, markdown, html)"),
@@ -549,6 +814,7 @@ def report(
         raise typer.Exit(code=1)
 
 @app.command()
+@global_exception_handler
 def add_asset(
     name: str = typer.Argument(..., help="Name for the asset"),
     type: str = typer.Argument(..., help="Type of asset (host, domain, vm)"),
@@ -577,8 +843,8 @@ def add_asset(
         # Create asset model
         asset = AssetModel(name=name, type=type, value=value)
         
-        # Validate asset
-        config = ConfigModel()
+        # Validate asset (load user configuration so authorized targets are respected)
+        config = load_config()
         validator = create_asset_validator(config)
         validation_result = validator.validate_asset(asset)
         
@@ -603,6 +869,7 @@ def add_asset(
         raise typer.Exit(code=1)
 
 @app.command()
+@global_exception_handler
 def list_assets():
     """
     List all assets in the database.
@@ -646,6 +913,7 @@ def list_assets():
         raise typer.Exit(code=1)
 
 @app.command()
+@global_exception_handler
 def remove_asset(
     asset_id: int = typer.Argument(..., help="ID of the asset to remove")
 ):

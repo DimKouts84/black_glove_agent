@@ -7,6 +7,10 @@ passive reconnaissance, active scanning, and result processing with safety contr
 
 import logging
 import time
+import os
+import json
+import glob
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -17,7 +21,7 @@ from .policy_engine import PolicyEngine, create_policy_engine
 from .plugin_manager import PluginManager, create_plugin_manager
 from .llm_client import LLMClient, create_llm_client, LLMMessage
 from ..adapters.interface import AdapterResult, AdapterResultStatus
-
+    
 
 class ScanMode(Enum):
     """Enumeration of scan modes."""
@@ -225,16 +229,26 @@ class Orchestrator:
         """
         self.logger.info(f"Planning active scans in {scan_mode.value} mode")
         
+        # Ensure we have passive results in-memory; if not, attempt to load from evidence on disk
         if not self.scan_results:
-            self.logger.warning("No passive recon results to base planning on")
-            return []
+            self.logger.warning("No passive recon results in memory; attempting to load from evidence storage")
+            try:
+                loaded = self._load_passive_results_from_evidence()
+                if not loaded:
+                    self.logger.warning("No passive recon results to base planning on (no evidence found)")
+                    return []
+                # Loaded passive results into self.scan_results
+                self.logger.info(f"Loaded {len(loaded)} passive results from evidence storage")
+            except Exception as e:
+                self.logger.error(f"Failed to load passive results from evidence: {e}")
+                return []
         
         # Build context from passive results
         context = self._build_recon_context()
         objective = f"Plan {scan_mode.value} scanning activities based on reconnaissance findings"
         
         try:
-            # Get LLM planning suggestions
+            # Get LLM planning suggestions (may raise if LLM unavailable)
             llm_response = self.llm_client.plan_next_steps(context, objective)
             
             # Parse LLM response into workflow steps
@@ -384,6 +398,9 @@ class Orchestrator:
     def _analyze_findings(self, tool_output: Any, target: str) -> List[Dict[str, Any]]:
         """
         Use LLM to analyze tool output and identify security issues.
+
+        This implementation safely serializes tool output for JSON transport by
+        converting non-serializable objects (e.g., datetime) to ISO strings.
         
         Args:
             tool_output: Raw tool output
@@ -393,13 +410,19 @@ class Orchestrator:
             List of identified findings
         """
         try:
-            # Convert tool output to string if needed
+            # Safe JSON serialization helper for objects the default JSON encoder can't handle
+            def _safe_default(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                # Add more type handlers here if needed
+                return str(obj)
+
+            # Convert tool output to a JSON string safely
             if not isinstance(tool_output, str):
-                import json
-                output_str = json.dumps(tool_output, indent=2)
+                output_str = json.dumps(tool_output, indent=2, default=_safe_default)
             else:
                 output_str = tool_output
-            
+
             # Get LLM analysis
             context = f"Target: {target}"
             llm_response = self.llm_client.analyze_findings(output_str, context)
@@ -419,6 +442,120 @@ class Orchestrator:
         
         return []
     
+    def _load_passive_results_from_evidence(self) -> List[ScanResult]:
+        """
+        Load passive reconnaissance JSON artifacts from evidence storage and
+        rehydrate them into in-memory ScanResult objects so planning can proceed
+        across orchestrator restarts.
+
+        Search order for evidence:
+          1. explicit config 'evidence_path'
+          2. project-local './evidence/passivereconadapter'
+          3. user home '~/.homepentest/evidence/passivereconadapter'
+        """
+        results: List[ScanResult] = []
+        tried_paths = []
+
+        # Candidate roots to search (in order)
+        cfg_path = self.config.get("evidence_path")
+        if cfg_path:
+            tried_paths.append(Path(cfg_path))
+        # project-local evidence directory
+        tried_paths.append(Path(os.getcwd()) / "evidence")
+        # user home default
+        tried_paths.append(Path(os.path.expanduser("~")) / ".homepentest" / "evidence")
+
+        found_any = False
+        for root in tried_paths:
+            pr_dir = Path(root) / "passivereconadapter"
+            self.logger.debug(f"Checking passive evidence directory: {pr_dir}")
+            if not pr_dir.exists():
+                self.logger.debug(f"Passive evidence path not present: {pr_dir}")
+                continue
+
+            found_any = True
+            for fpath in pr_dir.glob("*.json"):
+                try:
+                    with fpath.open("r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+
+                    target = data.get("domain") or data.get("target") or fpath.stem
+                    asset = Asset(target=target, tool_name="passive_recon", parameters={})
+
+                    # Rehydrate minimal ScanResult. Use available keys defensively.
+                    exec_time = 0.0
+                    timings = data.get("timings") if isinstance(data.get("timings"), dict) else {}
+                    try:
+                        exec_time = float(timings.get("total", 0.0))
+                    except Exception:
+                        exec_time = 0.0
+
+                    scan_result = ScanResult(
+                        asset=asset,
+                        tool_name="passive_recon",
+                        status="completed",
+                        findings=data.get("findings", []),
+                        raw_output=data,
+                        metadata=data.get("metadata", {}),
+                        evidence_path=str(fpath),
+                        execution_time=exec_time
+                    )
+
+                    # Append to in-memory state and result processor
+                    self.scan_results.append(scan_result)
+                    self.result_processor.processed_results.append(scan_result)
+                    results.append(scan_result)
+                except Exception as e:
+                    self.logger.error(f"Failed to load passive evidence {fpath}: {e}")
+                    continue
+
+        if not found_any:
+            self.logger.debug("No passive evidence directories found in candidates: " + ", ".join(str(p) for p in tried_paths))
+            # As a last resort, search the project tree for any passivereconadapter dirs
+            project_root = Path(os.getcwd())
+            self.logger.debug(f"Attempting recursive search under project root: {project_root}")
+            for candidate in project_root.rglob("passivereconadapter"):
+                try:
+                    self.logger.debug(f"Found passive evidence directory via recursive search: {candidate}")
+                    for fpath in candidate.glob("*.json"):
+                        try:
+                            with fpath.open("r", encoding="utf-8") as fh:
+                                data = json.load(fh)
+                            target = data.get("domain") or data.get("target") or fpath.stem
+                            asset = Asset(target=target, tool_name="passive_recon", parameters={})
+                            exec_time = 0.0
+                            timings = data.get("timings") if isinstance(data.get("timings"), dict) else {}
+                            try:
+                                exec_time = float(timings.get("total", 0.0))
+                            except Exception:
+                                exec_time = 0.0
+                            scan_result = ScanResult(
+                                asset=asset,
+                                tool_name="passive_recon",
+                                status="completed",
+                                findings=data.get("findings", []),
+                                raw_output=data,
+                                metadata=data.get("metadata", {}),
+                                evidence_path=str(fpath),
+                                execution_time=exec_time
+                            )
+                            self.scan_results.append(scan_result)
+                            self.result_processor.processed_results.append(scan_result)
+                            results.append(scan_result)
+                        except Exception as e:
+                            self.logger.error(f"Failed to load passive evidence {fpath} during recursive search: {e}")
+                            continue
+                except Exception as e:
+                    self.logger.error(f"Error while scanning candidate directory {candidate}: {e}")
+                    continue
+
+            if results:
+                self.logger.info(f"Loaded {len(results)} passive results via recursive project search")
+            else:
+                self.logger.debug("Recursive search found no passive evidence JSON files")
+
+        return results
+
     def _build_recon_context(self) -> str:
         """
         Build context string from passive reconnaissance results.
