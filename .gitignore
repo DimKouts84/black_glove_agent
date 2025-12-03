@@ -36,7 +36,6 @@ wheels/
 htmlcov/
 .tox/
 .nox/
-.coverage.*
 .cache/
 
 # IDEs and editors

@@ -4,8 +4,9 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=mit&logoColor=white)](https://opensource.org/licenses/MIT)
 [![Human in the Loop](https://img.shields.io/badge/human--in--the--loop-orange?style=for-the-badge)](#)
-[![Docker](https://img.shields.io/badge/docker-containerization-blue?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+
 [![SQLite](https://img.shields.io/badge/sqlite-database-green?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![ChromaDB](https://img.shields.io/badge/chromadb-vector%20store-blue?style=for-the-badge)](https://www.trychroma.com/)
 [![LMStudio](https://img.shields.io/badge/LMStudio-000000?style=for-the-badge&logo=lmstudio&logoColor=white)](https://lmstudio.ai/)
 [![Ollama](https://img.shields.io/badge/Ollama-222222?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.ai/)
 [![CLI](https://img.shields.io/badge/cli-typer-blue?style=for-the-badge&logo=typer&logoColor=white)](https://typer.tiangolo.com/)
@@ -43,7 +44,6 @@ flowchart TD
 
    subgraph ExecutionLayer["Execution / Tools"]
       TA[Tool Adapters - Nmap, Gobuster, ZAP]
-      CS[Docker Sandbox - Isolated Execution]
       EX[Exploit Adapters - lab-mode gated]
    end
 
@@ -62,9 +62,7 @@ flowchart TD
    O -->|assemble adapters| PM
    PM --> TA
    O -->|schedule| TA
-   TA -->|run in| CS
    TA --> EX
-   CS -->|isolated run| TA
    TA -->|raw output| RP
    RP --> DB
    RP --> RL
@@ -79,7 +77,7 @@ flowchart TD
 
 ```
 
-> **Note:** Nodes highlighted in dark red (Docker Sandbox and Exploit Adapters) indicate high-risk execution paths — these steps run in isolated containers, are subject to rate-limiting and lab-mode gating, and require explicit, typed human approval before any active or exploit-class scans are executed. <br>All approvals and raw outputs are recorded in the append-only audit log for full traceability.
+> **Note:** Nodes highlighted in dark red (Exploit Adapters) indicate high-risk execution paths — these steps are subject to rate-limiting and lab-mode gating, and require explicit, typed human approval before any active or exploit-class scans are executed. <br>All approvals and raw outputs are recorded in the append-only audit log for full traceability.
 
 <br>
 
@@ -97,7 +95,6 @@ flowchart TD
 - **Mandatory Legal Notice**: First-run acknowledgment of responsible use
 - **Human-in-the-Loop**: Typed approval required for all active scans
 - **Rate Limiting**: Configurable traffic throttling to prevent accidental DoS
-- **Container Sandboxing**: All tools run in isolated Docker containers
 - **Lab Mode**: Special restrictions for exploit tools
 
 ### 🧠 LLM-Powered Analysis
@@ -106,7 +103,7 @@ flowchart TD
 - **Result Interpretation**: Converts raw tool output into actionable insights with RAG support
 - **Risk Assessment**: Provides clear explanations of potential impact
 - **Conversation Memory**: Maintains context across multiple interactions
-- **Retrieval-Augmented Generation**: Enhances responses with security knowledge base
+- **Retrieval-Augmented Generation**: Enhances responses with security knowledge base using ChromaDB
 - **Streaming Responses**: Real-time output processing for better user experience
 
 ### 🛠️ Modular Architecture
@@ -116,17 +113,23 @@ flowchart TD
 - **Audit Logging**: Complete immutable record of all actions
 
 ### 📊 Comprehensive Testing
-- **Passive Recon**: DNS, certificate, and historical data gathering
-- **Active Scanning**: Fingerprinting with human approval workflow
+- **Passive Recon**: DNS, subdomain enumeration, technology detection, and historical data gathering
+- **OSINT Adapters**: DnsLookup, Sublist3r, Wappalyzer, Shodan (API), ViewDNS (API)
+- **Active Scanning**: Nmap, Gobuster, and external port scanning with human approval workflow
 - **Vulnerability Analysis**: Normalized findings with severity ratings
 - **Reporting**: Markdown and JSON report generation
 
 ## 📋 Requirements
 
 - **Python**: 3.8 or higher
-- **Docker**: For tool containerization
+- **Nmap**: Network discovery and security auditing
+- **Gobuster**: Directory/File, DNS and VHost busting tool
 - **LLM Service**: LMStudio, Ollama, or OpenRouter account
 - **Operating System**: Windows, macOS, or Linux
+
+### Optional (for enhanced OSINT capabilities)
+- **Shodan API Key**: For passive reconnaissance (free tier available)
+- **ViewDNS API Key**: For active external port scanning
 
 ## 🛠️ Installation
 
@@ -149,11 +152,7 @@ flowchart TD
    pip install -e .
    ```
 
-4. **Start Docker services:**
-   ```bash
-   cd docker
-   docker-compose up -d
-   ```
+
 
 ### Configuration
 
@@ -168,6 +167,13 @@ flowchart TD
    Open `~/.homepentest/config.yaml` and adjust settings as needed (see full sample below). You can also copy the template directly:
    - Linux/macOS: `cp config/default_config.yaml ~/.homepentest/config.yaml`
    - Windows PowerShell: `Copy-Item -Path config/default_config.yaml -Destination "$HOME/.homepentest/config.yaml" -Force`
+
+3. **(Optional) Configure API keys:**
+   Copy `.env.example` to `.env` and add your API keys:
+   ```bash
+   cp .env.example .env
+   # Edit .env and add your SHODAN_API_KEY and VIEWDNS_API_KEY
+   ```
 
 ## 🎮 Basic Usage
 
@@ -242,6 +248,8 @@ llm_provider: "llmlocal_or_cloud_provider"  # Options: lmstudio, ollama, openrou
 llm_endpoint: "http://localhost:1234/v1"  # Update with your LLM service URL
 llm_model: "local-model"  # Specify your local model name
 llm_temperature: 0.1  # Controls randomness (0.0 = deterministic, 1.0 = creative)
+enable_rag: true  # Enable Retrieval-Augmented Generation with ChromaDB
+rag_db_path: "~/.homepentest/chroma_db"  # Path to ChromaDB vector store
 
 # Scan Settings
 # Configure scanning behavior and limits
@@ -336,10 +344,10 @@ Deployment options:
 - `--full`: Complete deployment process (default)
 
 The deployment process will:
-1. Check prerequisites (Python 3.8+, Docker)
+1. Check prerequisites (Python 3.8+, Nmap, Gobuster)
 2. Setup virtual environment
 3. Install dependencies
-4. Run all tests (245/245 passing)
+4. Run all tests
 5. Create deployment package
 
 ---
@@ -398,6 +406,28 @@ This tool is provided for educational and authorized security testing purposes o
 ## 📞 Support
 
 For issues, questions, or feature requests, please open a GitHub issue.
+
+---
+
+## RAG / ChromaDB — Quick Operational Notes
+
+Brief operational guidance and quick commands for the project's Retrieval-Augmented Generation (RAG) layer powered by ChromaDB.
+
+- Default storage path: `~/.homepentest/chroma_db`
+- Enable RAG in config: set `enable_rag: true` and `rag_db_path: "~/.homepentest/chroma_db"`
+
+Quick commands (examples):
+
+```bash
+# Reindex example (project script)
+python -m src.agent.rag.manager reindex --source /path/to/export.json --config ~/.homepentest/config.yaml
+```
+
+Operational notes:
+- Stop the agent before performing backups or restores to avoid corruption.
+- Prefer OS-level encrypted volumes (BitLocker, FileVault, LUKS) for on-disk protection.
+- When changing embedding models, re-index documents and validate search relevance.
+- Record RAG upserts/searches in the audit_log with payload metadata (asset_id, source, tool, ts).
 
 ---
 

@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.agent.llm_client import (
     LLMClient, LLMConfig, LLMProvider, LLMMessage, LLMResponse, RAGDocument,
-    ConversationMemory, RAGManager, create_llm_client, LLMError
+    ConversationMemory, create_llm_client, LLMError
 )
+from src.agent.rag.chroma_store import ChromaDBManager
 
 
 class TestLLMConfig:
@@ -208,74 +209,6 @@ class TestRAGDocument:
         assert doc.embedding == embedding
 
 
-class TestRAGManager:
-    """Test cases for RAG manager functionality."""
-    
-    @pytest.fixture
-    def rag_manager(self):
-        """Create a RAG manager with temporary database."""
-        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp_db:
-            db_path = tmp_db.name
-        
-        manager = RAGManager(db_path)
-        yield manager
-        
-        # Cleanup
-        try:
-            os.unlink(db_path)
-        except:
-            pass
-    
-    def test_rag_manager_initialization(self, rag_manager):
-        """Test RAG manager initialization."""
-        assert rag_manager.db_path.exists()
-        assert rag_manager.logger is not None
-    
-    def test_rag_manager_add_document(self, rag_manager):
-        """Test adding document to RAG manager."""
-        doc = RAGDocument(
-            content="This is test security content about vulnerabilities",
-            metadata={"source": "test.txt", "type": "security_guide"},
-            doc_id="test_doc_1"
-        )
-        
-        rag_manager.add_document(doc)
-        # Should not raise any exceptions
-    
-    def test_rag_manager_search_documents(self, rag_manager):
-        """Test searching documents in RAG manager."""
-        # Add some test documents
-        doc1 = RAGDocument(
-            content="Security vulnerability testing guide with XSS examples",
-            metadata={"source": "security_guide.txt"},
-            doc_id="doc1"
-        )
-        doc2 = RAGDocument(
-            content="Network scanning and reconnaissance techniques",
-            metadata={"source": "recon_guide.txt"},
-            doc_id="doc2"
-        )
-        
-        rag_manager.add_document(doc1)
-        rag_manager.add_document(doc2)
-        
-        # Search for security-related content
-        results = rag_manager.search_documents("security vulnerability", limit=2)
-        assert len(results) >= 1
-        assert any("security" in result.content.lower() for result in results)
-    
-    def test_rag_manager_get_context_for_query(self, rag_manager):
-        """Test getting context for a query."""
-        doc = RAGDocument(
-            content="Important security finding: SQL injection vulnerability detected",
-            metadata={"source": "scan_results.txt"},
-            doc_id="finding1"
-        )
-        rag_manager.add_document(doc)
-        
-        context = rag_manager.get_context_for_query("SQL injection")
-        assert "SQL injection vulnerability" in context
-        assert "[Source: scan_results.txt]" in context
 
 
 class TestEnhancedLLMClient:

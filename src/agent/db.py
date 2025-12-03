@@ -29,6 +29,10 @@ def init_db() -> None:
             create_findings_table(conn)
             # Create audit_log table
             create_audit_log_table(conn)
+            # Create sessions table
+            create_sessions_table(conn)
+            # Create chat_messages table
+            create_chat_messages_table(conn)
     finally:
         conn.close()
 
@@ -99,6 +103,49 @@ def create_audit_log_table(conn: sqlite3.Connection) -> None:
             actor TEXT,
             event_type TEXT,
             data TEXT  -- JSON data stored as TEXT
+        )
+    """)
+
+def create_sessions_table(conn: sqlite3.Connection) -> None:
+    """
+    Create the sessions table for chat history persistence.
+    
+    Schema:
+    - id: TEXT PRIMARY KEY (UUID)
+    - title: TEXT
+    - created_at: TEXT DEFAULT CURRENT_TIMESTAMP
+    - last_active: TEXT DEFAULT CURRENT_TIMESTAMP
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_active TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+def create_chat_messages_table(conn: sqlite3.Connection) -> None:
+    """
+    Create the chat_messages table for storing conversation history.
+    
+    Schema:
+    - id: INTEGER PRIMARY KEY AUTOINCREMENT
+    - session_id: TEXT (foreign key to sessions.id)
+    - role: TEXT (user, assistant, system)
+    - content: TEXT NOT NULL
+    - timestamp: TEXT DEFAULT CURRENT_TIMESTAMP
+    - llm_response_metadata: TEXT (JSON)
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+            llm_response_metadata TEXT,
+            FOREIGN KEY(session_id) REFERENCES sessions(id)
         )
     """)
 

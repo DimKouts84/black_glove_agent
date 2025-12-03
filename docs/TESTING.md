@@ -18,8 +18,11 @@ Individual component testing with isolated functionality validation.
 - LLM Integration (`tests/test_llm_integration.py`): 5 tests passing
 - Orchestrator (`tests/test_orchestrator.py`): 15 tests passing
 - CLI Enhancements (`tests/test_cli_enhancements.py`): 5 tests passing
+- Docker Runner (`tests/test_docker_runner.py`): 7 tests passing
+- Nmap Adapter (`tests/test_nmap_adapter.py`): 9 tests passing
+- Gobuster Adapter (`tests/test_gobuster_adapter.py`): 8 tests passing
 
-**Total Unit Tests: 119 tests passing**
+**Total Unit Tests: 143 tests passing**
 
 ### Integration Tests
 Component interaction and workflow testing.
@@ -48,7 +51,7 @@ End-to-end functionality and user workflow validation.
 ## Test Coverage
 
 ### Current Test Status
-- **Total Tests**: 245 tests passing
+- **Total Tests**: 261 tests passing
 - **Coverage**: Core architecture components fully tested
 - **Safety Controls**: Policy engine and safety mechanisms validated
 - **LLM Integration**: Enhanced LLM features with conversation memory and RAG
@@ -224,26 +227,29 @@ python -m pytest tests/test_integration.py -v
 # Example test run output
 ========================= test session starts =========================
 platform win32 -- Python 3.12.9, pytest-8.4.1
-collected 245 items
+collected 261 items
 
-tests/test_adapters.py ..................                   [  7%]
-tests/test_asset_management.py ............................ [ 18%]
-tests/test_asset_validator.py ............................. [ 30%]
-tests/test_config_setup.py ..........                       [ 34%]
-tests/test_core_functionality.py ...                       [ 35%]
-tests/test_db_init.py ......                               [ 38%]
-tests/test_init_command.py .......                         [ 41%]
-tests/test_integration.py .........                        [ 44%]
-tests/test_llm_client.py ..........                        [ 48%]
-tests/test_llm_client_enhanced.py ................................ [ 61%]
-tests/test_llm_integration.py .....                        [ 63%]
-tests/test_orchestrator.py ...............                 [ 69%]
-tests/test_plugin_manager.py ............                  [ 74%]
-tests/test_policy_engine.py ........................       [ 84%]
-tests/test_prerequisites.py ......                         [ 86%]
+tests/test_adapters.py ..................                   [  6%]
+tests/test_asset_management.py ............................ [ 17%]
+tests/test_asset_validator.py ............................. [ 28%]
+tests/test_config_setup.py ..........                       [ 32%]
+tests/test_core_functionality.py ...                       [ 33%]
+tests/test_db_init.py ......                               [ 35%]
+tests/test_docker_runner.py .......                        [ 38%]
+tests/test_gobuster_adapter.py ........                    [ 41%]
+tests/test_init_command.py .......                         [ 44%]
+tests/test_integration.py .........                        [ 47%]
+tests/test_llm_client.py ..........                        [ 51%]
+tests/test_llm_client_enhanced.py ................................ [ 63%]
+tests/test_llm_integration.py .....                        [ 65%]
+tests/test_nmap_adapter.py .........                       [ 68%]
+tests/test_orchestrator.py ...............                 [ 74%]
+tests/test_plugin_manager.py ............                  [ 78%]
+tests/test_policy_engine.py ........................       [ 87%]
+tests/test_prerequisites.py ......                         [ 90%]
 ...
 
-========================= 245 passed in 70.40s =========================
+========================= 261 passed in 72.15s =========================
 ```
 
 ## Test Maintenance

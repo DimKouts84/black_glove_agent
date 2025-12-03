@@ -39,7 +39,7 @@ You will build a single-developer-friendly agent that orchestrates open-source r
 * Provide a CLI workflow that runs passive recon automatically and suggests safe next steps.
 * Allow you to run controlled active scans (fingerprinting) with rate limits and human approval.
 * Normalize tool outputs into a structured findings report with prioritized remediation recommendations.
-* Keep everything local-first: run LLMs with LMStudio/Ollama, store data locally (SQLite + embeddings), and sandbox all tool execution in containers.
+* Keep everything local-first: run LLMs with LMStudio/Ollama, store data locally (SQLite + embeddings), and execute tools locally with process isolation.
 
 ### Success metrics
 
@@ -74,8 +74,8 @@ You will build a single-developer-friendly agent that orchestrates open-source r
 
 * CLI Frontend (Typer) ↔ Agent Orchestrator (Python)
 * Agent Orchestrator → LLM Abstraction Layer (LMStudio / Ollama / OpenRouter)
-* Agent Orchestrator → Plugin Manager → Tool Adapters (Dockerized)
-* Tool Adapters ↔ Sandbox (Docker/Podman containers) → System Tools (nmap, gobuster, zap, openvas, masscan, nikto)
+* Agent Orchestrator → Plugin Manager → Tool Adapters (Local Process)
+* Tool Adapters ↔ Process Isolation (ProcessRunner) → System Tools (nmap, gobuster, zap, openvas, masscan, nikto)
 * Results normalized into: Findings DB (SQLite + embeddings) + Audit Log (append-only table + raw output files)
 * RAG Layer: local vector store (Chroma or FAISS) + embedding model (local) for contextual retrieval
 * Reporting module → generates markdown and JSON reports
@@ -164,7 +164,7 @@ Each requirement includes an ID, priority (MUST/SHOULD/CAN), and acceptance crit
   * Deny scanning private IP ranges not in the asset list.
   * Deny masscan rates over safe thresholds.
   * Block use of exploit payloads on non-lab assets.
-* The system uses Docker containers to sandbox all tool execution, preventing tools from accessing the host system.
+* The system uses `ProcessRunner` to execute tools as local processes with strict timeouts and input sanitization.
 * All inputs to tool adapters undergo two-layer sanitization: allow-list validation (e.g., for target format) and safe parameterization to prevent command injection.
 
 ## 10. Data model and persistence (SQLite + embeddings)
@@ -258,7 +258,7 @@ def run(params: Dict[str, Any]) -> AdapterResult:
     The adapter must:
       - **Layer 1: Allow-list validation**: Validate all inputs (especially `target`) against strict patterns (e.g., valid IP or domain) before use
       - **Layer 2: Parameterization**: Build the tool command as a list of arguments (never a single string) to prevent command injection
-      - Run the tool in an ephemeral container (Docker) with resource limits using the central docker_runner utility
+      - Run the tool as a local process with resource limits using the central ProcessRunner utility
       - capture stdout/stderr
       - produce a normalized metadata dict
       - write raw output to evidence store and return path in metadata

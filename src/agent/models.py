@@ -55,6 +55,9 @@ class ConfigModel(BaseModel):
     llm_model: str = Field(default="local-model", description="LLM model name")
     llm_temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="LLM temperature setting")
     
+    # API Keys
+    shodan_api_key: Optional[str] = Field(default=None, description="Shodan API Key")
+    
     # Scan settings
     default_rate_limit: int = Field(default=50, ge=1, description="Default packets per second rate limit")
     max_rate_limit: int = Field(default=100, ge=1, description="Maximum allowed rate limit")
@@ -110,21 +113,31 @@ class Asset:
 class WorkflowStep:
     """
     Represents a single step in the reconnaissance workflow.
-    
-    Attributes:
-        name: Unique identifier for the step
-        description: Human-readable description
-        tool: Tool/adapter to use
-        target: Target for the scan
-        parameters: Tool execution parameters
-        priority: Step priority (higher numbers = higher priority)
+
+    This dataclass is compatible with Planner and other agents. Fields:
+      - tool: Tool/adapter to use
+      - target: Target for the scan
+      - parameters: Tool execution parameters
+      - priority: Step priority (lower numbers run earlier)
+      - rationale: Explanation or reasoning for the step (used by Planner)
+      - name / description: Optional display fields for UI or ordering
     """
-    name: str
-    description: str
     tool: str
     target: str
     parameters: Dict[str, Any]
     priority: int = 0
+    rationale: str = ""
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+@dataclass
+class ScanPlan:
+    """
+    Represents a scan plan produced by the PlannerAgent.
+    """
+    goal: str
+    created_at: str
+    steps: List[WorkflowStep]
 
 @dataclass
 class ScanResult:
@@ -325,6 +338,11 @@ def load_config_from_file() -> ConfigModel:
         ConfigModel: Loaded configuration
     """
     import logging
+    from dotenv import load_dotenv
+    
+    # Load environment variables from .env file
+    load_dotenv()
+    
     logger = logging.getLogger("black_glove.config")
     
     config_path = Path.home() / ".homepentest" / "config.yaml"
@@ -342,6 +360,15 @@ def load_config_from_file() -> ConfigModel:
             return ConfigModel()
         
         # Create ConfigModel instance with loaded data
+        # Environment variables will override file config if set (pydantic behavior if using BaseSettings, 
+        # but here we are using BaseModel, so we might need manual handling if we want env vars to take precedence.
+        # For now, we'll assume config file is primary, but we can populate missing keys from env if needed.)
+        
+        # Simple env var injection for API keys if not in config
+        import os
+        if "shodan_api_key" not in config_data and os.getenv("SHODAN_API_KEY"):
+            config_data["shodan_api_key"] = os.getenv("SHODAN_API_KEY")
+
         config = ConfigModel(**config_data)
         logger.info("Configuration loaded successfully from file")
         return config

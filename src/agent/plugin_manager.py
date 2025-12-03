@@ -13,8 +13,8 @@ import os
 from typing import Any, Dict, List, Optional, Type, Set
 from pathlib import Path
 
-from ..adapters.interface import AdapterInterface, AdapterResult
-from ..adapters.base import BaseAdapter
+from adapters.interface import AdapterInterface, AdapterResult
+from adapters.base import BaseAdapter
 
 
 class AdapterManager:
@@ -58,40 +58,42 @@ class AdapterManager:
             config = self._adapter_configs.get(adapter_name, {})
         
         try:
-            # Try to import the adapter module
-            module_name = f"src.adapters.{adapter_name.lower()}"
-            if adapter_name.lower() == "example":
-                module_name = "src.adapters.example"
+            # Try to import the adapter module using absolute import from src
+            module_name = f"adapters.{adapter_name.lower()}"
             
             self.logger.debug(f"Attempting to import adapter module: {module_name}")
             module = importlib.import_module(module_name)
             
             # Look for adapter class (class name matching adapter name or ending with 'Adapter')
             adapter_class = None
+            
+            # Build expected class names
+            pascal_case = ''.join(word.capitalize() for word in adapter_name.lower().split('_'))
+            expected_names = [
+                pascal_case + "Adapter",  # e.g., NmapAdapter, GobusterAdapter, DnsLookupAdapter
+                pascal_case,               # e.g., Nmap, Gobuster, DnsLookup
+                adapter_name.lower(),      # e.g., nmap
+                adapter_name.lower() + "adapter",  # e.g., nmapAdapter
+            ]
+            
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
                 if (isinstance(attr, type) and 
                     issubclass(attr, AdapterInterface) and 
                     attr != AdapterInterface and 
                     attr != BaseAdapter):
-                    # Check for exact match or adapter name + "Adapter" (case insensitive)
-                    expected_name = adapter_name.lower()
-                    expected_adapter_name = expected_name + "adapter"
-                    actual_name = attr_name.lower()
                     
-                    if actual_name == expected_name or actual_name == expected_adapter_name:
-                        adapter_class = attr
-                        break
-                    
-                    # Also check for PascalCase conversion (e.g., dns_lookup -> DnsLookupAdapter)
-                    if '_' in adapter_name:
-                        pascal_case = ''.join(word.capitalize() for word in adapter_name.split('_')) + 'Adapter'
-                        if attr_name == pascal_case:
+                    # Check if this class matches any expected name pattern
+                    for expected in expected_names:
+                        if attr_name.lower() == expected.lower():
                             adapter_class = attr
                             break
+                    
+                    if adapter_class:
+                        break
             
             if adapter_class is None:
-                raise ImportError(f"No valid adapter class found in module {module_name}")
+                raise ImportError(f"No valid adapter class found in module {module_name}. Expected one of: {expected_names}")
             
             # Initialize the adapter
             adapter_instance = adapter_class(config)

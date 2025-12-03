@@ -20,8 +20,8 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
                                 │
                                 ▼
                         ┌────────────────────┐    ┌──────────────────┐
-                        │  Tool Adapters     │◄──►│ Container        │
-                        │                    │    │ Sandboxing       │
+                        │  Tool Adapters     │◄──►│ Process          │
+                        │                    │    │ Execution        │
                         └────────────────────┘    └──────────────────┘
                                 │
                                 ▼
@@ -72,7 +72,7 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Anthropic (cloud)
 - **Enhanced Features**:
   - **Conversation Memory**: Automatic context management with configurable limits
-  - **Retrieval-Augmented Generation (RAG)**: Document-based context enhancement
+  - **Retrieval-Augmented Generation (RAG)**: Document-based context enhancement using ChromaDB
   - **Streaming Responses**: Real-time output processing
   - **Advanced Configuration**: Extended parameter control (top_p, frequency_penalty, etc.)
   - **Standardized response parsing**: Enhanced response handling with usage tracking
@@ -104,7 +104,7 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 - **Design Principles**:
   - JSON schema for inputs/outputs
   - Two-layer input sanitization
-  - Container sandboxing
+  - Local process execution with `ProcessRunner`
   - Rate limiting enforcement
 - **Implemented Base Classes**:
   - `AdapterInterface`: Abstract base class defining adapter contract
@@ -124,7 +124,16 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - `findings`: Security findings with severity levels
   - `audit_log`: Immutable audit trail of all actions
 
-### 7. Policy Engine (`src/agent/policy_engine.py`)
+### 7. Vector Store Layer (`src/agent/rag/chroma_store.py`)
+- **Purpose**: Vector storage for RAG (Retrieval-Augmented Generation)
+- **Storage Engine**: ChromaDB (Local)
+- **Features**:
+  - **Document Embedding**: Automatically embeds text content for semantic search
+  - **Metadata Filtering**: Supports filtering by source, type, and other metadata
+  - **Persistence**: Stores vector data locally (default: `~/.homepentest/chroma_db` or configured `rag_db_path`)
+  - **Collection Management**: Manages document collections for different contexts
+
+### 8. Policy Engine (`src/agent/policy_engine.py`)
 - **Purpose**: Enforce safety and compliance rules
 - **Controls**:
   - Rate limiting per adapter
@@ -144,7 +153,7 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Comprehensive audit logging of violations
   - Real-time rate monitoring and reporting
 
-### 8. Evidence Store (`src/utils/evidence_store.py`)
+### 9. Evidence Store (`src/utils/evidence_store.py`)
 - **Purpose**: Manage raw tool output storage
 - **Features**:
   - File integrity verification (SHA256)
@@ -193,14 +202,18 @@ Every Action → Audit Logger → JSON Entry → Audit Log Table
 - **Implementation**: `approve` command with confirmation
 
 ### Rate Limiting
-- **When**: All tool executions
-- **What**: Configurable packets/requests per second
-- **Implementation**: `RateLimiter` utility class
+Built-in rate limiting prevents accidental denial-of-service:
+- **Default**: 50 packets/requests per second
+- **Configurable**: User-defined limits in configuration
+- **Enforcement**: Policy engine blocks excessive rates
+- **Per-Tool**: Different limits for different tools
 
-### Container Sandboxing
-- **When**: All tool executions
-- **What**: Isolated Docker containers
-- **Implementation**: `docker_runner` utility
+### Process Isolation
+All security tools run in isolated Docker containers:
+- **Network Isolation**: Controlled network access
+- **File System**: Read-only root filesystem where possible
+- **Resource Limits**: CPU and memory constraints
+- **Timeouts**: Automatic termination of long-running processes
 
 ### Lab Mode
 - **When**: Exploit tools and high-risk operations
@@ -225,6 +238,7 @@ Every Action → Audit Logger → JSON Entry → Audit Log Table
 ~/.homepentest/
 ├── config.yaml          # User configuration
 ├── homepentest.db       # SQLite database
+├── chroma_db/           # ChromaDB vector store
 ├── evidence/            # Raw tool outputs
 │   ├── asset1/
 │   │   └── scan-123.json
@@ -242,7 +256,7 @@ Every Action → Audit Logger → JSON Entry → Audit Log Table
 ### Output Handling
 - **Raw outputs**: Stored in evidence directory
 - **Processed outputs**: Normalized to findings
-- **Sensitive data**: Redacted by LLM analyst
+- **Sensitive data**: Redacted by LLM analyst when possible
 
 ### Access Controls
 - **File permissions**: User-only read/write
@@ -322,7 +336,7 @@ Every Action → Audit Logger → JSON Entry → Audit Log Table
 
 ### Local Installation
 - **Method**: pip install from source
-- **Requirements**: Python 3.8+, Docker
+- **Requirements**: Python 3.8+, Nmap, Gobuster
 - **Usage**: Direct command-line execution
 
 ### Container Deployment
@@ -334,3 +348,95 @@ Every Action → Audit Logger → JSON Entry → Audit Log Table
 - **Method**: Editable install with dev dependencies
 - **Requirements**: uv, development tools
 - **Usage**: Local development and testing
+
+---
+
+## Appendix: ChromaDB (RAG) — Operational Guide
+
+This appendix documents operational guidance for running, maintaining, and troubleshooting the ChromaDB-based RAG store used by Black Glove.
+
+### Purpose & Scope
+ChromaDB is used as the local vector store for Retrieval-Augmented Generation (RAG) to provide contextual documents to the LLM planner/analyst. The guide below covers practical operations: location, backups, restore, migration, encryption considerations, and Docker deployment tips.
+
+### Default Storage Location
+- Default path (configurable): `~/.homepentest/chroma_db`
+- The project may also include a local data folder: `data/chroma_db/` for testing and examples.
+- Configure path via `~/.homepentest/config.yaml`:
+  - `rag_db_path: "~/.homepentest/chroma_db"`
+  - `enable_rag: true`
+  - `rag_on_disk: true` (example flag used by runtime)
+
+### Backup (Recommended)
+1. Ensure the agent is not running (stop the agent process or ensure no write activity).
+2. Create a compressed backup of the chroma directory:
+   - Linux/macOS:
+     - tar: `tar -czf chroma_backup_$(date +%Y%m%d_%H%M%S).tar.gz ~/.homepentest/chroma_db`
+   - Windows PowerShell:
+     - `Compress-Archive -Path "$env:USERPROFILE\.homepentest\chroma_db\*" -DestinationPath "C:\backups\chroma_backup_YYYYMMDD.zip"`
+3. Store backups off-host (encrypted storage) and retain per retention policy.
+
+### Restore
+1. Stop the agent.
+2. Extract/replace the chroma_db directory at the configured `rag_db_path`.
+3. Ensure ownership and permissions allow the agent to read/write the files.
+4. Start the agent and verify startup logs for Chroma initialization.
+
+### Migration & Re-indexing
+- When changing embedding models or moving to a different vector store format:
+  1. Export existing documents from the current Chroma collection (use your management script).
+  2. Recompute embeddings with the new model.
+  3. Upsert documents into a fresh Chroma collection.
+- The project contains RAG manager utilities (`src/agent/rag/manager.py`) — use its APIs for upsert/search and scripted migration workflows.
+
+### On-disk vs In-memory
+- For persistence across restarts use on-disk mode (persistent directory).
+- For ephemeral or test runs, in-memory mode is acceptable but **do not** rely on it for production data.
+
+### Encryption
+- Chroma's SQLite files are not encrypted by default.
+- Recommended options:
+  - Use OS-level encrypted volumes (BitLocker, FileVault, LUKS).
+  - Use SQLCipher for encrypted SQLite if you require DB-level encryption (note: integration effort required).
+  - Always encrypt backups (gpg, OpenSSL, or secure object storage).
+
+### Docker & Compose Example (minimal)
+```
+services:
+  chromadb:
+    image: ghcr.io/chroma/chroma:latest
+    container_name: chromadb
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/chroma_db:/data/chromadb
+    environment:
+      - CHROMA_SETTINGS__PERSIST_DIRECTORY=/data/chromadb
+    restart: unless-stopped
+```
+- When using Docker, map a persistent host volume and set CHROMA settings as required.
+
+### Operational Recommendations
+- Schedule regular backups (daily/weekly depending on usage).
+- Monitor disk usage for the `chroma_db` directory.
+- When changing embedding models, re-index all documents for consistent search results.
+- Keep ChromaDB and embedding libraries updated in line with the agent's compatibility matrix.
+
+### Troubleshooting
+- "Database locked" errors: ensure no competing processes and restart the agent. If persistent, check for orphaned locks and back up before manual removal.
+- Corruption or incompatibility after upgrades: restore from backup and re-index if necessary.
+- Large index size: consider pruning older documents or splitting into collections by asset/tool.
+
+### Useful Commands (examples)
+- List files:
+  - `ls -lh ~/.homepentest/chroma_db`
+- Backup (Linux):
+  - `tar -czf /backups/chroma_$(date +%F).tar.gz -C ~/.homepentest chroma_db`
+- Restore (Linux):
+  - `tar -xzf /backups/chroma_2025-12-03.tar.gz -C ~/.homepentest/`
+- Reindex script (example pattern):
+  - `python -m src.agent.rag.manager reindex --source /path/to/export.json --config ~/.homepentest/config.yaml`
+
+---
+
+## Notes
+- Document updates related to ChromaDB operations were added to assist maintainers and operators. After any operational change to embeddings or Chroma versions, perform a full backup and test restore in a staging environment.

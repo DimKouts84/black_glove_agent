@@ -18,6 +18,28 @@ from enum import Enum
 from .models import SeverityLevel, AssetModel
 from .db import get_db_connection
 
+def _safe_json_default(obj):
+    """
+    Default JSON serializer for non-serializable types.
+    Converts datetime to ISO strings and handles common types like bytes and sets.
+    """
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, bytes):
+        try:
+            return obj.decode('utf-8')
+        except Exception:
+            return str(obj)
+    if isinstance(obj, set):
+        return list(obj)
+    # Fallback: if object exposes isoformat use it
+    if hasattr(obj, "isoformat"):
+        try:
+            return obj.isoformat()
+        except Exception:
+            pass
+    return str(obj)
+
 
 class ReportFormat(Enum):
     """Enumeration of supported report formats."""
@@ -238,9 +260,9 @@ class FindingsNormalizer:
         findings = []
         
         try:
-            # Convert tool output to string if needed
+            # Convert tool output to string if needed (use safe serializer for datetimes etc.)
             if isinstance(tool_output, (dict, list)):
-                output_str = json.dumps(tool_output, indent=2)
+                output_str = json.dumps(tool_output, indent=2, default=_safe_json_default)
             else:
                 output_str = str(tool_output)
             
@@ -481,7 +503,7 @@ class ReportGenerator:
             "findings": [finding.to_dict() for finding in findings]
         }
         
-        return json.dumps(report_data, indent=2)
+        return json.dumps(report_data, indent=2, default=_safe_json_default)
     
     def _generate_markdown_report(self, findings: List[Finding], assets: List[AssetModel], 
                                 metadata: Dict[str, Any]) -> str:

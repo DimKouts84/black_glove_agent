@@ -19,7 +19,7 @@ from enum import Enum
 from .models import Asset, ScanResult, WorkflowStep, OrchestrationContext
 from .policy_engine import PolicyEngine, create_policy_engine
 from .plugin_manager import PluginManager, create_plugin_manager
-from .llm_client import LLMClient, create_llm_client, LLMMessage
+from .llm_client import LLMClient, create_llm_client, LLMMessage, LLMConfig, LLMProvider
 from ..adapters.interface import AdapterResult, AdapterResultStatus
     
 
@@ -249,7 +249,7 @@ class Orchestrator:
         
         try:
             # Get LLM planning suggestions (may raise if LLM unavailable)
-            llm_response = self.llm_client.plan_next_steps(context, objective)
+            llm_response = self.llm_client.plan_next_steps(context, objective, structured=True)
             
             # Parse LLM response into workflow steps
             steps = self._parse_llm_plan(llm_response.content)
@@ -397,17 +397,16 @@ class Orchestrator:
     
     def _analyze_findings(self, tool_output: Any, target: str) -> List[Dict[str, Any]]:
         """
-        Use LLM to analyze tool output and identify security issues.
+        Use LLM to analyze tool output and identify security issues with structured parsing.
 
-        This implementation safely serializes tool output for JSON transport by
-        converting non-serializable objects (e.g., datetime) to ISO strings.
+        This implementation parses JSON findings with severity extraction and fallback handling.
         
         Args:
             tool_output: Raw tool output
             target: Target that was scanned
             
         Returns:
-            List of identified findings
+            List of identified findings with severity, category, and remediation
         """
         try:
             # Safe JSON serialization helper for objects the default JSON encoder can't handle
@@ -423,24 +422,82 @@ class Orchestrator:
             else:
                 output_str = tool_output
 
-            # Get LLM analysis
+            # Get LLM analysis with structured output
             context = f"Target: {target}"
-            llm_response = self.llm_client.analyze_findings(output_str, context)
+            llm_response = self.llm_client.analyze_findings(output_str, context, structured=True)
             
-            # For now, treat the entire response as one finding
-            # In a real implementation, this would parse structured findings
-            if llm_response.content.strip():
-                return [{
-                    "description": llm_response.content,
-                    "severity": "medium",  # Would be determined by LLM in real implementation
-                    "target": target,
-                    "timestamp": datetime.now().isoformat()
-                }]
+            # Try to parse JSON response
+            try:
+                import re
+                # Extract JSON from markdown code blocks if present
+                response_text = llm_response.content
+                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+                
+                findings_data = json.loads(response_text)
+                
+                # Parse structured findings
+                if "findings" in findings_data and findings_data["findings"]:
+                    findings = []
+                    for finding in findings_data["findings"]:
+                        findings.append({
+                            "title": finding.get("title", "Unknown Finding"),
+                            "description": finding.get("description", ""),
+                            "severity": finding.get("severity", "medium").lower(),
+                            "category": finding.get("category", "other"),
+                            "affected_resource": finding.get("affected_resource", target),
+                            "remediation": finding.get("remediation", "No remediation provided"),
+                            "cvss_score": finding.get("cvss_score"),
+                            "target": target,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    
+                    self.logger.info(f"Parsed {len(findings)} structured findings from LLM")
+                    return findings
+                    
+            except (json.JSONDecodeError, KeyError) as e:
+                self.logger.warning(f"JSON parsing failed: {e}, using fallback")
+            
+            # Fallback: treat response as text and extract severity
+            return self._analyze_findings_fallback(llm_response.content, target)
             
         except Exception as e:
             self.logger.error(f"Finding analysis failed: {e}")
         
         return []
+    
+    def _analyze_findings_fallback(self, analysis_text: str, target: str) -> List[Dict[str, Any]]:
+        """
+        Fallback method to extract findings from plain text when JSON parsing fails.
+        
+        Args:
+            analysis_text: Plain text analysis from LLM
+            target: Target that was scanned
+            
+        Returns:
+            List of findings with extracted severity
+        """
+        import re
+        
+        # Try to extract severity from text
+        severity = "medium"  # Default
+        severity_pattern = r'\b(critical|high|medium|low|info)\b'
+        severity_match = re.search(severity_pattern, analysis_text, re.IGNORECASE)
+        if severity_match:
+            severity = severity_match.group(1).lower()
+        
+        # Create a single finding from the text
+        return [{
+            "title": "Security Analysis",
+            "description": analysis_text,
+            "severity": severity,
+            "category": "other",
+            "affected_resource": target,
+            "remediation": "Review the analysis and take appropriate action",
+            "target": target,
+            "timestamp": datetime.now().isoformat()
+        }]
     
     def _load_passive_results_from_evidence(self) -> List[ScanResult]:
         """
@@ -576,29 +633,101 @@ class Orchestrator:
     
     def _parse_llm_plan(self, plan_text: str) -> List[WorkflowStep]:
         """
-        Parse LLM-generated plan into workflow steps.
+        Parse LLM-generated plan into workflow steps with JSON support.
         
         Args:
-            plan_text: LLM-generated planning text
+            plan_text: LLM-generated planning text (preferably JSON)
             
         Returns:
             List of workflow steps
         """
-        # Simple parsing - in real implementation, this would be more sophisticated
         steps = []
-        lines = plan_text.strip().split('\n')
         
-        for i, line in enumerate(lines):
-            if line.strip() and not line.startswith('#'):
-                step = WorkflowStep(
-                    name=f"planned_step_{i}",
-                    description=line.strip(),
-                    tool="nmap",  # Default tool
-                    target="default",  # Would be parsed from line
-                    parameters={},
-                    priority=i
-                )
-                steps.append(step)
+        # Try JSON parsing first
+        try:
+            # Extract JSON from markdown code blocks if present
+            import re
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', plan_text, re.DOTALL)
+            if json_match:
+                plan_text = json_match.group(1)
+            
+            plan_data = json.loads(plan_text)
+            
+            # Parse structured scan plan
+            if "scan_plan" in plan_data:
+                for i, item in enumerate(plan_data["scan_plan"]):
+                    tool = item.get("tool", "nmap")
+                    target = item.get("target", "unknown")
+                    parameters = item.get("parameters", {})
+                    priority = item.get("priority", i)
+                    rationale = item.get("rationale", "")
+                    
+                    step = WorkflowStep(
+                        name=f"{tool}_{target}_{i}",
+                        description=rationale,
+                        tool=tool,
+                        target=target,
+                        parameters=parameters,
+                        priority=priority
+                    )
+                    steps.append(step)
+                    
+                if steps:
+                    self.logger.info(f"Successfully parsed {len(steps)} steps from JSON plan")
+                    return steps
+        
+        except (json.JSONDecodeError, KeyError) as e:
+            self.logger.warning(f"JSON parsing failed: {e}, falling back to regex extraction")
+        
+        # Fallback: Regex-based extraction
+        return self._parse_llm_plan_fallback(plan_text)
+    
+    def _parse_llm_plan_fallback(self, plan_text: str) -> List[WorkflowStep]:
+        """
+        Fallback parsing using regex when JSON parsing fails.
+        
+        Args:
+            plan_text: Plain text planning output
+            
+        Returns:
+            List of workflow steps
+        """
+        import re
+        steps = []
+        
+        # Try to extract tool and target patterns
+        # Patterns like: "Run nmap on 192.168.1.1" or "Execute gobuster against example.com"
+        pattern = r'(?:run|execute|use|scan with)\s+(\w+)\s+(?:on|against|for|to scan)\s+([\w\.:/-]+)'
+        matches = re.findall(pattern, plan_text, re.IGNORECASE)
+        
+        for i, (tool, target) in enumerate(matches):
+            step = WorkflowStep(
+                name=f"{tool}_{target}_{i}",
+                description=f"Run {tool} on {target}",
+                tool=tool.lower(),
+                target=target,
+                parameters={},
+                priority=i
+            )
+            steps.append(step)
+        
+        if steps:
+            self.logger.info(f"Extracted {len(steps)} steps using regex fallback")
+        else:
+            self.logger.warning("Regex extraction found no steps, using simple line parsing")
+            # Last resort: simple line parsing
+            lines = plan_text.strip().split('\n')
+            for i, line in enumerate(lines):
+                if line.strip() and not line.startswith('#'):
+                    step = WorkflowStep(
+                        name=f"planned_step_{i}",
+                        description=line.strip(),
+                        tool="nmap",  # Default tool
+                        target="default",  # Default target
+                        parameters={},
+                        priority=i
+                    )
+                    steps.append(step)
         
         return steps
     
@@ -629,12 +758,46 @@ class Orchestrator:
         
         for i, tool in enumerate(tools):
             for target in targets:
+                # Build appropriate parameters for each tool
+                params = {"target": target}
+                
+                # Add tool-specific parameters
+                if tool == "gobuster":
+                    # Determine target type
+                    asset_type = "domain" if "." in target and not target.replace(".", "").isdigit() else "host"
+                    if asset_type == "domain":
+                        params["mode"] = "dns"
+                        params["domain"] = target
+                        params["wordlist"] = "debug/gobuster_words.txt"
+                    else:
+                        params["mode"] = "dir"
+                        params["url"] = f"http://{target}" if not target.startswith(('http://', 'https://')) else target
+                        params["wordlist"] = "debug/gobuster_words.txt"
+                elif tool == "ssl_check":
+                    # Add SSL check parameters
+                    asset_type = "domain" if "." in target and not target.replace(".", "").isdigit() else "host"
+                    if asset_type == "domain":
+                        params["host"] = target
+                        params["port"] = 443
+                    else:
+                        if ":" in target:
+                            host, port = target.rsplit(":", 1)
+                            if port.isdigit():
+                                params["host"] = host
+                                params["port"] = int(port)
+                            else:
+                                params["host"] = target
+                                params["port"] = 443
+                        else:
+                            params["host"] = target
+                            params["port"] = 443
+                
                 step = WorkflowStep(
                     name=f"{tool}_{target}_{i}",
                     description=f"Run {tool} on {target}",
                     tool=tool,
                     target=target,
-                    parameters={"target": target},
+                    parameters=params,
                     priority=i
                 )
                 default_steps.append(step)
@@ -815,7 +978,21 @@ class Orchestrator:
                 else:
                     params["host"] = asset.target
                     params["port"] = 443
-        
+
+        elif tool_name == "gobuster":
+            # Gobuster needs mode and wordlist parameters
+            # Default to DNS mode for domain targets, dir mode for URLs
+            if asset_type == "domain":
+                params["mode"] = "dns"
+                params["domain"] = asset.target
+                # Use default wordlist path
+                params["wordlist"] = "debug/gobuster_words.txt"
+            else:
+                # For non-domain targets, assume it's a URL for directory scanning
+                params["mode"] = "dir"
+                params["url"] = f"http://{asset.target}" if not asset.target.startswith(('http://', 'https://')) else asset.target
+                params["wordlist"] = "debug/gobuster_words.txt"
+
         return params
 
 
@@ -860,6 +1037,41 @@ def create_orchestrator(config: Dict[str, Any] = None, db_connection=None) -> Or
             config["policy"]["target_validation"]["authorized_networks"] = config["authorized_networks"]
         if "authorized_domains" in config and "target_validation" in config["policy"]:
             config["policy"]["target_validation"]["authorized_domains"] = config["authorized_domains"]
+        
+        # Build LLM configuration from top-level settings if not provided explicitly
+        if not config.get("llm"):
+            provider_str = str(config.get("llm_provider", "lmstudio")).lower()
+            try:
+                provider = LLMProvider(provider_str)
+            except ValueError:
+                provider = LLMProvider.LMSTUDIO
+            endpoint = str(config.get("llm_endpoint", "http://localhost:1234/v1")).rstrip("/")
+            model = str(config.get("llm_model", "local-model"))
+            temperature = float(config.get("llm_temperature", 0.7))
+            # Optional advanced fields
+            api_key = config.get("llm_api_key")
+            max_tokens = config.get("llm_max_tokens")
+            top_p = config.get("llm_top_p")
+            frequency_penalty = config.get("llm_frequency_penalty")
+            presence_penalty = config.get("llm_presence_penalty")
+            enable_rag = bool(config.get("llm_enable_rag", True))
+            rag_db_path = str(config.get("rag_db_path", "data/rag_cache.db"))
+            conversation_memory_size = int(config.get("conversation_memory_size", 10))
+
+            config["llm"] = LLMConfig(
+                provider=provider,
+                endpoint=endpoint,
+                model=model,
+                temperature=temperature,
+                api_key=api_key,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                presence_penalty=presence_penalty,
+                enable_rag=enable_rag,
+                rag_db_path=rag_db_path,
+                conversation_memory_size=conversation_memory_size,
+            )
     
     return Orchestrator(config, db_connection)
 

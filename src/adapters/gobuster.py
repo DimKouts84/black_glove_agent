@@ -1,7 +1,7 @@
 """
 Gobuster Adapter for Black Glove Pentest Agent
 
-Executes gobuster in a container via DockerRunner and parses stdout into normalized results.
+Executes gobuster as a local process via ProcessRunner and parses stdout into normalized results.
 Stores raw text evidence under evidence/gobusteradapter/.
 """
 
@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import re
 import time
+import shutil
 from typing import Any, Dict, List, Optional
 
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
-from ..utils.docker_runner import DockerRunner
+from utils.process_runner import ProcessRunner
 
 _SAFE_FLAG_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9\-]*$")
 _SAFE_EXT_RE = re.compile(r"^[A-Za-z0-9\.]+$")
@@ -24,20 +25,19 @@ _SAFE_DOMAIN_RE = re.compile(
 
 class GobusterAdapter(BaseAdapter):
     """
-    Safe, Dockerized gobuster execution supporting dir and dns modes.
+    Safe, local gobuster execution supporting dir and dns modes.
     """
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config or {})
         self._required_config_fields = []  # all optional
         self._required_params = ["mode"]
-        self.version = "1.0.0"
-        self._runner: DockerRunner = self.config.get("_runner") or DockerRunner(prefer_sdk=True)
+        self.version = "1.1.0"
+        self._runner: ProcessRunner = self.config.get("_runner") or ProcessRunner()
 
         # Defaults
         self._defaults = {
             "timeout": 300.0,
-            "docker_network": None,
             "default_mode": "dir",
             "wordlist": None,  # host path to wordlist
             "rate_limit_rpm": None,  # reserved for orchestrator/policy engine
@@ -52,16 +52,17 @@ class GobusterAdapter(BaseAdapter):
         if "timeout" in cfg and (not isinstance(cfg["timeout"], (int, float)) or cfg["timeout"] <= 0):
             raise ValueError("timeout must be a positive number")
 
-        if "docker_network" in cfg and cfg["docker_network"] is not None:
-            if not isinstance(cfg["docker_network"], str) or not cfg["docker_network"].strip():
-                raise ValueError("docker_network must be a non-empty string or None")
-
         if "default_mode" in cfg and cfg["default_mode"] not in ("dir", "dns"):
             raise ValueError("default_mode must be 'dir' or 'dns'")
 
         if "wordlist" in cfg and cfg["wordlist"] is not None:
             if not isinstance(cfg["wordlist"], str) or not cfg["wordlist"].strip():
                 raise ValueError("wordlist must be a non-empty string path or None")
+
+        # Check if gobuster is available
+        if not shutil.which("gobuster"):
+             # We don't raise here to allow instantiation, but execution will fail.
+             pass
 
         return True
 
@@ -117,7 +118,6 @@ class GobusterAdapter(BaseAdapter):
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
         cfg = self.config or {}
         timeout = float(cfg.get("timeout", self._defaults["timeout"]))
-        docker_network = cfg.get("docker_network", self._defaults["docker_network"])
 
         # Resolve mode and build command
         mode = params.get("mode") or cfg.get("default_mode", self._defaults["default_mode"])
@@ -132,14 +132,14 @@ class GobusterAdapter(BaseAdapter):
         except Exception:
             pass
 
+        # Execute process
+        # cmd[0] is 'gobuster', but ProcessRunner expects command and args separately
         run_result = self._runner.run(
             {
-                "image": "ghcr.io/oj/gobuster:latest",
-                "args": cmd,
+                "command": "gobuster",
+                "args": cmd[1:], # skip 'gobuster'
                 "env": {},
-                "volumes": [{"host_path": evidence_dir, "container_path": "/evidence", "mode": "rw"}],
-                "network": docker_network,
-                "workdir": "/work",
+                "cwd": None,
                 "timeout": timeout,
             }
         )
@@ -197,6 +197,7 @@ class GobusterAdapter(BaseAdapter):
         cmd: List[str] = ["gobuster", mode]
 
         # common: wordlist
+        # For local execution, we just pass the path directly
         cmd += ["-w", wordlist]
 
         # threads
@@ -284,10 +285,10 @@ class GobusterAdapter(BaseAdapter):
             {
                 "name": "GobusterAdapter",
                 "version": self.version,
-                "description": "Dockerized gobuster execution for directory and DNS enumeration",
+                "description": "Local gobuster execution for directory and DNS enumeration",
                 "capabilities": base_info["capabilities"]
                 + ["dir_enum", "dns_enum", "stdout_parsing", "evidence_storage"],
-                "requirements": ["docker_engine_or_cli"],
+                "requirements": ["gobuster"],
                 "example_usage": {
                     "dir": {"mode": "dir", "url": "http://example.com", "wordlist": "/path/to/wordlist.txt", "threads": 10},
                     "dns": {"mode": "dns", "domain": "example.com", "wordlist": "/path/to/subdomains.txt", "threads": 50},

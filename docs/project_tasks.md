@@ -3,9 +3,9 @@
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
 | **1** | **Project Initialization & Setup** | Establish foundational structure | Create repo skeleton and configuration | Completed ✅ |
-| 1.1 | Create directory structure | Implement section 15 repo skeleton | Create all directories: `src/agent/`, `src/adapters/`, `config/`, `docker/`, `examples/`, `docs/` | Completed |
-| 1.2 | Implement `agent init` command | FR-012: System initialization | Create CLI command to set up directories, config files, and verify prerequisites | Completed |
-| 1.3 | Database initialization | Section 10 data model | Create SQLite DB with assets, findings, and audit_log tables | Completed |
+| 1.1 | Create directory structure | Implement section 15 repo skeleton | Create all directories: `src/agent/`, `src/adapters/`, `config/`, `docker/`, `examples/`, `docs/` | Completed ✅ |
+| 1.2 | Implement `agent init` command | FR-012: System initialization | Create CLI command to set up directories, config files, and verify prerequisites | Completed ✅ |
+| 1.3 | Database initialization | Section 10 data model | Create SQLite DB with assets, findings, and audit_log tables | Completed ✅ |
 
 ---
  
@@ -28,7 +28,7 @@
 
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
-| **4** | **Reconnaissance Modules** | FR-002 & FR-003 | Passive/active scanning | In Progress 🔄 |
+| **4** | **Reconnaissance Modules** | FR-002 & FR-003 | Passive/active scanning | Completed ✅ |
 | 4.1 | Passive Recon Adapter | FR-002 implementation | Create adapter for crt.sh/Wayback/DNS lookups | Completed ✅ |
 | 4.2 | Active Recon Workflow | FR-003 implementation | Implement approval flow for nmap/gobuster with risk explanations | Completed ✅ |
 | 4.3 | Rate Limiting System | FR-005 implementation | Add global/per-adapter traffic throttling | Completed ✅ |
@@ -41,9 +41,9 @@
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
 | **5** | **Tool Adapters** | Section 12 interface | Develop adapter ecosystem | Completed ✅ |
-| 5.1 | Nmap Adapter | Section 12 example | Implement with 2-layer sanitization | Completed ✅ |
+| 5.1 | Nmap Adapter | Section 12 example | Implement with 2-layer sanitization and local process execution | Completed ✅ |
 | 5.2 | Gobuster Adapter | Section 12 spec | Create web directory scanning adapter | Completed ✅ |
-| 5.3 | Docker Runner | Sandbox execution | Create utility to run tools in containers | Completed ✅ |
+| 5.3 | Process Runner | Process execution | Create utility to run tools as local processes | Completed ✅ |
 
 ---
 
@@ -112,18 +112,36 @@
 
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
-| **13** | **Advanced Agentic Workflow** | Enhance LLM reasoning | Evolve the custom agent into a more formal, multi-step reasoning system | Not Started |
+| **13** | **Advanced Agentic Workflow** | Enhance LLM reasoning | Evolve the custom agent into a more formal, multi-step reasoning system | In Progress 🔄 |
 | 13.1 | Evaluate Agentic Frameworks | Research CrewAI, LangGraph, etc. | Analyze the trade-offs of integrating a formal agentic framework versus enhancing the custom orchestrator | Not Started |
 | 13.2 | Refactor to Formal Agent Roles | Improve modularity | Refactor the Orchestrator and LLMClient to define explicit agent roles (e.g., Planner, Analyst, Researcher) with distinct tools and responsibilities | Not Started |
 | 13.3 | Implement Multi-Step Reasoning | Increase autonomy | Enhance the agent's ability to break down complex goals into multi-step plans and adapt based on intermediate results without requiring user intervention for every step | Not Started |
-| 13.4 | Conversational Tool Use | Enable interactive pentesting | Enhance the `chat` command to allow the LLM to understand user requests for actions (e.g., "run a port scan on host X"), select the appropriate tool adapter, execute it (with user approval for active scans), and return the results within the conversation. | Not Started |
-| 13.5 | Qdrant Integration Architecture | Choose storage strategy | Decide dual-store (SQLite for OLTP + Qdrant for vectors) vs single-store; document trade-offs and decision in ARCHITECTURE.md | Not Started |
-| 13.6 | Qdrant Service & Config | Infra & configuration | Add Qdrant to docker-compose; extend config.yaml (host, port, collection, vector sizes, distance, on_disk, auth) | Not Started |
-| 13.7 | Qdrant RAG Manager | Implement vector store | Implement `QdrantRAGManager` with upsert/search APIs, payload filters (asset/tool), dedup by checksum, optional facets | Not Started |
-| 13.8 | LLM/Chat Integration | Wire RAG into chat | Use Qdrant for context retrieval in Planner/Analyst prompts with fallback to legacy RAG; add config flag to switch | Not Started |
-| 13.9 | Data Migration | Move existing RAG data | Export SQLite RAG docs → (embed if missing) → upsert to Qdrant with payload (asset_id, source, tool, ts) | Not Started |
-| 13.10 | Tests & Benchmarks | Quality gates | Unit/integration tests for upsert/search/filters; relevance checks; basic performance notes | Not Started |
-| 13.11 | Documentation Updates | Update docs & examples | Update ARCHITECTURE.md, SECURITY.md, README, examples/workflows to reflect Qdrant usage and ops | Not Started |
+| 13.4 | Conversational Tool Use | Enable interactive pentesting | Enhance the `chat` command to allow the LLM to understand user requests for actions (e.g., "run a port scan on host X"), select the appropriate tool adapter, execute it (with user approval for active scans), and return the results within the conversation. | Completed ✅ |
+| 13.5 | ChromaDB Integration Architecture | Choose storage strategy | Decide dual-store (SQLite for OLTP + ChromaDB for vectors) vs single-store; document trade-offs and decision in ARCHITECTURE.md | Completed ✅ |
+| 13.6 | ChromaDB Service & Config | Infra & configuration | Add ChromaDB to docker-compose; extend config.yaml (host, port, collection, vector sizes, distance, on_disk, auth) | Completed ✅ |
+| 13.7 | ChromaDB RAG Manager | Implement vector store | Implement `ChromaDBRAGManager` with upsert/search APIs, payload filters (asset/tool), dedup by checksum, optional facets | Completed ✅ |
+| 13.8 | LLM/Chat Integration | Wire RAG into chat | Use ChromaDB for context retrieval in Planner/Analyst prompts with fallback to legacy RAG; add config flag to switch | Completed ✅ |
+| 13.9 | Data Migration | Move existing RAG data | Export SQLite RAG docs → (embed if missing) → upsert to ChromaDB with payload (asset_id, source, tool, ts) | X (Won't Do) |
+| 13.10 | Tests & Benchmarks | Quality gates | Unit/integration tests for upsert/search/filters; relevance checks; basic performance notes | Completed ✅ |
+| 13.11 | Documentation Updates | Update docs & examples | Update ARCHITECTURE.md, SECURITY.md, README, examples/workflows to reflect ChromaDB usage and ops | Completed ✅ |
+
+---
+
+| Number | Title | Scope & Goal | Description | Status |
+|--------|-------|--------------|-------------|--------|
+| **14** | **Agentic Workflow Review Remediation** | Fix critical issues & tech debt | Address findings from 2025-12-03 deep review of agent interactions, tool handling, DB usage, and RAG | Not Started |
+| 14.1 | Fix missing `json` import | **IMMEDIATE** - Critical bug | Add `import json` to `session_manager.py` (lines 79, 119 use json.loads/dumps) | Not Started |
+| 14.2 | Fix RAGDocument attribute error | **IMMEDIATE** - Critical bug | Change `document.title` to `document.doc_id` or `document.metadata.get('title')` in `investigator.py:281` | Not Started |
+| 14.3 | Fix execute_tool → run_adapter | **IMMEDIATE** - Critical bug | Rename method call from `execute_tool` to `run_adapter` in `researcher.py:119` to match PluginManager API | Not Started |
+| 14.4 | Centralize safety policy enforcement | **SHORT TERM** - Critical security | Create policy enforcement decorator/wrapper; make `PluginManager.run_adapter()` enforce policy internally; add integration tests for all agent entry points | Not Started |
+| 14.5 | Dynamic tool discovery for all agents | **SHORT TERM** - Maintainability | Remove hardcoded tool lists from `PlannerAgent` and consolidate with `ResearcherAgent` pattern; centralize in `PluginManager` | Not Started |
+| 14.6 | Add error handling in agent communication | **SHORT TERM** - Reliability | Add try/except blocks in `InvestigatorAgent._process_react_loop()` around `researcher.execute_tool_step()` and `analyst.analyze_findings()` with proper error event yielding | Not Started |
+| 14.7 | Implement database connection pooling | **MEDIUM TERM** - Performance | Replace per-operation connections with connection pool; update `SessionManager` to use pooled connections instead of persistent connection | Not Started |
+| 14.8 | Add evidence loading safeguards | **MEDIUM TERM** - Security | Add depth limit to `rglob()` in `orchestrator._load_passive_results_from_evidence()`; add explicit path allow/deny list; consider caching | Not Started |
+| 14.9 | Improve LLM response parsing | **MEDIUM TERM** - Reliability | Consolidate JSON extraction utilities; use structured output APIs where available; implement retry logic with clarifying prompts for malformed JSON | Not Started |
+| 14.10 | Fix or remove archive_asset function | **BACKLOG** - Tech debt | Either add `archived` column to assets table with migration OR remove `archive_asset()` function from `db.py` | Not Started |
+| 14.11 | Improve RAG metadata handling | **BACKLOG** - Data quality | JSON-serialize complex metadata types instead of using `str()`; document supported types; consider rejecting unsupported types | Not Started |
+| 14.12 | Add database migration system | **BACKLOG** - Infrastructure | Implement schema migration system referenced in `db.py:196-202` comment | Not Started |
 
 ---
 
@@ -138,6 +156,12 @@
 ## Current Implementation Status Summary
 <!-- This section is used to keep notes on current work. Once a block of work is completed, the below section can be updated to reflect the latest status. -->
 
+### Recent Fixes
+- [x] Implemented LLM retry/backoff logic (src/agent/llm_client.py) — handles timeouts, connection errors, and malformed JSON responses with exponential backoff and clearer error messages.
+- [x] Added safe JSON serializer for datetime and other non-serializable types (src/agent/reporting.py) to ensure report generation and findings serialization do not fail.
+- [x] Updated default configuration to the user's local LLM endpoint and model (config/default_config.yaml).
+- [x] Verified targeted unit tests for LLM client and reporting modules (tests/test_llm_client.py, tests/test_reporting.py, tests/test_orchestrator_parsing.py) — passed successfully.
+
 ### ✅ **Fully Implemented & Tested**
 - **Project Initialization**: All setup commands and database initialization working
 - **Core Architecture**: Orchestrator, Policy Engine, and Plugin Manager functional
@@ -146,6 +170,10 @@
   - WHOIS adapter (whois.py) - ✅ Working
   - DNS Lookup adapter (dns_lookup.py) - ✅ Working  
   - SSL Check adapter (ssl_check.py) - ✅ Working
+  - Sublist3r adapter (sublist3r.py) - ✅ Working
+  - Wappalyzer adapter (wappalyzer.py) - ✅ Working
+  - Shodan adapter (shodan.py) - ✅ Working
+  - ViewDNS adapter (viewdns.py) - ✅ Working
   - Rate limiting system - ✅ Working
 - **LLM Integration**: Client abstraction and prompt templates functional
 - **Findings & Reporting**: Normalization, reporting, and evidence storage working
@@ -164,7 +192,19 @@
 - None currently identified.
 
 ### 📋 **Next Implementation Priorities**
-1. Execute Task 11.2 Deployment Validation across Windows shells and record results in docs/uat_report.md.
-2. Execute Task 11.3 End-to-End Workflows (nmap/gobuster) on authorized targets; verify evidence persistence and reporting output.
-3. Keep docs/current_implementation_tasks.md and docs/project_tasks.md synchronized as UAT milestones progress.
-4. Prepare Task 12 release packaging prerequisites based on UAT outcomes.
+
+#### **IMMEDIATE (This Week) - Task 14.1-14.3**
+1. **Task 14.1**: Fix missing `json` import in `session_manager.py` — CRITICAL runtime crash
+2. **Task 14.2**: Fix `RAGDocument.title` attribute error in `investigator.py:281`
+3. **Task 14.3**: Fix method name `execute_tool` → `run_adapter` in `researcher.py:119`
+
+#### **SHORT TERM (This Sprint) - Task 14.4-14.6**
+4. **Task 14.4**: Centralize safety policy enforcement — CRITICAL security gap
+5. **Task 14.5**: Implement dynamic tool discovery for all agents
+6. **Task 14.6**: Add error handling in agent communication
+
+#### **ONGOING UAT (Task 11)**
+7. Execute Task 11.2 Deployment Validation across Windows shells and record results in docs/uat_report.md.
+8. Execute Task 11.3 End-to-End Workflows (nmap/gobuster) on authorized targets; verify evidence persistence and reporting output.
+9. Keep docs/current_implementation_tasks.md and docs/project_tasks.md synchronized as UAT milestones progress.
+10. Prepare Task 12 release packaging prerequisites based on UAT outcomes.

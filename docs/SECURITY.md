@@ -45,7 +45,7 @@ By using this tool, you acknowledge that:
 4. You understand the risks of network scanning and testing
 5. You will comply with all applicable laws and regulations
 
-Type 'I AGREE' to acknowledge and proceed, or anything else to exit:
+Type **I AGREE** to acknowledge and proceed, or anything else to exit:
 ```
 
 ### Policy Engine Implementation
@@ -135,6 +135,58 @@ Configuration file protection:
 - **Sensitive Data**: No hardcoded credentials
 - **Environment Variables**: External secret management
 - **Validation**: Configuration schema validation
+
+### ChromaDB (RAG) — Data Security & Operational Notes
+This project uses a local ChromaDB instance or on-disk Chroma folder as the vector store for Retrieval-Augmented Generation (RAG). The following operational and security guidance applies specifically to Chroma/embedding storage.
+
+- **Default Path & Config**
+  - Default path (configurable): `~/.homepentest/chroma_db`
+  - Config flags: `enable_rag: true`, `rag_db_path: "~/.homepentest/chroma_db"`, `rag_on_disk: true`
+  - Ensure `rag_db_path` is set in `~/.homepentest/config.yaml` when RAG is enabled.
+
+- **File Permissions & Access**
+  - Restrict directory and file permissions to the running user (minimum: 0700 for directories, 0600 for critical files).
+  - Avoid running the agent as root to reduce blast radius.
+  - Limit OS-level access to backups and database files.
+
+- **Encryption**
+  - Chroma's SQLite/metadata files are not encrypted by default.
+  - Recommended options:
+    - Use OS-level encrypted volumes (BitLocker, FileVault, LUKS) for persistent storage.
+    - Use SQLCipher or filesystem-level encryption if on-disk DB-level encryption is required.
+    - Always encrypt backups (GPG/OpenSSL or secure object storage).
+
+- **Backups & Restore**
+  - Stop the agent before taking backups to avoid corruption.
+  - Backup the entire Chroma directory (preserve file ownership and permissions).
+  - Validate backups by restoring to a staging environment.
+  - Store backups off-host with encryption and strict access controls.
+
+- **Migration & Re-indexing**
+  - When changing embedding models or upgrading Chroma versions:
+    1. Export documents/metadata from the current collection.
+    2. Recompute embeddings with the new model.
+    3. Upsert documents into a fresh collection.
+  - Use the project's RAG manager tools (`src/agent/rag/manager.py`) for scripted migration.
+
+- **Retention & Pruning**
+  - Implement retention policies: prune or archive older documents (e.g., evidence > 90 days).
+  - Tag documents with asset/tool metadata to support selective pruning.
+
+- **Operational Recommendations**
+  - Monitor disk usage and collection growth.
+  - Schedule regular backups and periodic reindex runs after embedding model changes.
+  - Keep ChromaDB and embedding libraries aligned to the agent's compatibility matrix.
+  - Avoid exposing Chroma service endpoints to untrusted networks.
+
+- **Troubleshooting**
+  - "Database locked": ensure no parallel writers and stop the agent before manual operations.
+  - Corruption: restore from a known-good backup and reindex.
+  - Large index size: prune older docs or split into multiple collections.
+
+- **Audit & Logging for RAG**
+  - Record RAG upserts/searches in the audit_log with payload metadata (asset_id, source, tool, ts) to help trace retrieval decisions.
+  - Include checksums for exported documents when migrating to ensure integrity.
 
 ## Audit and Logging
 

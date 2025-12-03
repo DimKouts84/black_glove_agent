@@ -18,10 +18,11 @@ from .exceptions import global_exception_handler, BlackGloveError, AdapterError,
 
 # Import orchestrator components
 try:
-    from .orchestrator import create_orchestrator, ScanMode
+    from .orchestrator import create_orchestrator, ScanMode, WorkflowStep
 except ImportError:
     create_orchestrator = None
     ScanMode = None
+    WorkflowStep = None
 
 # Import reporting components
 try:
@@ -125,28 +126,36 @@ def show_legal_notice() -> bool:
 def verify_prerequisites() -> bool:
     """
     Verify system prerequisites for the agent.
-    Checks Docker connectivity, LLM services, and file permissions.
+    Checks for required tools (nmap, gobuster), LLM services, and file permissions.
     
     Returns:
         bool: True if all prerequisites are met, False otherwise
     """
     typer.echo("🔍 Verifying system prerequisites...")
     
-    # Check Docker
-    try:
-        import docker
-        client = docker.from_env()
-        client.ping()
-        typer.echo("✓ Docker connectivity verified")
-    except Exception as e:
-        typer.echo(f"✗ Docker verification failed: {e}")
-        typer.echo("  Please ensure Docker is installed and running")
+    import shutil
+    
+    # Check for nmap
+    if shutil.which("nmap"):
+        typer.echo("✓ nmap found")
+    else:
+        typer.echo("✗ nmap not found")
+        typer.echo("  Please ensure nmap is installed and in your PATH")
+        return False
+
+    # Check for gobuster
+    if shutil.which("gobuster"):
+        typer.echo("✓ gobuster found")
+    else:
+        typer.echo("✗ gobuster not found")
+        typer.echo("  Please ensure gobuster is installed and in your PATH")
         return False
     
     # Check LLM service (basic connectivity)
     try:
         import requests
-        config = ConfigModel()
+        # Load user configuration if available
+        config = load_config()
         response = requests.get(
             f"{config.llm_endpoint}/models",
             timeout=5
@@ -413,24 +422,31 @@ def init(
     ) as progress:
         task = progress.add_task("Verifying prerequisites...", total=4)
         
-        # Check Docker
-        progress.update(task, description="Checking Docker connectivity...")
-        try:
-            import docker
-            client = docker.from_env()
-            client.ping()
-            progress.console.print("[green]✓ Docker connectivity verified[/green]")
-        except Exception as e:
-            progress.console.print(f"[red]✗ Docker verification failed: {e}[/red]")
-            progress.console.print("  [yellow]Please ensure Docker is installed and running[/yellow]")
-            raise typer.Exit(code=1)
+        # Check Tools
+        import shutil
+        progress.update(task, description="Checking for nmap...")
+        if shutil.which("nmap"):
+            progress.console.print("[green]✓ nmap found[/green]")
+        else:
+            progress.console.print("[yellow]⚠️  nmap not found[/yellow]")
+            progress.console.print("  [yellow]Active scanning will be limited. Please install nmap for full functionality.[/yellow]")
+            # raise typer.Exit(code=1)  # Made optional for passive recon
+        
+        progress.update(task, description="Checking for gobuster...")
+        if shutil.which("gobuster"):
+            progress.console.print("[green]✓ gobuster found[/green]")
+        else:
+            progress.console.print("[yellow]⚠️  gobuster not found[/yellow]")
+            progress.console.print("  [yellow]Active scanning will be limited. Please install gobuster for full functionality.[/yellow]")
+            # raise typer.Exit(code=1)  # Made optional for passive recon
         progress.advance(task)
         
         # Check LLM service
         progress.update(task, description="Checking LLM service...")
         try:
             import requests
-            config = ConfigModel()
+            # Load user configuration if available
+            config = load_config()
             response = requests.get(
                 f"{config.llm_endpoint}/models",
                 timeout=5
@@ -547,7 +563,7 @@ def recon(
             console.print("[red]❌ No assets found. Add assets first using 'agent add-asset'[/red]")
             raise typer.Exit(code=1)
     
-    # Add assets to orchestrator
+    # Add assets to orchestrator - THIS IS CRITICAL FOR ACTIVE/LAB MODES
     for asset_model in assets:
         from .models import Asset
         agent_asset = Asset(
@@ -965,6 +981,142 @@ def remove_asset(
     except Exception as e:
         console.print(f"[red]❌ Failed to remove asset: {e}[/red]")
         raise typer.Exit(code=1)
+
+@app.command()
+@global_exception_handler
+def chat(
+    preset: str = typer.Option("default", "--preset", "-p", help="Conversation preset"),
+    auto_approve_passive: bool = typer.Option(True, "--auto-passive", help="Auto-approve passive recon"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed tool execution")
+):
+    """
+    Start interactive LLM chat session with multi-agent ReAct capabilities.
+    
+    Features a continuous conversation experience with context persistence and
+    multi-step tool execution. Type 'exit', 'quit', or press Ctrl+C to end session.
+    """
+    from rich.prompt import Prompt
+    from .plugin_manager import create_plugin_manager
+    from .llm_client import create_llm_client
+    from .session_manager import SessionManager
+    from .agents.investigator import InvestigatorAgent
+    from .models import ConfigModel
+    from .db import init_db
+    from .rag.chroma_store import ChromaDBManager
+    from .rag.manager import RAGDocument
+    from rich.status import Status
+    from enum import Enum
+    from datetime import datetime
+    from typing import Dict, Any
+    
+    # Load configuration
+    config = load_config()
+    
+    console.print(Panel.fit(
+        "[bold blue]🕵️‍♂️ BLACK GLOVE AGENT CHAT[/bold blue]\n\n"
+        "This is a multi-agent system for security testing.\n"
+        "The agent can maintain context across sessions and chain multiple tool executions.\n"
+        "Type [bold red]exit[/bold red] to end the session.",
+        border_style="blue"
+    ))
+    
+    # Initialize database and session manager
+    init_db()
+    session_manager = SessionManager()
+    
+    # Load or create chat session
+    session_id = None
+    if "CHAT_SESSION_ID" in os.environ:
+        session_id = os.environ["CHAT_SESSION_ID"]
+        try:
+            session_info = session_manager.get_session_info(session_id)
+            if not session_info:
+                session_id = session_manager.create_session("Security Assessment")
+            console.print(f"🔄 Resuming session: [cyan]{session_id}[/cyan]")
+        except:
+            session_id = session_manager.create_session("Security Assessment")
+    else:
+        session_id = session_manager.create_session("Security Assessment")
+        os.environ["CHAT_SESSION_ID"] = session_id
+    
+    from .policy_engine import create_policy_engine
+    
+    try:
+        # Initialize components
+        with console.status("[bold green]Booting security agency...[/bold green]"):
+            plugin_manager = create_plugin_manager(config.dict())
+            llm_client = create_llm_client(config)
+            policy_engine = create_policy_engine(config.dict().get("policy", {}))
+            
+            # Initialize investigator agent - main entry point
+            investigator = InvestigatorAgent(llm_client, plugin_manager, policy_engine, session_id=session_id)
+            
+            # Load session history if available
+            history = session_manager.load_session(session_id)
+            if history:
+                for msg in history[-5:]:  # Only load last 5 messages to keep context focused
+                    investigator.conversation_memory.add_message(msg)
+                console.print(f"[cyan]✓ Loaded {len(history)} previous messages[/cyan]")
+            
+            console.print("[green]✓ Security agency online[/green]")
+            console.print(f"[dim]Session ID: {session_id}[/dim]")
+    
+        # Conversation loop
+        while True:
+            try:
+                # Get user input
+                user_input = Prompt.ask("\n[bold cyan]You[/bold cyan]")
+                
+                if not user_input.strip():
+                    continue
+                
+                if user_input.lower() in ['exit', 'quit', 'q']:
+                    console.print("[yellow]Goodbye![/yellow]")
+                    break
+                
+                # Process message through investigator agent (yield-based for interactive updates)
+                session_manager.update_session_activity(session_id)
+                session_manager.save_message(
+                    session_id, 
+                    "user", 
+                    user_input,
+                    metadata={"type": "user_input"}
+                )
+                
+                with console.status("[bold green]Consulting security experts...[/bold green]") as status:
+                    for event in investigator.handle_user_query(user_input):
+                        if event['type'] == 'thinking':
+                            status.update(f"🔍 {event['content']}")
+                            time.sleep(0.3)  # Visual pacing
+                        elif event['type'] == 'tool_call':
+                            console.print(f"🛠️  [bold blue]{event['tool']}[/bold blue] (params: {event['params']})")
+                        elif event['type'] == 'tool_result':
+                            console.print(f"✅ [dim]Tool completed - Truncated result shown:[/dim]")
+                            console.print(f"[green]{event['result'][:200] + '...' if len(event['result']) > 200 else event['result']}[/green]")
+                        elif event['type'] == 'answer':
+                            console.print(f"\n[bold green]🛡️ FINAL ANALYSIS:[/bold green]")
+                            console.print(Markdown(event['content']))
+                            # Save final answer to session
+                            session_manager.save_message(
+                                session_id, 
+                                "assistant", 
+                                event['content'],
+                                metadata={"type": "response", "is_final": True}
+                            )
+            
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Session interrupted. Type 'exit' to quit.[/yellow]")
+                continue
+    
+    except Exception as e:
+        console.print(f"[bold red]Chat session failed: {e}[/bold red]")
+        import traceback
+        console.print(traceback.format_exc())
+        raise typer.Exit(code=1)
+    
+    finally:
+        if 'session_manager' in locals() and 'session_id' in locals():
+            console.print(f"[dim]Session saved: {session_id}[/dim]")
 
 if __name__ == "__main__":
     app()

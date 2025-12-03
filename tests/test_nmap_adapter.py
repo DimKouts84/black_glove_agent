@@ -53,10 +53,6 @@ class TestNmapValidation:
         with pytest.raises(ValueError):
             create_nmap_adapter({"timeout": -1}).validate_config()
 
-        # Invalid docker_network
-        with pytest.raises(ValueError):
-            create_nmap_adapter({"docker_network": 123}).validate_config()
-
         # Unsafe default flag
         with pytest.raises(ValueError, match="Unsafe default flag"):
             create_nmap_adapter({"default_flags": ["-sV", "bad;flag"]}).validate_config()
@@ -166,11 +162,14 @@ class TestNmapExecution:
             assert ev_path.exists()
             content = ev_path.read_text(encoding="utf-8")
             assert "<nmaprun>" in content
-            # Volume mount should include evidence/nmapadapter
+            
+            # Check ProcessRunner spec
             spec = runner.last_spec
             assert spec is not None
-            vols = spec.get("volumes", [])
-            assert any(v.get("container_path") == "/evidence" for v in vols)
+            assert spec["command"] == "nmap"
+            assert "-oX" in spec["args"]
+            assert "-" in spec["args"]
+            assert "192.168.1.10" in spec["args"]
         finally:
             os.chdir(cwd)
 

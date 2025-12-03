@@ -5,8 +5,8 @@
 # LLM Settings
 # Configure your LLM provider and endpoint
 llm_provider: "lmstudio"  # Options: lmstudio, ollama, openrouter
-llm_endpoint: "http://localhost:1234/v1"  # Update with your LLM service URL
-llm_model: "local-model"  # Specify your local model name
+llm_endpoint: "http://192.168.1.205:1235/v1/chat/completions"  # Update with your LLM service URL
+llm_model: "deepseek/deepseek-r1-0528-qwen3-8b"  # Specify your local model name
 llm_temperature: 0.7  # Controls randomness (0.0 = deterministic, 1.0 = creative)
 
 # Scan Settings

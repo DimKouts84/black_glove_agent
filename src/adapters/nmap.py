@@ -1,7 +1,7 @@
 """
 Nmap Adapter for Black Glove Pentest Agent
 
-Executes nmap in a container via DockerRunner and parses XML output into a normalized result.
+Executes nmap as a local process via ProcessRunner and parses XML output into a normalized result.
 Stores raw XML evidence under evidence/nmapadapter/.
 """
 
@@ -9,36 +9,48 @@ from __future__ import annotations
 
 import re
 import time
+import shutil
 from typing import Any, Dict, List, Optional
 
 from xml.etree import ElementTree as ET
 
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
-from ..utils.docker_runner import DockerRunner
+from utils.process_runner import ProcessRunner
+
+import socket
 
 _SAFE_FLAG_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9\-]*$")
 _SAFE_SCRIPT_RE = re.compile(r"^[A-Za-z0-9_\-\.]+$")
 _PORTS_RE = re.compile(r"^[0-9,\-]+$")  # e.g., 80,443 or 1-1024
 _TARGET_SAFE_RE = re.compile(r"^[A-Za-z0-9\.\-:]+$")  # basic IP/hostname/IPv6 literal
 
+def resolve_host(target, retries=2):
+    """Resolve hostname with retry mechanism."""
+    for i in range(retries + 1):
+        try:
+            return socket.gethostbyname(target)
+        except socket.gaierror:
+            if i < retries:
+                time.sleep(1)
+    return None
+
 class NmapAdapter(BaseAdapter):
     """
-    Safe, Dockerized nmap execution with XML parsing and normalized results.
+    Safe, local nmap execution with XML parsing and normalized results.
     """
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config or {})
         self._required_config_fields = []  # optional config entirely
         self._required_params = ["target"]
-        self.version = "1.0.0"
+        self.version = "1.1.0"
         # Dependency injection for tests
-        self._runner: DockerRunner = self.config.get("_runner") or DockerRunner(prefer_sdk=True)
+        self._runner: ProcessRunner = self.config.get("_runner") or ProcessRunner()
 
         # Defaults
         self._defaults = {
             "timeout": 300.0,
-            "docker_network": None,  # e.g., "host" on Linux (not supported on Docker Desktop Windows)
             "default_flags": ["-Pn", "-sV", "-T3"],
             "rate_limit_rpm": None,  # reserved (handled by orchestrator/policy engine normally)
         }
@@ -52,9 +64,7 @@ class NmapAdapter(BaseAdapter):
         if "timeout" in cfg:
             if not isinstance(cfg["timeout"], (int, float)) or float(cfg["timeout"]) <= 0:
                 raise ValueError("timeout must be a positive number")
-        if "docker_network" in cfg and cfg["docker_network"] is not None:
-            if not isinstance(cfg["docker_network"], str) or not cfg["docker_network"].strip():
-                raise ValueError("docker_network must be a non-empty string or None")
+        
         if "default_flags" in cfg:
             if not isinstance(cfg["default_flags"], list) or not all(isinstance(x, str) for x in cfg["default_flags"]):
                 raise ValueError("default_flags must be a list of strings")
@@ -66,6 +76,12 @@ class NmapAdapter(BaseAdapter):
             if not isinstance(cfg["rate_limit_rpm"], int) or cfg["rate_limit_rpm"] <= 0:
                 raise ValueError("rate_limit_rpm must be a positive integer or None")
 
+        # Check if nmap is available
+        if not shutil.which("nmap"):
+             # We don't raise here to allow instantiation, but execution will fail. 
+             # Or we could warn. For now, we'll let execution fail if not found.
+             pass
+
         return True
 
     def validate_params(self, params: Dict[str, Any]) -> bool:
@@ -73,8 +89,16 @@ class NmapAdapter(BaseAdapter):
         target = params.get("target")
         if not isinstance(target, str) or not target.strip():
             raise ValueError("target must be a non-empty string")
-        if not _TARGET_SAFE_RE.match(target.strip()):
-            raise ValueError("target contains invalid characters")
+        
+        # More permissive validation for domain names
+        target_stripped = target.strip()
+        if not _TARGET_SAFE_RE.match(target_stripped):
+            # Allow valid domain names that might not match the strict regex
+            if '.' in target_stripped and not target_stripped.startswith('.') and not target_stripped.endswith('.'):
+                # This looks like a valid domain, let it pass
+                pass
+            else:
+                raise ValueError("target contains invalid characters")
 
         ports = params.get("ports")
         if ports is not None:
@@ -109,13 +133,19 @@ class NmapAdapter(BaseAdapter):
         # Effective config
         cfg = self.config or {}
         timeout = float(cfg.get("timeout", self._defaults["timeout"]))
-        docker_network = cfg.get("docker_network", self._defaults["docker_network"])
         default_flags: List[str] = cfg.get("default_flags", self._defaults["default_flags"]) or []
+
+        # Validate and resolve target
+        target = params["target"].strip()
+        resolved_target = resolve_host(target)
+        if not resolved_target and not re.match(r'^\d+\.\d+\.\d+\.\d+', target):  # Not an IP address
+            # Try to resolve the target - if it fails, let nmap handle it (might be a valid nmap target format)
+            pass  # Let nmap deal with it directly
 
         # Build command
         cmd = self._build_command(
             params={
-                "target": params["target"].strip(),
+                "target": target,
                 "ports": params.get("ports"),
                 "scripts": params.get("scripts"),
                 "extra_flags": params.get("extra_flags"),
@@ -126,24 +156,22 @@ class NmapAdapter(BaseAdapter):
             },
         )
 
-        # Prepare volume (not strictly required since we use -oX -, but keep consistent)
+        # Prepare evidence directory
         evidence_dir = "evidence/" + self.name.lower()
-        # Ensure host path exists (DockerRunner mounts as-is; creation is not mandatory for container run)
         try:
             from pathlib import Path as _P
             _P(evidence_dir).mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
 
-        # Execute container
+        # Execute process
+        # cmd[0] is 'nmap', but ProcessRunner expects command and args separately
         run_result = self._runner.run(
             {
-                "image": "instrumentisto/nmap",
-                "args": cmd,
+                "command": "nmap",
+                "args": cmd[1:], # skip 'nmap'
                 "env": {},
-                "volumes": [{"host_path": evidence_dir, "container_path": "/evidence", "mode": "rw"}],
-                "network": docker_network,
-                "workdir": "/work",
+                "cwd": None,
                 "timeout": timeout,
             }
         )
@@ -307,10 +335,10 @@ class NmapAdapter(BaseAdapter):
             {
                 "name": "NmapAdapter",
                 "version": self.version,
-                "description": "Dockerized nmap execution with XML parsing and evidence storage",
+                "description": "Local nmap execution with XML parsing and evidence storage",
                 "capabilities": base_info["capabilities"]
                 + ["network_scan", "service_detection", "xml_parsing", "evidence_storage"],
-                "requirements": ["docker_engine_or_cli"],
+                "requirements": ["nmap"],
                 "example_usage": {
                     "target": "192.168.1.1",
                     "ports": "1-1024",

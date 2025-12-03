@@ -42,10 +42,6 @@ class TestGobusterValidation:
         with pytest.raises(ValueError):
             create_gobuster_adapter({"timeout": 0}).validate_config()
 
-        # Invalid docker_network
-        with pytest.raises(ValueError):
-            create_gobuster_adapter({"docker_network": 123}).validate_config()
-
         # Invalid default mode
         with pytest.raises(ValueError):
             create_gobuster_adapter({"default_mode": "foo"}).validate_config()
@@ -168,11 +164,13 @@ class TestGobusterExecution:
             content = ev.read_text(encoding="utf-8")
             assert "/admin (Status: 301)" in content
 
-            # Volume mount includes evidence/gobusteradapter
+            # Check ProcessRunner spec
             spec = runner.last_spec
             assert spec is not None
-            vols = spec.get("volumes", [])
-            assert any(v.get("container_path") == "/evidence" for v in vols)
+            assert spec["command"] == "gobuster"
+            assert "dir" in spec["args"]
+            assert "-u" in spec["args"]
+            assert "http://example.com" in spec["args"]
         finally:
             os.chdir(cwd)
 

@@ -40,6 +40,10 @@ dependencies = [
     "python-whois",
     "dnspython",
     "sslyze",
+    "python-dotenv",
+    "sublist3r-lib",
+    "wappalyzer",
+    "shodan",
 ]
 
 [project.optional-dependencies]
