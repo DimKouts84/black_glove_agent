@@ -105,9 +105,10 @@ class TestConversationMemory:
         """Test adding messages to conversation memory."""
         memory = ConversationMemory(max_size=3)
         
-        msg1 = LLMMessage(role="user", content="Hello")
-        msg2 = LLMMessage(role="assistant", content="Hi there!")
-        msg3 = LLMMessage(role="user", content="How are you?")
+        # Use explicit unique message_ids to prevent duplicate detection
+        msg1 = LLMMessage(role="user", content="Hello", message_id="msg1")
+        msg2 = LLMMessage(role="assistant", content="Hi there!", message_id="msg2")
+        msg3 = LLMMessage(role="user", content="How are you?", message_id="msg3")
         
         memory.add_message(msg1)
         memory.add_message(msg2)
@@ -122,9 +123,10 @@ class TestConversationMemory:
         """Test conversation memory size limiting."""
         memory = ConversationMemory(max_size=2)
         
-        msg1 = LLMMessage(role="user", content="Message 1")
-        msg2 = LLMMessage(role="assistant", content="Message 2")
-        msg3 = LLMMessage(role="user", content="Message 3")
+        # Use explicit unique message_ids to prevent duplicate detection
+        msg1 = LLMMessage(role="user", content="Message 1", message_id="limit_msg1")
+        msg2 = LLMMessage(role="assistant", content="Message 2", message_id="limit_msg2")
+        msg3 = LLMMessage(role="user", content="Message 3", message_id="limit_msg3")
         
         memory.add_message(msg1)
         memory.add_message(msg2)
@@ -138,9 +140,9 @@ class TestConversationMemory:
         """Test getting recent messages from memory."""
         memory = ConversationMemory(max_size=5)
         
-        # Add exactly 5 messages to a max_size=5 memory
+        # Add exactly 5 messages to a max_size=5 memory with unique IDs
         for i in range(5):
-            memory.add_message(LLMMessage(role="user", content=f"Message {i}"))
+            memory.add_message(LLMMessage(role="user", content=f"Message {i}", message_id=f"recent_msg{i}"))
         
         # Get all messages
         all_messages = memory.get_recent_messages()
@@ -171,7 +173,7 @@ class TestConversationMemory:
         memory = ConversationMemory(max_size=5)
         
         for i in range(3):
-            memory.add_message(LLMMessage(role="user", content=f"Message {i}"))
+            memory.add_message(LLMMessage(role="user", content=f"Message {i}", message_id=f"clear_msg{i}"))
         
         assert len(memory.messages) == 3
         
