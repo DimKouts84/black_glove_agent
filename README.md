@@ -133,7 +133,32 @@ flowchart TD
 
 ## 🛠️ Installation
 
-### Quick Setup
+### Quick Setup (Recommended)
+
+Use our automated setup script for the fastest installation:
+
+**Unix/Linux/macOS:**
+```bash
+git clone https://github.com/mitsos-pc/black-glove.git
+cd black-glove
+./scripts/quick-start.sh
+```
+
+**Windows:**
+```cmd
+git clone https://github.com/mitsos-pc/black-glove.git
+cd black-glove
+scripts\quick-start.bat
+```
+
+The quick-start script will:
+- Check your Python version
+- Create a virtual environment
+- Install all dependencies
+- Run system diagnostics
+- Guide you through next steps
+
+### Manual Setup
 
 1. **Clone the repository:**
    ```bash
@@ -150,6 +175,12 @@ flowchart TD
 3. **Install dependencies:**
    ```bash
    pip install -e .
+   ```
+
+4. **Verify installation:**
+   ```bash
+   agent --version
+   agent diagnose  # Run system diagnostics
    ```
 
 

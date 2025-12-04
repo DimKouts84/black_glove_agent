@@ -1243,10 +1243,13 @@ def diagnose():
     except Exception as e:
         table.add_row("Directory Permissions", "[red]✗[/red]", f"Cannot write to {homepentest_dir}: {e}")
     
-    # 10. LLM Connectivity (if config exists)
+    # 10. LLM Connectivity and RAG (if config exists)
+    config = None
     if config_path.exists():
+        config = load_config()
+        
+        # Check LLM connectivity
         try:
-            config = load_config()
             import requests
             response = requests.get(
                 f"{config.llm_endpoint}/models",
@@ -1270,8 +1273,7 @@ def diagnose():
     # 11. ChromaDB / RAG
     try:
         import chromadb
-        if config_path.exists():
-            config = load_config()
+        if config and config_path.exists():
             if config.enable_rag:
                 chroma_path = Path(os.path.expanduser(config.rag_db_path))
                 if chroma_path.exists():
