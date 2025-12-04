@@ -387,10 +387,11 @@ The deployment process will:
 
 ## 📚 Documentation
 
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed system architecture
-- [SECURITY.md](docs/SECURITY.md) - Security policies and safety controls
+- **[STARTUP_GUIDE.md](STARTUP_GUIDE.md)** - Quick start guide for new users ⭐
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
 - [TESTING.md](TESTING.md) - Testing guide and known issues
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed system architecture
+- [SECURITY.md](docs/SECURITY.md) - Security policies and safety controls
 - [examples/workflows.md](examples/workflows.md) - Example usage workflows
 - [examples/assets.yml](examples/assets.yml) - Sample asset configurations
 
