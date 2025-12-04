@@ -10,6 +10,28 @@ from rich.text import Text
 import traceback
 import sys
 import functools
+from typing import Callable as _Callable
+
+
+def _sanitize_for_console(s: str) -> str:
+    """Return a console-safe string by replacing characters not encodable
+    by the current stdout encoding. This avoids UnicodeEncodeError when
+    printing emoji on legacy Windows code pages.
+    """
+    if s is None:
+        return ""
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        # If it already encodes, return as-is
+        s.encode(enc)
+        return s
+    except Exception:
+        try:
+            # Replace un-encodable characters with replacement marker
+            return s.encode(enc, errors="replace").decode(enc)
+        except Exception:
+            # Final fallback: strip non-decodable chars
+            return s.encode("utf-8", errors="ignore").decode("utf-8")
 
 
 class BlackGloveError(Exception):
@@ -46,14 +68,16 @@ class BlackGloveError(Exception):
         Args:
             console: Rich console instance for output
         """
-        # Main error panel
-        error_text = Text(self.message, style="bold red")
-        console.print(Panel(error_text, title="❌ Error", border_style="red"))
+        # Main error panel (sanitize strings for console encoding)
+        safe_msg = _sanitize_for_console(self.message)
+        error_text = Text(safe_msg, style="bold red")
+        console.print(Panel(error_text, title="Error", border_style="red"))
         
         # Recovery suggestion if available
         if self.recovery_suggestion:
-            suggestion_text = Text(self.recovery_suggestion, style="yellow")
-            console.print(Panel(suggestion_text, title="💡 Suggestion", border_style="yellow"))
+            safe_sugg = _sanitize_for_console(self.recovery_suggestion)
+            suggestion_text = Text(safe_sugg, style="yellow")
+            console.print(Panel(suggestion_text, title="Suggestion", border_style="yellow"))
         
         # Context information
         if self.context:
@@ -61,13 +85,14 @@ class BlackGloveError(Exception):
             for key, value in self.context.items():
                 context_items.append(f"{key}: {value}")
             if context_items:
-                context_text = Text("\n".join(context_items), style="blue")
-                console.print(Panel(context_text, title="📋 Context", border_style="blue"))
+                safe_context = _sanitize_for_console("\n".join(context_items))
+                context_text = Text(safe_context, style="blue")
+                console.print(Panel(context_text, title="Context", border_style="blue"))
         
         # Traceback if requested
         if self.show_traceback:
-            console.print(Panel("Full traceback:", style="bold white"))
-            console.print(traceback.format_exc())
+            console.print(Panel(_sanitize_for_console("Full traceback:"), style="bold white"))
+            console.print(_sanitize_for_console(traceback.format_exc()))
     
     def __str__(self) -> str:
         """String representation of the error."""
@@ -219,43 +244,47 @@ def global_exception_handler(func):
     Returns:
         Wrapped function with exception handling
     """
+    import typer
+    
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
+        except (typer.Exit, typer.Abort, SystemExit):
+            # Re-raise typer control exceptions to preserve exit codes
+            raise
         except BlackGloveError as e:
             # Handle our custom exceptions with rich formatting
             console = Console()
             e.format_rich_output(console)
-            return 1  # Return error code instead of exiting
+            raise typer.Exit(code=1)
         except KeyboardInterrupt:
             # Handle Ctrl+C gracefully
             console = Console()
             console.print("\n[yellow]⚠️  Operation cancelled by user[/yellow]")
-            return 130  # Standard SIGINT exit code
+            raise typer.Exit(code=130)  # Standard SIGINT exit code
         except Exception as e:
             # Handle unexpected exceptions
             console = Console()
-            error_msg = Text(f"Unexpected error: {str(e)}", style="bold red")
-            console.print(Panel(error_msg, title="💥 Unexpected Error", border_style="red"))
+            error_msg = Text(_sanitize_for_console(f"Unexpected error: {str(e)}"), style="bold red")
+            console.print(Panel(error_msg, title="Unexpected Error", border_style="red"))
             
             # Provide general troubleshooting
-            suggestion = Text(
+            suggestion = _sanitize_for_console(
                 "This appears to be an unexpected error. Please:\n"
                 "1. Check the logs for more details\n"
                 "2. Verify your configuration\n"
                 "3. Ensure all dependencies are installed\n"
-                "4. Report this issue if it persists",
-                style="yellow"
+                "4. Report this issue if it persists"
             )
-            console.print(Panel(suggestion, title="🔧 Troubleshooting", border_style="yellow"))
+            console.print(Panel(Text(suggestion, style="yellow"), title="Troubleshooting", border_style="yellow"))
             
             # Show traceback in debug mode
             if console.is_terminal:
                 console.print("\n[bold white]Debug information:[/bold white]")
                 console.print(traceback.format_exc())
             
-            return 1  # Return error code instead of exiting
+            raise typer.Exit(code=1)
     
     return wrapper
 
@@ -277,13 +306,13 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
         return
     
     console = Console()
-    
-    # Format the error
-    error_msg = Text(f"Uncaught exception: {str(exc_value)}", style="bold red")
-    console.print(Panel(error_msg, title="💥 Critical Error", border_style="red"))
-    
+
+    # Format the error (sanitize for console)
+    error_msg = Text(_sanitize_for_console(f"Uncaught exception: {str(exc_value)}"), style="bold red")
+    console.print(Panel(error_msg, title="Critical Error", border_style="red"))
+
     # Show traceback
     console.print("\n[bold white]Full traceback:[/bold white]")
-    console.print("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
-    
-    console.print("\n[yellow]The application will attempt to continue, but stability may be compromised.[/yellow]")
+    console.print(_sanitize_for_console("".join(traceback.format_exception(exc_type, exc_value, exc_traceback))))
+
+    console.print(_sanitize_for_console("\nThe application will attempt to continue, but stability may be compromised."))

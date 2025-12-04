@@ -18,6 +18,8 @@ def run_test():
     env = os.environ.copy()
     env["CHAT_SESSION_ID"] = "e2e_test_session"
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8"
 
     # Use the current python executable
     cmd = [sys.executable, "-m", "agent.cli", "chat"]

@@ -131,7 +131,7 @@ class ResearcherAgent(BaseAgent):
         try:
             if tool_name == "add_asset":
                 # Import and execute asset management
-                from ..adapters.asset_manager import run as asset_manager_run
+                from adapters.asset_manager import run as asset_manager_run
                 
                 result = asset_manager_run({
                     "command": "add",
@@ -141,14 +141,14 @@ class ResearcherAgent(BaseAgent):
                 return f"Asset Management: {result.stdout}" if result.success else f"Asset Management Error: {result.stderr}"
             
             elif tool_name == "list_assets":
-                from ..adapters.asset_manager import run as asset_manager_run
+                from adapters.asset_manager import run as asset_manager_run
                 
                 result = asset_manager_run({"command": "list"})
                 
                 return f"Asset List:\n{result.stdout}" if result.success else f"Asset List Error: {result.stderr}"
             
             elif tool_name == "generate_report":
-                from ..adapters.asset_manager import run as asset_manager_run
+                from adapters.asset_manager import run as asset_manager_run
                 
                 result = asset_manager_run({
                     "command": "report",

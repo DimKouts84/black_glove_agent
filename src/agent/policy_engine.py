@@ -176,6 +176,7 @@ class TargetValidator:
             config: Target validation configuration
         """
         self.config = config
+        print(f"DEBUG: TargetValidator initialized with config: {self.config}")
         self.logger = logging.getLogger("black_glove.policy.target_validator")
         self._authorized_networks: List[ipaddress.IPv4Network] = []
         self._authorized_domains: Set[str] = set()
@@ -222,8 +223,19 @@ class TargetValidator:
     
     def _load_authorized_domains(self) -> None:
         """Load authorized domains from configuration."""
-        domains = self.config.get("authorized_domains", [])
+        print(f"DEBUG: _load_authorized_domains config: {self.config}")
+        print(f"DEBUG: Config type: {type(self.config)}")
+        print(f"DEBUG: Config keys: {[repr(k) for k in self.config.keys()]}")
+        
+        try:
+            domains = self.config["authorized_domains"]
+        except KeyError:
+            print("DEBUG: KeyError accessing authorized_domains")
+            domains = []
+            
+        print(f"DEBUG: Loading authorized domains: {domains}")
         self._authorized_domains.update(domains)
+        print(f"DEBUG: Updated authorized domains: {self._authorized_domains}")
         for domain in domains:
             self.logger.debug(f"Added authorized domain: {domain}")
     
@@ -277,7 +289,9 @@ class TargetValidator:
             return False
         
         # Check if in authorized domains
+        print(f"DEBUG: Checking domain '{domain}' against authorized: {self._authorized_domains}")
         if domain in self._authorized_domains:
+            print("DEBUG: Domain authorized directly")
             return True
         
         # Check for subdomain matches

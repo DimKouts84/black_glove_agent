@@ -1013,7 +1013,7 @@ def chat(
     config = load_config()
     
     console.print(Panel.fit(
-        "[bold blue]🕵️‍♂️ BLACK GLOVE AGENT CHAT[/bold blue]\n\n"
+        "[bold blue]BLACK GLOVE AGENT CHAT[/bold blue]\n\n"
         "This is a multi-agent system for security testing.\n"
         "The agent can maintain context across sessions and chain multiple tool executions.\n"
         "Type [bold red]exit[/bold red] to end the session.",

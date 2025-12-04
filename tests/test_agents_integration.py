@@ -8,6 +8,7 @@ from unittest.mock import Mock
 from src.agent.agents.investigator import InvestigatorAgent
 from src.agent.agents.researcher import ResearcherAgent
 from src.agent.models import WorkflowStep, ScanPlan
+from adapters.interface import AdapterResult, AdapterResultStatus
 
 def test_investigator_planner_researcher_analyst_flow():
     """
@@ -22,15 +23,14 @@ def test_investigator_planner_researcher_analyst_flow():
     # Minimal dummy LLM client (not used heavily in this test)
     dummy_llm = SimpleNamespace(conversation_memory=None, generate=lambda *a, **k: SimpleNamespace(content="{}"))
 
-    # Mock plugin manager: simulate adapter execution returning a successful adapter result
+    # Mock plugin manager: simulate adapter execution returning a successful AdapterResult
     plugin_manager = Mock()
-    adapter_result = SimpleNamespace(
-        success=True,
-        stdout="22/tcp open ssh\nService: OpenSSH 7.9",
-        stderr="",
+    adapter_result = AdapterResult(
+        status=AdapterResultStatus.SUCCESS,
+        data={"stdout": "22/tcp open ssh\nService: OpenSSH 7.9"},
         metadata={"ports": [22], "evidence_path": "/tmp/evidence/test-nmap.json"}
     )
-    plugin_manager.execute_tool.return_value = adapter_result
+    plugin_manager.run_adapter.return_value = adapter_result
     plugin_manager.discover_adapters.return_value = ["nmap"]
 
     # Mock policy engine
@@ -38,6 +38,7 @@ def test_investigator_planner_researcher_analyst_flow():
     policy_engine.validate_asset.return_value = True
     policy_engine.enforce_rate_limits.return_value = True
     policy_engine.rate_limiter = Mock()
+
 
     # Use the real ResearcherAgent but with the mocked plugin manager
     researcher = ResearcherAgent(dummy_llm, plugin_manager, policy_engine, session_id="sess-1")
@@ -74,7 +75,7 @@ def test_investigator_planner_researcher_analyst_flow():
     ), "Expected a tool_result event showing NMAP executed successfully"
 
     # Plugin manager must have been invoked with the expected parameters
-    plugin_manager.execute_tool.assert_called_once_with("nmap", {"target": "192.168.1.100"})
+    plugin_manager.run_adapter.assert_called_once_with("nmap", {"target": "192.168.1.100"})
 
     # Analyst must have been called to analyze findings
     analyst.analyze_findings.assert_called()

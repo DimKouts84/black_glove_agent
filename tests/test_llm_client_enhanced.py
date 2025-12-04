@@ -138,13 +138,9 @@ class TestConversationMemory:
         """Test getting recent messages from memory."""
         memory = ConversationMemory(max_size=5)
         
-        messages = [
-            LLMMessage(role="user", content=f"Message {i}")
-            for i in range(5)
-        ]
-        
-        for msg in messages:
-            memory.add_message(msg)
+        # Add exactly 5 messages to a max_size=5 memory
+        for i in range(5):
+            memory.add_message(LLMMessage(role="user", content=f"Message {i}"))
         
         # Get all messages
         all_messages = memory.get_recent_messages()
@@ -161,9 +157,10 @@ class TestConversationMemory:
         """Test getting conversation context as string."""
         memory = ConversationMemory(max_size=3)
         
-        memory.add_message(LLMMessage(role="user", content="Hello"))
-        memory.add_message(LLMMessage(role="assistant", content="Hi!"))
-        memory.add_message(LLMMessage(role="user", content="How are you?"))
+        # Add messages one by one with unique IDs
+        memory.add_message(LLMMessage(role="user", content="Hello", message_id="msg1"))
+        memory.add_message(LLMMessage(role="assistant", content="Hi!", message_id="msg2"))
+        memory.add_message(LLMMessage(role="user", content="How are you?", message_id="msg3"))
         
         context = memory.get_context_string()
         expected = "USER: Hello\nASSISTANT: Hi!\nUSER: How are you?"
