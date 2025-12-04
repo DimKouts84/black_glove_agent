@@ -1118,5 +1118,190 @@ def chat(
         if 'session_manager' in locals() and 'session_id' in locals():
             console.print(f"[dim]Session saved: {session_id}[/dim]")
 
+@app.command()
+def diagnose():
+    """
+    Run comprehensive diagnostics to troubleshoot Black Glove setup.
+    
+    This command checks:
+    - Python version
+    - Package installation
+    - Required system tools (nmap, gobuster, docker)
+    - Configuration files
+    - LLM connectivity
+    - Directory permissions
+    """
+    import shutil
+    import os
+    import platform
+    
+    console.print(Panel.fit(
+        "[bold cyan]🔍 BLACK GLOVE DIAGNOSTICS[/bold cyan]\n\n"
+        "Running comprehensive system checks...",
+        border_style="cyan"
+    ))
+    
+    # Create results table
+    table = Table(title="Diagnostic Results", show_header=True, header_style="bold magenta")
+    table.add_column("Check", style="cyan", width=30)
+    table.add_column("Status", style="white", width=15)
+    table.add_column("Details", style="dim")
+    
+    # 1. System Information
+    table.add_row(
+        "Operating System",
+        "[green]✓[/green]",
+        f"{platform.system()} {platform.release()}"
+    )
+    
+    # 2. Python Version
+    py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    py_status = "[green]✓[/green]" if sys.version_info >= (3, 8) else "[red]✗[/red]"
+    py_details = f"Python {py_version}" + ("" if sys.version_info >= (3, 8) else " (requires 3.8+)")
+    table.add_row("Python Version", py_status, py_details)
+    
+    # 3. Black Glove Installation
+    try:
+        version = _get_version()
+        if version != "0.0.0":
+            table.add_row("Black Glove Package", "[green]✓[/green]", f"v{version} installed")
+        else:
+            table.add_row("Black Glove Package", "[yellow]⚠[/yellow]", "Installed but version unknown")
+    except Exception as e:
+        table.add_row("Black Glove Package", "[red]✗[/red]", f"Not found: {str(e)}")
+    
+    # 4. Virtual Environment
+    if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+        venv_path = sys.prefix
+        table.add_row("Virtual Environment", "[green]✓[/green]", f"Active: {venv_path}")
+    else:
+        table.add_row("Virtual Environment", "[yellow]⚠[/yellow]", "Not using venv (recommended)")
+    
+    # 5. Required Python Packages
+    required_packages = [
+        "typer", "requests", "pydantic", "docker", "yaml", 
+        "aiohttp", "rich", "chromadb"
+    ]
+    
+    missing_packages = []
+    for pkg in required_packages:
+        try:
+            # Special handling for PyYAML
+            if pkg == "yaml":
+                __import__("yaml")
+            else:
+                __import__(pkg)
+        except ImportError:
+            missing_packages.append(pkg)
+    
+    if not missing_packages:
+        table.add_row("Python Dependencies", "[green]✓[/green]", "All required packages installed")
+    else:
+        table.add_row(
+            "Python Dependencies", 
+            "[red]✗[/red]", 
+            f"Missing: {', '.join(missing_packages)}"
+        )
+    
+    # 6. System Tools
+    tools = {
+        "nmap": "Network scanning (required for active scans)",
+        "gobuster": "Directory/DNS enumeration (required for active scans)",
+        "docker": "Container support (optional, for some adapters)"
+    }
+    
+    for tool, description in tools.items():
+        if shutil.which(tool):
+            table.add_row(f"{tool.capitalize()}", "[green]✓[/green]", f"Found: {shutil.which(tool)}")
+        else:
+            status = "[yellow]⚠[/yellow]" if tool == "docker" else "[red]✗[/red]"
+            table.add_row(f"{tool.capitalize()}", status, f"Not found - {description}")
+    
+    # 7. Configuration
+    config_path = Path.home() / ".homepentest" / "config.yaml"
+    if config_path.exists():
+        table.add_row("Configuration File", "[green]✓[/green]", str(config_path))
+    else:
+        table.add_row("Configuration File", "[yellow]⚠[/yellow]", "Not found - run 'agent init'")
+    
+    # 8. Database
+    db_path = Path.home() / ".homepentest" / "pentest.db"
+    if db_path.exists():
+        size = db_path.stat().st_size
+        table.add_row("Database", "[green]✓[/green]", f"{str(db_path)} ({size} bytes)")
+    else:
+        table.add_row("Database", "[yellow]⚠[/yellow]", "Not initialized - run 'agent init'")
+    
+    # 9. Directory Permissions
+    homepentest_dir = Path.home() / ".homepentest"
+    try:
+        homepentest_dir.mkdir(parents=True, exist_ok=True)
+        test_file = homepentest_dir / "test_write.tmp"
+        test_file.write_text("test")
+        test_file.unlink()
+        table.add_row("Directory Permissions", "[green]✓[/green]", f"Read/Write access to {homepentest_dir}")
+    except Exception as e:
+        table.add_row("Directory Permissions", "[red]✗[/red]", f"Cannot write to {homepentest_dir}: {e}")
+    
+    # 10. LLM Connectivity (if config exists)
+    if config_path.exists():
+        try:
+            config = load_config()
+            import requests
+            response = requests.get(
+                f"{config.llm_endpoint}/models",
+                timeout=5
+            )
+            if response.status_code == 200:
+                table.add_row("LLM Service", "[green]✓[/green]", f"Connected to {config.llm_endpoint}")
+            else:
+                table.add_row(
+                    "LLM Service", 
+                    "[yellow]⚠[/yellow]", 
+                    f"HTTP {response.status_code} from {config.llm_endpoint}"
+                )
+        except requests.exceptions.Timeout:
+            table.add_row("LLM Service", "[yellow]⚠[/yellow]", "Connection timeout")
+        except requests.exceptions.ConnectionError:
+            table.add_row("LLM Service", "[yellow]⚠[/yellow]", "Cannot connect (is LLM running?)")
+        except Exception as e:
+            table.add_row("LLM Service", "[yellow]⚠[/yellow]", f"Check failed: {str(e)[:50]}")
+    
+    # 11. ChromaDB / RAG
+    try:
+        import chromadb
+        if config_path.exists():
+            config = load_config()
+            if config.enable_rag:
+                chroma_path = Path(os.path.expanduser(config.rag_db_path))
+                if chroma_path.exists():
+                    table.add_row("RAG / ChromaDB", "[green]✓[/green]", f"Enabled: {chroma_path}")
+                else:
+                    table.add_row("RAG / ChromaDB", "[yellow]⚠[/yellow]", "Enabled but DB not initialized")
+            else:
+                table.add_row("RAG / ChromaDB", "[dim]—[/dim]", "Disabled in config")
+        else:
+            table.add_row("RAG / ChromaDB", "[green]✓[/green]", "Package installed")
+    except ImportError:
+        table.add_row("RAG / ChromaDB", "[red]✗[/red]", "chromadb package not installed")
+    
+    # Print results
+    console.print(table)
+    
+    # Summary and recommendations
+    console.print("\n[bold]Next Steps:[/bold]")
+    
+    if not config_path.exists():
+        console.print("  • Run [cyan]agent init[/cyan] to initialize Black Glove")
+    
+    if missing_packages:
+        console.print(f"  • Install missing packages: [cyan]pip install {' '.join(missing_packages)}[/cyan]")
+    
+    if not shutil.which("nmap") or not shutil.which("gobuster"):
+        console.print("  • Install system tools for active scanning (see TROUBLESHOOTING.md)")
+    
+    console.print("\n[dim]For detailed troubleshooting, see TROUBLESHOOTING.md[/dim]")
+    console.print("[dim]For help, visit: https://github.com/mitsos-pc/black-glove/issues[/dim]")
+
 if __name__ == "__main__":
     app()

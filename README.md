@@ -356,8 +356,62 @@ The deployment process will:
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed system architecture
 - [SECURITY.md](docs/SECURITY.md) - Security policies and safety controls
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
 - [examples/workflows.md](examples/workflows.md) - Example usage workflows
 - [examples/assets.yml](examples/assets.yml) - Sample asset configurations
+
+---
+
+## 🔧 Troubleshooting
+
+Having issues getting started? Here are some quick solutions:
+
+### CLI Not Starting
+
+1. **Check installation:**
+   ```bash
+   pip show black-glove
+   agent --version
+   ```
+
+2. **Run diagnostics:**
+   ```bash
+   agent diagnose
+   ```
+   This command performs comprehensive checks of your system setup.
+
+3. **Common issues:**
+   - **"command not found: agent"** - Reinstall: `pip install -e .`
+   - **"No module named 'chromadb'"** - Install: `pip install chromadb`
+   - **Import errors** - Use a fresh virtual environment
+
+### Virtual Environment Issues
+
+```bash
+# Create fresh environment
+python -m venv .venv
+source .venv/bin/activate  # Unix/Linux/macOS
+.venv\Scripts\activate     # Windows
+
+# Reinstall
+pip install -e .
+```
+
+### Using `uv` for Virtual Environments
+
+```bash
+# Install uv
+pip install uv
+
+# Create and activate environment
+uv venv
+source .venv/bin/activate  # Unix/Linux/macOS
+
+# Install dependencies
+uv pip install -e .
+```
+
+For detailed troubleshooting guides, see **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**.
 
 ---
 
