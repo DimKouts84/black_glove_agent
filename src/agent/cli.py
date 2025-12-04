@@ -1178,19 +1178,22 @@ def diagnose():
         table.add_row("Virtual Environment", "[yellow]⚠[/yellow]", "Not using venv (recommended)")
     
     # 5. Required Python Packages
+    # NOTE: Keep this in sync with pyproject.toml dependencies
     required_packages = [
-        "typer", "requests", "pydantic", "docker", "yaml", 
+        "typer", "requests", "pydantic", "docker", "PyYAML",  # PyYAML imports as 'yaml'
         "aiohttp", "rich", "chromadb"
     ]
+    
+    # Map package names to their import names if different
+    import_name_map = {
+        "PyYAML": "yaml"
+    }
     
     missing_packages = []
     for pkg in required_packages:
         try:
-            # Special handling for PyYAML
-            if pkg == "yaml":
-                __import__("yaml")
-            else:
-                __import__(pkg)
+            import_name = import_name_map.get(pkg, pkg)
+            __import__(import_name)
         except ImportError:
             missing_packages.append(pkg)
     
@@ -1244,6 +1247,9 @@ def diagnose():
         table.add_row("Directory Permissions", "[red]✗[/red]", f"Cannot write to {homepentest_dir}: {e}")
     
     # 10. LLM Connectivity and RAG (if config exists)
+    LLM_TIMEOUT_SECONDS = 5  # Timeout for LLM health checks
+    MAX_ERROR_MESSAGE_LENGTH = 50  # Maximum error message length to display
+    
     config = None
     if config_path.exists():
         config = load_config()
@@ -1253,7 +1259,7 @@ def diagnose():
             import requests
             response = requests.get(
                 f"{config.llm_endpoint}/models",
-                timeout=5
+                timeout=LLM_TIMEOUT_SECONDS
             )
             if response.status_code == 200:
                 table.add_row("LLM Service", "[green]✓[/green]", f"Connected to {config.llm_endpoint}")
@@ -1268,7 +1274,7 @@ def diagnose():
         except requests.exceptions.ConnectionError:
             table.add_row("LLM Service", "[yellow]⚠[/yellow]", "Cannot connect (is LLM running?)")
         except Exception as e:
-            table.add_row("LLM Service", "[yellow]⚠[/yellow]", f"Check failed: {str(e)[:50]}")
+            table.add_row("LLM Service", "[yellow]⚠[/yellow]", f"Check failed: {str(e)[:MAX_ERROR_MESSAGE_LENGTH]}")
     
     # 11. ChromaDB / RAG
     try:

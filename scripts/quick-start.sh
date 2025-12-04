@@ -2,7 +2,7 @@
 # Quick Start Script for Black Glove
 # This script helps you get Black Glove up and running quickly
 
-set -e  # Exit on error
+set -euo pipefail  # Exit on error, undefined variables, and pipeline failures
 
 # Colors for output
 RED='\033[0;31m'

@@ -2,7 +2,7 @@
 REM Quick Start Script for Black Glove (Windows)
 REM This script helps you get Black Glove up and running quickly on Windows
 
-setlocal enabledelayedexpansion
+setlocal
 
 echo.
 echo ==========================================
