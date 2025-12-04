@@ -20,7 +20,7 @@ from .models import Asset, ScanResult, WorkflowStep, OrchestrationContext
 from .policy_engine import PolicyEngine, create_policy_engine
 from .plugin_manager import PluginManager, create_plugin_manager
 from .llm_client import LLMClient, create_llm_client, LLMMessage, LLMConfig, LLMProvider
-from ..adapters.interface import AdapterResult, AdapterResultStatus
+from adapters.interface import AdapterResult, AdapterResultStatus
     
 
 class ScanMode(Enum):
@@ -97,7 +97,10 @@ class Orchestrator:
         
         # Initialize core components
         self.policy_engine = create_policy_engine(config.get("policy", {}))
-        self.plugin_manager = create_plugin_manager(config.get("adapters_path"))
+        self.plugin_manager = create_plugin_manager(
+            config.get("adapters_path"),
+            policy_engine=self.policy_engine
+        )
         self.llm_client = create_llm_client(config.get("llm"))
         
         # Initialize workflow components

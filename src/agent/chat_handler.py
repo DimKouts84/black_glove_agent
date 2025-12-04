@@ -17,7 +17,7 @@ from .orchestrator import Orchestrator
 from .plugin_manager import PluginManager
 from .command_parser import CommandParser, CommandIntent, ParsedCommand
 from .db import get_db_connection
-from src.adapters.interface import AdapterResult, AdapterResultStatus
+from adapters.interface import AdapterResult, AdapterResultStatus
 import logging
 import sqlite3
 
@@ -302,44 +302,11 @@ You can also just ask me questions naturally!"""
         )
         
         try:
-            # 1. Safety Check: Validate Target
-            # We need to extract the target from parameters
-            target = tool_call.parameters.get("target")
-            if target:
-                from .models import Asset
-                # Create a temporary asset for validation
-                asset = Asset(
-                    target=target,
-                    tool_name=tool_call.tool_name,
-                    parameters=tool_call.parameters
-                )
-                
-                if not self.policy_engine.validate_asset(asset):
-                    self.logger.warning(f"BLOCKED: Policy violation for target {target}")
-                    return AdapterResult(
-                        status=AdapterResultStatus.ERROR,
-                        data=None,
-                        metadata={"error": "Policy violation"},
-                        error_message=f"BLOCKED: Action blocked by safety policy. Target '{target}' is not authorized."
-                    )
-            
-            # 2. Safety Check: Rate Limiting
-            if not self.policy_engine.enforce_rate_limits(tool_call.tool_name):
-                self.logger.warning(f"BLOCKED: Rate limit exceeded for {tool_call.tool_name}")
-                return AdapterResult(
-                    status=AdapterResultStatus.ERROR,
-                    data=None,
-                    metadata={"error": "Rate limit exceeded"},
-                    error_message=f"BLOCKED: Rate limit exceeded for tool '{tool_call.tool_name}'. Please try again later."
-                )
-
+            # PluginManager now handles all policy enforcement centrally
             result = self.plugin_manager.run_adapter(
                 tool_call.tool_name,
                 tool_call.parameters
             )
-            
-            # Record rate limit usage
-            self.policy_engine.rate_limiter.record_request(tool_call.tool_name)
             
             return result
         except Exception as e:

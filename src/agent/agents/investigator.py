@@ -204,8 +204,16 @@ Respond in JSON format only with these exact keys: tool, parameters, rationale""
 
         user_prompt = f"Current context: {current_input}\n\nWhat's the next action?"
 
+        # Get history if available
+        history = []
+        if self.conversation_memory:
+            # Get recent messages, excluding system messages
+            raw_history = self.conversation_memory.get_recent_messages(10)
+            history = [msg for msg in raw_history if msg.role != "system"]
+
         messages = [
             LLMMessage(role="system", content=system_prompt),
+            *history,
             LLMMessage(role="user", content=user_prompt)
         ]
         
@@ -278,4 +286,4 @@ Avoid technical jargon when possible, but don't oversimplify security concepts."
         self.planner.add_rag_document(document)
         self.researcher.add_rag_document(document)
         self.analyst.add_rag_document(document)
-        self.logger.info(f"Added RAG document: {document.title}")
+        self.logger.info(f"Added RAG document: {document.doc_id}")

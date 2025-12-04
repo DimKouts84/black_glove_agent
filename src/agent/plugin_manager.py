@@ -229,13 +229,14 @@ class PluginManager:
     validation, and execution of adapters with proper error handling.
     """
     
-    def __init__(self, adapters_path: str = None, config: Dict[str, Any] = None):
+    def __init__(self, adapters_path: str = None, config: Dict[str, Any] = None, policy_engine = None):
         """
         Initialize the plugin manager.
         
         Args:
             adapters_path: Path to adapters directory (defaults to src/adapters)
             config: Plugin manager configuration
+            policy_engine: Optional policy engine for safety enforcement
         """
         self.logger = logging.getLogger("black_glove.plugin.manager")
         
@@ -246,6 +247,7 @@ class PluginManager:
             self.adapters_path = Path(adapters_path)
         
         self.config = config or {}
+        self.policy_engine = policy_engine  # NEW: Store policy engine for centralized enforcement
         self.adapter_manager = AdapterManager()
         self._discovered_adapters: Set[str] = set()
         
@@ -306,18 +308,53 @@ class PluginManager:
         """
         Execute an adapter with given parameters.
         
+        This method enforces safety policy checks (target validation and rate limiting)
+        before executing the adapter, ensuring consistent security across all execution paths.
+        
         Args:
             adapter_name: Name of the adapter to execute
             params: Parameters for adapter execution
             
         Returns:
-            AdapterResult: Result from adapter execution
-            
-        Raises:
-            ValueError: If adapter is not found or parameters are invalid
-            Exception: If adapter execution fails
+            AdapterResult: Result from adapter execution (or error if policy blocked)
         """
         self.logger.debug(f"Running adapter {adapter_name} with params: {params}")
+        
+        # CENTRALIZED POLICY ENFORCEMENT
+        if self.policy_engine:
+            # 1. Extract target from parameters (try multiple common keys)
+            target = (
+                params.get("target") or 
+                params.get("domain") or 
+                params.get("host") or 
+                params.get("url")
+            )
+            
+            # 2. Validate target if present
+            if target:
+                from .models import Asset
+                asset = Asset(target=target, tool_name=adapter_name, parameters=params)
+                
+                if not self.policy_engine.validate_asset(asset):
+                    self.logger.warning(f"BLOCKED: Policy violation for target {target}")
+                    from adapters.interface import AdapterResultStatus
+                    return AdapterResult(
+                        status=AdapterResultStatus.ERROR,
+                        data=None,
+                        metadata={"error": "Policy violation"},
+                        error_message=f"BLOCKED: Target '{target}' is not authorized."
+                    )
+            
+            # 3. Check rate limits
+            if not self.policy_engine.enforce_rate_limits(adapter_name):
+                self.logger.warning(f"BLOCKED: Rate limit exceeded for {adapter_name}")
+                from adapters.interface import AdapterResultStatus
+                return AdapterResult(
+                    status=AdapterResultStatus.ERROR,
+                    data=None,
+                    metadata={"error": "Rate limit exceeded"},
+                    error_message=f"BLOCKED: Rate limit exceeded for '{adapter_name}'."
+                )
         
         # Load adapter if not already loaded
         if adapter_name not in self.adapter_manager.list_loaded_adapters():
@@ -334,6 +371,11 @@ class PluginManager:
         # Execute adapter
         try:
             result = adapter.execute(params)
+            
+            # Record rate limit usage after successful execution
+            if self.policy_engine:
+                self.policy_engine.rate_limiter.record_request(adapter_name)
+            
             self.logger.info(f"Adapter {adapter_name} executed with status: {result.status.value}")
             return result
         except Exception as e:
@@ -408,18 +450,19 @@ class PluginManager:
 
 
 # Factory function for creating plugin manager instances
-def create_plugin_manager(adapters_path: str = None, config: Dict[str, Any] = None) -> PluginManager:
+def create_plugin_manager(adapters_path: str = None, config: Dict[str, Any] = None, policy_engine = None) -> PluginManager:
     """
     Factory function to create a plugin manager instance.
     
     Args:
         adapters_path: Optional path to adapters directory
         config: Optional configuration dictionary
+        policy_engine: Optional policy engine for safety enforcement
         
     Returns:
         PluginManager: Configured plugin manager instance
     """
-    return PluginManager(adapters_path, config)
+    return PluginManager(adapters_path, config, policy_engine)
 
 
 # Context manager for plugin manager

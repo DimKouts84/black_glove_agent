@@ -13,6 +13,7 @@ from ..llm_client import LLMClient, LLMMessage, LLMResponse
 from ..plugin_manager import PluginManager
 from ..models import WorkflowStep
 from .base import BaseAgent
+from adapters.interface import AdapterResultStatus
 
 class ResearcherAgent(BaseAgent):
     """
@@ -88,43 +89,19 @@ class ResearcherAgent(BaseAgent):
             if not self.validate_tool(tool_name):
                 return f"ERROR: Tool '{tool_name}' is not available for researcher agent"
             
-            # 1. Safety Check: Validate Target
-            # Construct a temporary asset object for validation
-            # We need to extract the target from parameters
-            target = parameters.get("target")
-            if target:
-                from ..models import Asset
-                # Create a temporary asset for validation
-                asset = Asset(
-                    target=target,
-                    tool_name=tool_name,
-                    parameters=parameters
-                )
-                
-                if not self.policy_engine.validate_asset(asset):
-                    self.logger.warning(f"BLOCKED: Policy violation for target {target}")
-                    return f"BLOCKED: Action blocked by safety policy. Target '{target}' is not authorized."
-            
-            # 2. Safety Check: Rate Limiting
-            if not self.policy_engine.enforce_rate_limits(tool_name):
-                self.logger.warning(f"BLOCKED: Rate limit exceeded for {tool_name}")
-                return f"BLOCKED: Rate limit exceeded for tool '{tool_name}'. Please try again later."
-            
+            # PluginManager now handles all policy enforcement centrally
             # Execute via plugin manager
             if tool_name in ["add_asset", "list_assets", "generate_report"]:
                 # Handle management tools directly
                 result = self._execute_management_tool(tool_name, parameters)
             else:
-                # Handle security tools via plugin manager
-                adapter_result = self.plugin_manager.execute_tool(tool_name, parameters)
+                # Handle security tools via plugin manager (with policy enforcement)
+                adapter_result = self.plugin_manager.run_adapter(tool_name, parameters)
                 
-                # Record rate limit usage
-                self.policy_engine.rate_limiter.record_request(tool_name)
-                
-                if adapter_result.success:
+                if adapter_result.status == AdapterResultStatus.SUCCESS:
                     result = self._format_tool_result(tool_name, adapter_result)
                 else:
-                    result = f"ERROR executing {tool_name}: {adapter_result.stderr}"
+                    result = f"ERROR executing {tool_name}: {adapter_result.error_message or 'Unknown error'}"
             
             # Log the action
             self.log_action(f"Tool execution: {tool_name}", {
@@ -199,36 +176,38 @@ class ResearcherAgent(BaseAgent):
         """
         try:
             # Start with basic status
-            if adapter_result.success:
+            if adapter_result.status == AdapterResultStatus.SUCCESS:
                 result_lines = [f"✅ {tool_name.upper()} executed successfully"]
             else:
                 result_lines = [f"❌ {tool_name.upper()} execution failed"]
             
-            # Add stdout if available
-            if adapter_result.stdout:
-                stdout_lines = adapter_result.stdout.strip().split('\n')
-                if stdout_lines and stdout_lines[0]:
-                    result_lines.append("\n📤 OUTPUT:")
-                    # Truncate very long outputs
-                    if len(stdout_lines) > 50:
-                        result_lines.extend(stdout_lines[:25])
-                        result_lines.append(f"... ({len(stdout_lines) - 50} more lines truncated)")
-                        result_lines.extend(stdout_lines[-25:])
+            # Add data if available
+            if adapter_result.data:
+                result_lines.append("\n📤 OUTPUT:")
+                # Format data based on type
+                if isinstance(adapter_result.data, str):
+                    data_lines = adapter_result.data.strip().split('\n')
+                    if len(data_lines) > 50:
+                        result_lines.extend(data_lines[:25])
+                        result_lines.append(f"... ({len(data_lines) - 50} more lines truncated)")
+                        result_lines.extend(data_lines[-25:])
                     else:
-                        result_lines.extend(stdout_lines)
+                        result_lines.extend(data_lines)
+                elif isinstance(adapter_result.data, dict):
+                    import json
+                    result_lines.append(json.dumps(adapter_result.data, indent=2))
+                else:
+                    result_lines.append(str(adapter_result.data))
             
-            # Add stderr if available and not empty
-            if adapter_result.stderr and adapter_result.stderr.strip():
-                stderr_lines = adapter_result.stderr.strip().split('\n')
-                if stderr_lines and stderr_lines[0]:
-                    result_lines.append("\n⚠️ ERRORS/WARNINGS:")
-                    result_lines.extend(stderr_lines[:10])  # Limit error output
+            # Add error message if present
+            if adapter_result.error_message:
+                result_lines.append(f"\n⚠️ ERROR: {adapter_result.error_message}")
             
             # Add metadata if available
             if hasattr(adapter_result, 'metadata') and adapter_result.metadata:
                 result_lines.append("\n📊 METADATA:")
                 for key, value in adapter_result.metadata.items():
-                    if key != 'evidence_path' or not adapter_result.metadata.get('evidence_path'):
+                    if key != 'evidence_path':
                         result_lines.append(f"  • {key}: {value}")
                 
                 # Add evidence path if available

@@ -141,6 +141,11 @@ class ConversationMemory:
         Args:
             message: Message to add
         """
+        # Check for duplicates by message_id
+        for msg in self.messages:
+            if msg.message_id == message.message_id:
+                return
+                
         self.messages.append(message)
         self.logger.debug(f"Added message to memory (total: {len(self.messages)})")
     

@@ -5,6 +5,7 @@ Handles persistent storage and retrieval of chat sessions in SQLite database.
 
 import uuid
 import sqlite3
+import json
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from dataclasses import asdict

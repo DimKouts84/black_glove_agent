@@ -129,11 +129,11 @@
 
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
-| **14** | **Agentic Workflow Review Remediation** | Fix critical issues & tech debt | Address findings from 2025-12-03 deep review of agent interactions, tool handling, DB usage, and RAG | Not Started |
-| 14.1 | Fix missing `json` import | **IMMEDIATE** - Critical bug | Add `import json` to `session_manager.py` (lines 79, 119 use json.loads/dumps) | Not Started |
-| 14.2 | Fix RAGDocument attribute error | **IMMEDIATE** - Critical bug | Change `document.title` to `document.doc_id` or `document.metadata.get('title')` in `investigator.py:281` | Not Started |
-| 14.3 | Fix execute_tool → run_adapter | **IMMEDIATE** - Critical bug | Rename method call from `execute_tool` to `run_adapter` in `researcher.py:119` to match PluginManager API | Not Started |
-| 14.4 | Centralize safety policy enforcement | **SHORT TERM** - Critical security | Create policy enforcement decorator/wrapper; make `PluginManager.run_adapter()` enforce policy internally; add integration tests for all agent entry points | Not Started |
+| **14** | **Agentic Workflow Review Remediation** | Fix critical issues & tech debt | Address findings from 2025-12-03 deep review of agent interactions, tool handling, DB usage, and RAG | In Progress 🔄 |
+| 14.1 | Fix missing `json` import | **IMMEDIATE** - Critical bug | Add `import json` to `session_manager.py` (lines 79, 119 use json.loads/dumps) | Completed ✅ |
+| 14.2 | Fix RAGDocument attribute error | **IMMEDIATE** - Critical bug | Change `document.title` to `document.doc_id` or `document.metadata.get('title')` in `investigator.py:281` | Completed ✅ |
+| 14.3 | Fix execute_tool → run_adapter | **IMMEDIATE** - Critical bug | Rename method call from `execute_tool` to `run_adapter` in `researcher.py:119` to match PluginManager API | Completed ✅ |
+| 14.4 | Centralize safety policy enforcement | **SHORT TERM** - Critical security | Create policy enforcement decorator/wrapper; make `PluginManager.run_adapter()` enforce policy internally; add integration tests for all agent entry points | Completed ✅ |
 | 14.5 | Dynamic tool discovery for all agents | **SHORT TERM** - Maintainability | Remove hardcoded tool lists from `PlannerAgent` and consolidate with `ResearcherAgent` pattern; centralize in `PluginManager` | Not Started |
 | 14.6 | Add error handling in agent communication | **SHORT TERM** - Reliability | Add try/except blocks in `InvestigatorAgent._process_react_loop()` around `researcher.execute_tool_step()` and `analyst.analyze_findings()` with proper error event yielding | Not Started |
 | 14.7 | Implement database connection pooling | **MEDIUM TERM** - Performance | Replace per-operation connections with connection pool; update `SessionManager` to use pooled connections instead of persistent connection | Not Started |
