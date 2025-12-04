@@ -355,6 +355,8 @@ python -m pytest tests/ --cov=agent
 python -m pytest tests/test_init_command.py -v
 ```
 
+**Test Status:** 92% of tests passing (326/354). See [TESTING.md](TESTING.md) for details on test results and known issues.
+
 ## 🚀 Deployment
 
 Simplified deployment scripts are provided for both Unix-like systems and Windows:
@@ -388,6 +390,7 @@ The deployment process will:
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed system architecture
 - [SECURITY.md](docs/SECURITY.md) - Security policies and safety controls
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
+- [TESTING.md](TESTING.md) - Testing guide and known issues
 - [examples/workflows.md](examples/workflows.md) - Example usage workflows
 - [examples/assets.yml](examples/assets.yml) - Sample asset configurations
 
