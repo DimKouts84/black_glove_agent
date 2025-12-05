@@ -68,6 +68,8 @@ class LLMConfig:
     retry_attempts: int = 5
     retry_backoff_factor: float = 1.0
 
+import uuid
+
 @dataclass
 class LLMMessage:
     """
@@ -82,7 +84,7 @@ class LLMMessage:
     role: str
     content: str
     timestamp: float = field(default_factory=time.time)
-    message_id: str = field(default_factory=lambda: hashlib.md5(str(time.time()).encode()).hexdigest()[:8])
+    message_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
 @dataclass
 class LLMResponse:
@@ -412,13 +414,14 @@ class LLMClient:
         except (KeyError, IndexError) as e:
             raise LLMResponseError(f"Failed to parse response: {e}")
     
-    def generate(self, messages: List[LLMMessage], stream: bool = False, **kwargs) -> Union[LLMResponse, Iterator[LLMResponse]]:
+    def generate(self, messages: List[LLMMessage], stream: bool = False, add_to_memory: bool = True, **kwargs) -> Union[LLMResponse, Iterator[LLMResponse]]:
         """
         Generate response from LLM.
         
         Args:
             messages: List of messages forming the conversation
             stream: Whether to stream the response
+            add_to_memory: Whether to add messages and response to conversation memory
             **kwargs: Additional parameters for generation
             
         Returns:
@@ -430,9 +433,10 @@ class LLMClient:
         self.logger.debug(f"Generating response with {len(messages)} messages")
         
         try:
-            # Add messages to conversation memory
-            for msg in messages:
-                self.conversation_memory.add_message(msg)
+            if add_to_memory:
+                # Add messages to conversation memory
+                for msg in messages:
+                    self.conversation_memory.add_message(msg)
             
             # Enhance messages with RAG context if enabled
             enhanced_messages = messages
@@ -456,11 +460,20 @@ class LLMClient:
             prepared_messages = self._prepare_messages(enhanced_messages)
             
             if stream:
-                return self._stream_response(prepared_messages, **kwargs)
+                return self._stream_response(prepared_messages, add_to_memory=add_to_memory, **kwargs)
             else:
                 raw_response = self._make_api_call(prepared_messages, stream=False, **kwargs)
                 response = self._parse_response(raw_response)
                 response.context_used = context_used
+                
+                # Add response to memory to maintain conversation history
+                if add_to_memory and response.content:
+                    response_msg = LLMMessage(
+                        role="assistant", 
+                        content=response.content
+                    )
+                    self.conversation_memory.add_message(response_msg)
+                
                 return response
                 
         except Exception as e:

@@ -1094,10 +1094,9 @@ def chat(
                         elif event['type'] == 'tool_call':
                             console.print(f"🛠️  [bold blue]{event['tool']}[/bold blue] (params: {event['params']})")
                         elif event['type'] == 'tool_result':
-                            console.print(f"✅ [dim]Tool completed - Truncated result shown:[/dim]")
-                            console.print(f"[green]{event['result'][:200] + '...' if len(event['result']) > 200 else event['result']}[/green]")
+                            console.print(f"✅ [dim]Tool completed[/dim]")
                         elif event['type'] == 'answer':
-                            console.print(f"\n[bold green]🛡️ FINAL ANALYSIS:[/bold green]")
+                            console.print(f"\n[bold green]🛡️ Analysis:[/bold green]")
                             console.print(Markdown(event['content']))
                             # Save final answer to session
                             session_manager.save_message(

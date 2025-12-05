@@ -139,9 +139,9 @@ Analysis Time: {datetime.now().isoformat()}
             target_context = ""
             if target_info:
                 target_context = f"""
-Target Information:
-{json.dumps(target_info, indent=2)}
-"""
+                Target Information:
+                {json.dumps(target_info, indent=2)}
+                """
             
             # Generate comprehensive report using LLM
             report = self._llm_report_generation(combined_analysis, target_context)
@@ -220,18 +220,18 @@ Target Information:
                 parsed_json = str(parsed)
             
             part = f"""
-=== TOOL RESULT {i} ===
-Tool: {tool_name}
-Status: {'SUCCESS' if 'ERROR' not in str(result_text)[:20] else 'FAILED'}
+                === TOOL RESULT {i} ===
+                Tool: {tool_name}
+                Status: {'SUCCESS' if 'ERROR' not in str(result_text)[:20] else 'FAILED'}
 
-Raw Output:
-{result_text}
+                Raw Output:
+                {result_text}
 
-Parsed Data:
-{parsed_json}
+                Parsed Data:
+                {parsed_json}
 
-=== END TOOL RESULT {i} ===
-"""
+                === END TOOL RESULT {i} ===
+                """
             combined_parts.append(part)
         
         return "\n".join(combined_parts)
@@ -251,22 +251,22 @@ Parsed Data:
         # Override system prompt for analysis
         analysis_prompt = f"""You are a cybersecurity analyst. Analyze the following tool outputs for security findings.
 
-{system_prompt}
+        {system_prompt}
 
-Focus on:
-1. Identifying potential security issues and misconfigurations
-2. Assessing risk levels (Critical, High, Medium, Low, Info)
-3. Providing actionable remediation recommendations
-4. Prioritizing findings by impact and likelihood
-5. Maintaining professional cybersecurity terminology
+        Focus on:
+        1. Identifying potential security issues and misconfigurations
+        2. Assessing risk levels (Critical, High, Medium, Low, Info)
+        3. Providing actionable remediation recommendations
+        4. Prioritizing findings by impact and likelihood
+        5. Maintaining professional cybersecurity terminology
 
-Format your analysis as:
-- **EXECUTIVE SUMMARY**: Brief overview of key findings
-- **DETAILED FINDINGS**: Specific issues with risk levels
-- **PRIORITY RECOMMENDATIONS**: Top remediation actions
-- **NEXT STEPS**: Suggested follow-up actions
+        Format your analysis as:
+        - **EXECUTIVE SUMMARY**: Brief overview of key findings
+        - **DETAILED FINDINGS**: Specific issues with risk levels
+        - **PRIORITY RECOMMENDATIONS**: Top remediation actions
+        - **NEXT STEPS**: Suggested follow-up actions
 
-Be thorough but concise. Focus on actionable insights."""
+        Be thorough but concise. Focus on actionable insights."""
         
         messages = [
             LLMMessage(role="system", content=analysis_prompt),
