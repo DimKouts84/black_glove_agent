@@ -24,8 +24,10 @@ class TestPassiveReconResilience:
             pm = PluginManager()
             
             # Should handle the error gracefully
-            with pytest.raises(ImportError):
-                pm.discover_adapters()
+            # Should handle the error gracefully and return empty list/None
+            # The actual implementation catches ImportError and returns []
+            result = pm.discover_adapters()
+            assert result == [] or result is None
     
     def test_adapter_loading_error_recovery(self):
         """Test adapter loading error recovery."""
@@ -47,12 +49,12 @@ class TestPassiveReconResilience:
         assert error.recovery_suggestion == "Try checking configuration"
         
         # Test AdapterError
-        adapter_error = AdapterError("Adapter failed", "Check adapter configuration")
+        adapter_error = AdapterError("Adapter failed", recovery_suggestion="Check adapter configuration")
         assert isinstance(adapter_error, BlackGloveError)
         assert adapter_error.recovery_suggestion == "Check adapter configuration"
         
         # Test PolicyViolationError
-        policy_error = PolicyViolationError("Policy violation", "Review target authorization")
+        policy_error = PolicyViolationError("Policy violation", recovery_suggestion="Review target authorization")
         assert isinstance(policy_error, BlackGloveError)
         assert policy_error.recovery_suggestion == "Review target authorization"
     

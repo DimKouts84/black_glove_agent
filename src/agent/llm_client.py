@@ -297,10 +297,20 @@ class LLMClient:
                 # Determine the correct endpoint URL
                 if self.config.provider in [LLMProvider.LMSTUDIO, LLMProvider.OLLAMA, LLMProvider.OPENAI, LLMProvider.OPENROUTER]:
                     # These providers use the chat completions endpoint
-                    endpoint_url = f"{self.config.endpoint}/chat/completions"
+                    # Handle case where user already included the full path in config
+                    if self.config.endpoint.endswith("/chat/completions"):
+                        endpoint_url = self.config.endpoint
+                    else:
+                        endpoint_url = f"{self.config.endpoint.rstrip('/')}/chat/completions"
                 else:
                     # Default to the base endpoint
                     endpoint_url = self.config.endpoint
+                
+                # Debug: Log the request details
+                self.logger.debug(f"API Request URL: {endpoint_url}")
+                self.logger.debug(f"API Key present: {bool(self.config.api_key)}")
+                self.logger.debug(f"Model: {payload.get('model')}")
+                self.logger.debug(f"Headers: {dict(self.session.headers)}")
 
                 response = self.session.post(
                     endpoint_url,
@@ -530,7 +540,7 @@ Consider safety, legality, and ethical guidelines in your recommendations.
 IMPORTANT: Respond ONLY with valid JSON following this exact schema:
 {json_schema}
 
-Available tools: nmap, gobuster, whois, dns_lookup, ssl_check, sublist3r, wappalyzer, shodan, viewdns
+Available tools: nmap, gobuster, whois, dns_lookup, ssl_check, sublist3r, wappalyzer, viewdns
 """
             user_content = f"""Context: {context}
 
@@ -731,16 +741,31 @@ Each finding must have: title, description, severity, category, affected_resourc
         self.conversation_memory.clear()
 
 # Factory function for creating LLM client instances
-def create_llm_client(config: LLMConfig = None) -> LLMClient:
+def create_llm_client(config=None) -> LLMClient:
     """
     Factory function to create an LLM client instance.
     
     Args:
-        config: Optional LLM configuration
+        config: Optional LLMConfig or ConfigModel (from models.py)
         
     Returns:
         LLMClient: Configured LLM client instance
     """
+    import os
+    
+    # Load API key from environment based on provider
+    def get_api_key(provider_str: str) -> Optional[str]:
+        """Get API key from environment variables based on provider."""
+        env_keys = {
+            'openrouter': 'OPENROUTER_API_KEY',
+            'openai': 'OPENAI_API_KEY',
+            'anthropic': 'ANTHROPIC_API_KEY',
+        }
+        env_var = env_keys.get(provider_str.lower())
+        if env_var:
+            return os.environ.get(env_var)
+        return None
+    
     if config is None:
         # Default configuration for local LMStudio
         config = LLMConfig(
@@ -748,6 +773,28 @@ def create_llm_client(config: LLMConfig = None) -> LLMClient:
             endpoint="http://localhost:1234/v1",
             model="local-model",
             temperature=0.7,
+            enable_rag=True,
+            conversation_memory_size=10
+        )
+    elif not isinstance(config, LLMConfig):
+        # Assume it's a ConfigModel from models.py; extract LLM-specific fields
+        provider_str = getattr(config, 'llm_provider', 'lmstudio')
+        try:
+            provider = LLMProvider(provider_str)
+        except ValueError:
+            provider = LLMProvider.LMSTUDIO
+        
+        # Get API key from config or environment
+        api_key = getattr(config, 'llm_api_key', None)
+        if not api_key:
+            api_key = get_api_key(provider_str)
+        
+        config = LLMConfig(
+            provider=provider,
+            endpoint=getattr(config, 'llm_endpoint', 'http://localhost:1234/v1'),
+            model=getattr(config, 'llm_model', 'local-model'),
+            temperature=getattr(config, 'llm_temperature', 0.7),
+            api_key=api_key,
             enable_rag=True,
             conversation_memory_size=10
         )

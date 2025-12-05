@@ -4,10 +4,11 @@
 
 # LLM Settings
 # Configure your LLM provider and endpoint
-llm_provider: "lmstudio"  # Options: lmstudio, ollama, openrouter
-llm_endpoint: "http://192.168.1.205:1235/v1/chat/completions"  # Update with your LLM service URL
-llm_model: "deepseek/deepseek-r1-0528-qwen3-8b"  # Specify your local model name
+llm_provider: "openrouter"  # Options: lmstudio, ollama, openrouter
+llm_endpoint: "https://openrouter.ai/api/v1"
+llm_model: "openai/gpt-oss-20b:free"  # Keep OSS GPT free model
 llm_temperature: 0.7  # Controls randomness (0.0 = deterministic, 1.0 = creative)
+# llm_api_key: "sk-..."  # Optional: Set API key here instead of .env
 
 # Scan Settings
 # Configure scanning behavior and limits
@@ -40,7 +41,7 @@ authorized_domains:
   # - "test-environment.com"
   - "localhost"  # Local testing
   # Training/testing public domains (opt-in; uncomment if you accept their policies):
-  - "example.com"          # IANA reserved; safe for WHOIS/DNS/HTTP GETs
+  - "ikarou3.casa"          # IANA reserved; safe for WHOIS/DNS/HTTP GETs
   # - "example.net"          # IANA reserved; safe for WHOIS/DNS/HTTP GETs
   # - "example.org"          # IANA reserved; safe for WHOIS/DNS/HTTP GETs
   - "scanme.nmap.org"      # Nmap only; light scans per Nmap policy
@@ -50,7 +51,7 @@ authorized_domains:
 authorized_networks:
   # Add IP networks you are authorized to scan (CIDR notation)
   # Example:
-  # - "192.168.1.0/24"  # Your local network
+  - "192.168.1.0/24"  # Your local network
   # - "10.0.0.0/8"      # Private network range
   - "192.168.0.0/16"    # Default private network range
   - "10.0.0.0/8"        # Default private network range

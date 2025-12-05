@@ -33,7 +33,7 @@ class PlannerAgent(BaseAgent):
         self.role = "planner"
         self.tools = [
             "nmap", "gobuster", "whois", "dns_lookup", "ssl_check",
-            "sublist3r", "wappalyzer", "shodan", "viewdns"
+            "sublist3r", "wappalyzer", "viewdns", "camera_security"
         ]
     
     def get_role_description(self) -> str:

@@ -4,6 +4,8 @@ Provides the main command-line interface using Typer with Rich formatting.
 """
 import typer
 import sys
+import os
+import time
 from pathlib import Path
 from typing import Optional
 from rich.console import Console
@@ -996,6 +998,7 @@ def chat(
     multi-step tool execution. Type 'exit', 'quit', or press Ctrl+C to end session.
     """
     from rich.prompt import Prompt
+    from rich.markdown import Markdown
     from .plugin_manager import create_plugin_manager
     from .llm_client import create_llm_client
     from .session_manager import SessionManager
@@ -1044,7 +1047,7 @@ def chat(
     try:
         # Initialize components
         with console.status("[bold green]Booting security agency...[/bold green]"):
-            plugin_manager = create_plugin_manager(config.dict())
+            plugin_manager = create_plugin_manager(config=config.dict())
             llm_client = create_llm_client(config)
             policy_engine = create_policy_engine(config.dict().get("policy", {}))
             
@@ -1104,6 +1107,9 @@ def chat(
                                 metadata={"type": "response", "is_final": True}
                             )
             
+            except EOFError:
+                console.print("\n[yellow]End of input stream. Exiting.[/yellow]")
+                break
             except KeyboardInterrupt:
                 console.print("\n[yellow]Session interrupted. Type 'exit' to quit.[/yellow]")
                 continue

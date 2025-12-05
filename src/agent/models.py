@@ -54,9 +54,7 @@ class ConfigModel(BaseModel):
     llm_endpoint: str = Field(default="http://localhost:1234/v1", description="LLM API endpoint")
     llm_model: str = Field(default="local-model", description="LLM model name")
     llm_temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="LLM temperature setting")
-    
-    # API Keys
-    shodan_api_key: Optional[str] = Field(default=None, description="Shodan API Key")
+    llm_api_key: Optional[str] = Field(default=None, description="LLM Provider API Key")
     
     # Scan settings
     default_rate_limit: int = Field(default=50, ge=1, description="Default packets per second rate limit")
@@ -364,11 +362,6 @@ def load_config_from_file() -> ConfigModel:
         # but here we are using BaseModel, so we might need manual handling if we want env vars to take precedence.
         # For now, we'll assume config file is primary, but we can populate missing keys from env if needed.)
         
-        # Simple env var injection for API keys if not in config
-        import os
-        if "shodan_api_key" not in config_data and os.getenv("SHODAN_API_KEY"):
-            config_data["shodan_api_key"] = os.getenv("SHODAN_API_KEY")
-
         config = ConfigModel(**config_data)
         logger.info("Configuration loaded successfully from file")
         return config

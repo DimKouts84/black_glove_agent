@@ -145,6 +145,17 @@
 
 ---
 
+| Number | Title | Scope & Goal | Description | Status |
+|--------|-------|--------------|-------------|--------|
+| **15** | **Camera Security Adapter** | IoT/Camera vulnerability assessment | Implement specialized adapter for IP camera security testing | Completed ✅ |
+| 15.1 | Initial Camera Adapter v1.0.0 | Core functionality | Implement basic camera scanning with 9 ports and 8 RTSP paths | Completed ✅ |
+| 15.2 | Camera Adapter v1.1.0 Upgrade | Enhanced capabilities | Upgrade to 22 ports, 19 RTSP paths, 10 vendor support, HTTP fingerprinting | Completed ✅ |
+| 15.3 | Live Testing & Validation | Real-world validation | Test adapter with authorized target (213.149.169.247) | Completed ✅ |
+| 15.4 | Unit Test Updates | Quality assurance | Update test suite for v1.1.0 compatibility (29 tests) | Completed ✅ |
+| 15.5 | Documentation | Knowledge transfer | Create upgrade guide and documentation for v1.1.0 features | Completed ✅ |
+
+---
+
 **Instructions on the completion of tasks:**
 1. A task is considered as done ONLY after it has been tested and tests are passing.
 2. If a tasks involves changed functionality, it must include:

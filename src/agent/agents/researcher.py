@@ -133,19 +133,32 @@ class ResearcherAgent(BaseAgent):
                 # Import and execute asset management
                 from adapters.asset_manager import run as asset_manager_run
                 
+                # Ensure 'name' is provided - auto-generate from value if missing
+                if 'name' not in parameters and 'value' in parameters:
+                    parameters['name'] = parameters['value']
+                
                 result = asset_manager_run({
                     "command": "add",
                     **parameters
                 })
                 
-                return f"Asset Management: {result.stdout}" if result.success else f"Asset Management Error: {result.stderr}"
+                # Normalize based on AdapterResult dataclass
+                if result.status == AdapterResultStatus.SUCCESS:
+                    return f"Asset Management: {result.data}"
+                else:
+                    err = result.error_message or "Unknown asset manager error"
+                    return f"Asset Management Error: {err}"
             
             elif tool_name == "list_assets":
                 from adapters.asset_manager import run as asset_manager_run
                 
                 result = asset_manager_run({"command": "list"})
                 
-                return f"Asset List:\n{result.stdout}" if result.success else f"Asset List Error: {result.stderr}"
+                if result.status == AdapterResultStatus.SUCCESS:
+                    return f"Asset List:\n{result.data}"
+                else:
+                    err = result.error_message or "Unknown asset manager error"
+                    return f"Asset List Error: {err}"
             
             elif tool_name == "generate_report":
                 from adapters.asset_manager import run as asset_manager_run
@@ -155,7 +168,11 @@ class ResearcherAgent(BaseAgent):
                     **parameters
                 })
                 
-                return f"Report Generated:\n{result.stdout}" if result.success else f"Report Generation Error: {result.stderr}"
+                if result.status == AdapterResultStatus.SUCCESS:
+                    return f"Report Generated:\n{result.data}"
+                else:
+                    err = result.error_message or "Unknown asset manager error"
+                    return f"Report Generation Error: {err}"
             
             else:
                 return f"Unknown management tool: {tool_name}"
@@ -195,7 +212,12 @@ class ResearcherAgent(BaseAgent):
                         result_lines.extend(data_lines)
                 elif isinstance(adapter_result.data, dict):
                     import json
-                    result_lines.append(json.dumps(adapter_result.data, indent=2))
+                    from datetime import datetime
+                    def json_serial(obj):
+                        if isinstance(obj, datetime):
+                            return obj.isoformat()
+                        return str(obj)
+                    result_lines.append(json.dumps(adapter_result.data, indent=2, default=json_serial))
                 else:
                     result_lines.append(str(adapter_result.data))
             

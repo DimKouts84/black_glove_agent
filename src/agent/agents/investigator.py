@@ -13,6 +13,7 @@ from datetime import datetime
 
 from ..llm_client import LLMClient, LLMMessage, LLMResponse
 from ..rag.manager import RAGDocument
+from adapters.interface import AdapterResultStatus
 from ..plugin_manager import PluginManager
 from .planner import PlannerAgent
 from .researcher import ResearcherAgent
@@ -119,6 +120,8 @@ class InvestigatorAgent(BaseAgent):
         """
         steps = 0
         remaining_input = user_input
+        # Track executed tools to avoid calling the same tool repeatedly in a single ReAct loop
+        executed_tools = set()
         
         while steps < self.max_react_steps:
             steps += 1
@@ -129,6 +132,10 @@ class InvestigatorAgent(BaseAgent):
             
             if not action:
                 # If no action determined, provide direct answer
+                break
+            # Prevent repeating the same tool multiple times if it was already run in this loop
+            if action in executed_tools:
+                self.logger.debug(f"Skipping repeated tool action '{action}' in ReAct loop")
                 break
             
             # 2. Action step - execute tool
@@ -141,6 +148,7 @@ class InvestigatorAgent(BaseAgent):
             yield {"type": "tool_call", "tool": action, "params": params}
             result = self.researcher.execute_tool(action, params)
             yield {"type": "tool_result", "result": result}
+            executed_tools.add(action)
             
             # 3. Observation step - analyze results
             analysis = self.analyst.analyze_findings(result)
@@ -191,18 +199,92 @@ class InvestigatorAgent(BaseAgent):
         available_tools = self.plugin_manager.discover_adapters()
         tool_list = ", ".join(available_tools)
         
-        system_prompt = f"""You are an intelligent cybersecurity agent that decides on the next action to take.
-Given the current context, determine if you need to use a tool to answer the query.
-If you need to use a tool, specify:
-- tool: name of the tool to use (must be one of: {tool_list}, add_asset, list_assets, generate_report)
-- parameters: a JSON object with required parameters for the tool
-- rationale: clear explanation of why this action is necessary
+        # Quick command detection: allow simple queries to map to tools directly
+        lower_input = current_input.lower()
+        if "public ip" in lower_input or "my ip" in lower_input or "ip address" in lower_input:
+            return "public_ip", {}, "User asked directly for public IP"
+        if "list assets" in lower_input or ("list" in lower_input and "asset" in lower_input):
+            return "list_assets", {}, "User asked to list assets"
+        if "add asset" in lower_input or ("add" in lower_input and ("domain" in lower_input or "host" in lower_input or "vm" in lower_input)):
+            # Let LLM parse the required params if provided; fallback to empty add_asset call
+            return "add_asset", {}, "User asked to add an asset"
+        
+        # Heuristics for common tools to improve reliability
+        # Helper to extract domain/target
+        def extract_target(text):
+            # Simple regex for domain/IP
+            match = re.search(r'\b([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', text)
+            return match.group(0) if match else None
 
-If you already have enough information to answer, return "answer" as the tool with empty parameters.
+        if "whois" in lower_input:
+            target = extract_target(current_input)
+            if target:
+                return "whois", {"domain": target}, "User asked for WHOIS lookup"
+        
+        if "dns" in lower_input and "lookup" in lower_input:
+            target = extract_target(current_input)
+            if target:
+                return "dns_lookup", {"domain": target, "record_type": "A"}, "User asked for DNS lookup"
+        
+        if "nmap" in lower_input:
+            target = extract_target(current_input)
+            if target:
+                return "nmap", {"target": target, "scan_type": "quick"}, "User asked for Nmap scan"
+        
+        if "gobuster" in lower_input:
+            target = extract_target(current_input)
+            if target:
+                # Gobuster needs a URL usually, but we'll pass target and let adapter handle or fail
+                return "gobuster", {"target": target}, "User asked for Gobuster scan"
 
-Respond in JSON format only with these exact keys: tool, parameters, rationale"""
+        # Get current assets from database to provide context
+        current_assets_info = "No assets configured yet."
+        try:
+            from adapters.asset_manager import run as asset_manager_run
+            assets_result = asset_manager_run({"command": "list"})
+            if assets_result.status == AdapterResultStatus.SUCCESS and assets_result.data:
+                current_assets_info = assets_result.data
+        except Exception as e:
+            self.logger.debug(f"Could not fetch assets: {e}")
+        
+        system_prompt = f"""You are Black Glove, an advanced automated penetration testing agent.
+Your goal is to proactively assist the user with security reconnaissance, analysis, and testing.
 
-        user_prompt = f"Current context: {current_input}\n\nWhat's the next action?"
+AVAILABLE TOOLS:
+- public_ip: Get the user's public IP address (no parameters needed)
+- {tool_list}
+- add_asset: Add a new target to the database (type: host, domain, or vm; value: IP or domain name)
+- list_assets: List all configured targets from the database
+- generate_report: Create a security report
+
+CURRENT ASSETS IN DATABASE:
+{current_assets_info}
+
+CRITICAL INSTRUCTIONS:
+1. You are Black Glove. Never say you are ChatGPT or any other AI.
+2. You MUST respond with ONLY valid JSON. No other text before or after.
+3. When the user asks for their IP address, use tool "public_ip" with empty parameters {{}}.
+4. When the user asks to add an asset, use add_asset with {{"type": "domain", "value": "example.com"}}.
+
+OUTPUT FORMAT - You must output EXACTLY this JSON structure:
+{{
+    "tool": "tool_name_here",
+    "parameters": {{}},
+    "rationale": "explanation here"
+}}
+
+For answering without a tool:
+{{
+    "tool": "answer",
+    "parameters": {{}},
+    "rationale": "your answer to the user"
+}}
+
+JSON ONLY. No markdown, no code blocks, no extra text."""
+
+        user_prompt = f"""User query: {current_input}
+
+Respond with JSON only:"""
 
         # Get history if available
         history = []
@@ -219,16 +301,99 @@ Respond in JSON format only with these exact keys: tool, parameters, rationale""
         
         try:
             response = self.llm_client.generate(messages)
-            action_data = json.loads(response.content)
+            content = response.content.strip()
             
+            # SPECIAL HANDLING for models outputting tool calls in <|...|> format
+            # Example: <|start|>assistant<|channel|>commentary to=public_ip <|constrain|>json<|message|>{}<|call|>
+            if "to=" in content and "<|message|>" in content:
+                tool_match = re.search(r'to=([a-zA-Z0-9_]+)', content)
+                json_match = re.search(r'<\|message\|>(.*?)<\|call\|>', content, re.DOTALL)
+                
+                if tool_match:
+                    tool_name = tool_match.group(1)
+                    params = {}
+                    if json_match:
+                        try:
+                            json_str = json_match.group(1).strip()
+                            if json_str:
+                                params = json.loads(json_str)
+                        except:
+                            pass # Default to empty params
+                    
+                    return tool_name, params, f"Model requested tool {tool_name}"
+
+            # SPECIAL HANDLING for models outputting tool names in <<tool_name>> format
+            if "<<" in content and ">>" in content:
+                lt_match = re.search(r'<<\s*([a-zA-Z0-9_]+)\s*(\{.*?\})?\s*>>', content, re.DOTALL)
+                if lt_match:
+                    tool_name = lt_match.group(1)
+                    params = {}
+                    json_params = lt_match.group(2)
+                    if json_params:
+                        try:
+                            params = json.loads(json_params)
+                        except:
+                            params = {}
+                    return tool_name, params, f"Model requested tool {tool_name} via <<tool>> token"
+
+            # Clean up malformed LLM output (control tokens from some models)
+            # Remove patterns like <|start|>, <|channel|>, <|constrain|>, <|message|>, <|call|>
+            content = re.sub(r'<\|[^|]+\|>', '', content)
+            # Remove "assistant", "commentary", "to=..." fragments from malformed output
+            content = re.sub(r'\bassistant\b', '', content, flags=re.IGNORECASE)
+            content = re.sub(r'\bcommentary\b', '', content, flags=re.IGNORECASE)
+            content = re.sub(r'\bto=[a-zA-Z_]+\b', '', content, flags=re.IGNORECASE)
+            content = re.sub(r'\bjson\b', '', content, flags=re.IGNORECASE)
+            content = content.strip()
+            
+            # Clean markdown code blocks if present
+            if "```" in content:
+                json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+                if json_match:
+                    content = json_match.group(1)
+            
+            # Ensure we have just the JSON object if there's extra text
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1:
+                content = content[start:end+1]
+            
+            # If content is empty or doesn't look like JSON, try to extract tool name
+            if not content or not content.startswith("{"):
+                # Check if LLM mentioned a tool name in response (check original response)
+                original_lower = response.content.lower()
+                # Map common queries to tools
+                if "public_ip" in original_lower or "my ip" in original_lower or "ip address" in original_lower:
+                    return "public_ip", {}, "Fetching your public IP address"
+                tool_keywords = ["nmap", "whois", "dns_lookup", "ssl_check", "gobuster", "list_assets", "add_asset"]
+                for tool in tool_keywords:
+                    if tool in original_lower:
+                        return tool, {}, f"Using {tool} tool based on request"
+                # Fallback to answer
+                return None, None, response.content
+            
+            try:
+                action_data = json.loads(content)
+            except json.JSONDecodeError:
+                self.logger.debug(f"Failed to parse JSON from LLM response: {response.content}")
+                # Fallback: Treat the entire response as a direct answer
+                return None, None, response.content
+
             # Validate response structure
             if "tool" not in action_data or "parameters" not in action_data or "rationale" not in action_data:
+                # If it's valid JSON but missing keys, treat as answer if it looks like one
+                if "tool" not in action_data:
+                     return None, None, response.content
                 raise ValueError("Invalid action format from LLM")
                 
             return action_data["tool"], action_data["parameters"], action_data["rationale"]
             
         except Exception as e:
             self.logger.error(f"Error determining action: {str(e)}")
+            # If we can't parse it, just return the content as the rationale/answer
+            # This prevents the "Error determining action" crash loop
+            if 'response' in locals() and hasattr(response, 'content'):
+                 return None, None, response.content
             return None, None, "Error determining next action"
 
     def _is_final_answer(self, analysis: str, original_query: str) -> bool:
@@ -261,12 +426,22 @@ Respond in JSON format only with these exact keys: tool, parameters, rationale""
         Returns:
             str: Final response to user
         """
-        system_prompt = """You are a helpful cybersecurity assistant providing clear explanations to the user.
+        # Get available tools for context
+        available_tools = self.plugin_manager.discover_adapters()
+        tool_list = ", ".join(available_tools)
+
+        system_prompt = f"""You are Black Glove, an advanced automated penetration testing agent.
+Your goal is to assist the user with security reconnaissance, analysis, and testing.
+You have access to these tools: {tool_list}.
+
 Create a concise, professional response that summarizes the findings and provides actionable insights.
 Focus on security implications and next steps when relevant.
-Avoid technical jargon when possible, but don't oversimplify security concepts."""
+Avoid technical jargon when possible, but don't oversimplify security concepts.
+Be conversational and engaging, not robotic.
+Do NOT identify yourself as ChatGPT or an OpenAI model."""
 
-        user_prompt = f"Based on this analysis, provide a final response to the user:\n\n{context}"
+        user_prompt = f"""SYSTEM REMINDER: You are Black Glove, a pentesting agent with tools: {tool_list}.
+Based on this analysis, provide a final response to the user:\n\n{context}"""
 
         messages = [
             LLMMessage(role="system", content=system_prompt),
@@ -274,7 +449,15 @@ Avoid technical jargon when possible, but don't oversimplify security concepts."
         ]
         
         response = self.llm_client.generate(messages)
-        return response.content
+        content = response.content.strip()
+        
+        # Clean up malformed LLM output (control tokens from some models)
+        content = re.sub(r'<\|[^|]+\|>', '', content)
+        content = re.sub(r'\bassistant\b', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bcommentary\b', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bto=[a-zA-Z_]+\b', '', content, flags=re.IGNORECASE)
+        
+        return content.strip()
     
     def add_rag_document(self, document: RAGDocument) -> None:
         """

@@ -37,20 +37,31 @@ class AnalystAgent(BaseAgent):
         self.tools = [
             "analyze_findings", "plan_workflow", "generate_report",
             "nmap", "gobuster", "whois", "dns_lookup", "ssl_check",
-            "sublist3r", "wappalyzer", "shodan", "viewdns"
+            "sublist3r", "wappalyzer", "viewdns", "camera_security"
         ]
         self.set_tools(self.tools)
     
-    def analyze_findings(self, tool_results: List[Dict[str, Any]]) -> str:
+    def analyze_findings(self, tool_results: Union[List[Dict[str, Any]], str, Dict[str, Any]]) -> str:
         """
-        Analyze multiple tool results and generate security insights.
+        Analyze tool results and generate security insights.
         
         Args:
-            tool_results: List of tool execution results
+            tool_results: Tool execution results (list, dict, or string)
             
         Returns:
             str: Analysis and findings summary
         """
+        # Handle different input types gracefully
+        if isinstance(tool_results, str):
+            # If it's just a string (like an error message), wrap it
+            tool_results = [{"tool": "unknown", "result": tool_results}]
+        elif isinstance(tool_results, dict):
+            # If it's a single result dict, wrap it in a list
+            tool_results = [tool_results]
+        elif not isinstance(tool_results, list):
+            # Fallback for unexpected types
+            tool_results = [{"tool": "unknown", "output": str(tool_results)}]
+
         self.logger.info(f"Analyzing {len(tool_results)} tool results")
         
         try:
@@ -194,19 +205,30 @@ Target Information:
         
         for i, result in enumerate(tool_results, 1):
             tool_name = result.get('tool', 'unknown')
-            result_text = result.get('result', '')
+            result_text = result.get('result', result.get('output', ''))
             parsed = result.get('parsed', {})
+            
+            # Handle datetime objects in parsed data
+            def json_serial(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                return str(obj)
+
+            try:
+                parsed_json = json.dumps(parsed, indent=2, default=json_serial)
+            except Exception:
+                parsed_json = str(parsed)
             
             part = f"""
 === TOOL RESULT {i} ===
 Tool: {tool_name}
-Status: {'SUCCESS' if 'ERROR' not in result_text[:20] else 'FAILED'}
+Status: {'SUCCESS' if 'ERROR' not in str(result_text)[:20] else 'FAILED'}
 
 Raw Output:
 {result_text}
 
 Parsed Data:
-{json.dumps(parsed, indent=2)}
+{parsed_json}
 
 === END TOOL RESULT {i} ===
 """

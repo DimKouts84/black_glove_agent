@@ -36,16 +36,23 @@ class WappalyzerAdapter(BaseAdapter):
                 
             self.logger.info(f"Starting Wappalyzer scan for {url}")
             
-            # Use wappalyzer.analyze_with_versions
-            technologies = wappalyzer.analyze_with_versions(url)
+            # wappalyzer.analyze returns: {url: {tech_name: {version, confidence, categories, groups}, ...}}
+            result = wappalyzer.analyze(url, scan_type='full', threads=3)
+            
+            # Extract technologies from the URL key
+            technologies = result.get(url, {})
             
             # Format results for better readability
             formatted_results = []
             for tech_name, tech_data in technologies.items():
-                versions = tech_data.get('versions', []) if isinstance(tech_data, dict) else []
+                version = tech_data.get('version', '') if isinstance(tech_data, dict) else ''
+                confidence = tech_data.get('confidence', 0) if isinstance(tech_data, dict) else 0
+                categories = tech_data.get('categories', []) if isinstance(tech_data, dict) else []
                 formatted_results.append({
                     "name": tech_name,
-                    "versions": versions if versions else []
+                    "version": version if version else None,
+                    "confidence": confidence,
+                    "categories": categories
                 })
             
             # Store evidence
@@ -53,8 +60,11 @@ class WappalyzerAdapter(BaseAdapter):
             evidence_data = f"Wappalyzer Results for {url}\\n\\n"
             for tech in formatted_results:
                 evidence_data += f"Technology: {tech['name']}\\n"
-                if tech['versions']:
-                    evidence_data += f"  Versions: {', '.join(tech['versions'])}\\n"
+                if tech['version']:
+                    evidence_data += f"  Version: {tech['version']}\\n"
+                evidence_data += f"  Confidence: {tech['confidence']}%\\n"
+                if tech['categories']:
+                    evidence_data += f"  Categories: {', '.join(tech['categories'])}\\n"
                 evidence_data += "\\n"
             evidence_path = self._store_evidence(evidence_data, evidence_filename)
             

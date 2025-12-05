@@ -116,6 +116,7 @@ flowchart TD
 - **Passive Recon**: DNS, subdomain enumeration, technology detection, and historical data gathering
 - **OSINT Adapters**: DnsLookup, Sublist3r, Wappalyzer, Shodan (API), ViewDNS (API)
 - **Active Scanning**: Nmap, Gobuster, and external port scanning with human approval workflow
+- **Specialized Adapters**: Camera Security Adapter v1.1.0 for IP camera vulnerability assessment
 - **Vulnerability Analysis**: Normalized findings with severity ratings
 - **Reporting**: Markdown and JSON report generation
 
@@ -406,28 +407,6 @@ This tool is provided for educational and authorized security testing purposes o
 ## 📞 Support
 
 For issues, questions, or feature requests, please open a GitHub issue.
-
----
-
-## RAG / ChromaDB — Quick Operational Notes
-
-Brief operational guidance and quick commands for the project's Retrieval-Augmented Generation (RAG) layer powered by ChromaDB.
-
-- Default storage path: `~/.homepentest/chroma_db`
-- Enable RAG in config: set `enable_rag: true` and `rag_db_path: "~/.homepentest/chroma_db"`
-
-Quick commands (examples):
-
-```bash
-# Reindex example (project script)
-python -m src.agent.rag.manager reindex --source /path/to/export.json --config ~/.homepentest/config.yaml
-```
-
-Operational notes:
-- Stop the agent before performing backups or restores to avoid corruption.
-- Prefer OS-level encrypted volumes (BitLocker, FileVault, LUKS) for on-disk protection.
-- When changing embedding models, re-index documents and validate search relevance.
-- Record RAG upserts/searches in the audit_log with payload metadata (asset_id, source, tool, ts).
 
 ---
 

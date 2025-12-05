@@ -337,8 +337,6 @@ def _register_default_tools():
     # OSINT tools
     register_tool("sublist3r", "Subdomain enumeration", "osint",
                  {"domain": "str", "bruteforce": "bool"})
-    register_tool("shodan", "Shodan API for external reconnaissance", "osint",
-                 {"query": "str", "limit": "int"}, requires_approval=False)
     register_tool("wappalyzer", "Technology fingerprinting", "osint",
                  {"target": "str"})
     register_tool("viewdns", "External port scanning service", "osint",

@@ -28,21 +28,37 @@ class Sublist3rAdapter(BaseAdapter):
         try:
             self.logger.info(f"Starting Sublist3r scan for {domain}")
             
-            # Sublist3r arguments: domain, threads, savefile, ports, silent, verbose, enable_bruteforce, engines
-            subdomains = sublist3r.main(
-                domain, 
+            # Sublist3r signature: main(domain, threads, savefile, silent, verbose, enable_bruteforce, engines, names)
+            result = sublist3r.main(
+                domain,
                 40,  # threads
-                savefile=None, 
-                ports=None, 
-                silent=True, 
-                verbose=False, 
-                enable_bruteforce=False, 
-                engines=None
+                savefile=None,
+                silent=True,
+                verbose=False,
+                enable_bruteforce=False,
+                engines=None,
+                names=None,  # Optional subbrute wordlist
             )
             
-            # Sublist3r returns a list of subdomains (strings) or None
-            if subdomains is None:
-                subdomains = []
+            # Sublist3r returns either:
+            # - A flat list of subdomains (older versions)
+            # - A list of dicts [{engine: result}, ...] (newer versions)
+            subdomains = []
+            if result is None:
+                result = []
+            
+            # Handle both formats
+            if isinstance(result, list):
+                for item in result:
+                    if isinstance(item, str):
+                        # Flat list of subdomain strings
+                        subdomains.append(item)
+                    elif isinstance(item, dict):
+                        # Dict per engine: {engine_name: list_or_error}
+                        for engine, engine_result in item.items():
+                            if isinstance(engine_result, list):
+                                subdomains.extend(engine_result)
+                            # Skip exceptions/errors from individual engines
             
             # Deduplicate and sort
             unique_subdomains = sorted(list(set(subdomains)))

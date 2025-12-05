@@ -109,19 +109,6 @@ The demo script provides detailed output showing each component's functionality 
    agent report --asset home-router --format markdown
    ```
 
-## Docker-based Workflow
-
-1. **Start tooling containers:**
-   ```bash
-   cd docker
-   docker-compose --profile tools up -d
-   ```
-
-2. **Run agent with Docker tools:**
-   ```bash
-   agent recon passive --asset personal-website
-   ```
-
 ## Common Commands Reference
 
 | Command | Description | Example |
@@ -173,3 +160,49 @@ The demo script provides detailed output showing each component's functionality 
    rm ~/.homepentest/homepentest.db
    agent init --force
 ```
+
+## Camera Security Assessment Workflow
+
+1. **Add IP camera as asset:**
+   ```bash
+   agent add-asset --name ip-camera --type host --value 192.168.1.150
+   ```
+
+2. **Run camera security scan:**
+   ```bash
+   # The Camera Security Adapter (v1.1.0) will:
+   # - Scan 22 camera-specific ports
+   # - Test 19 RTSP paths for anonymous access
+   # - Fingerprint vendor via HTTP headers
+   # - Assess brand-specific vulnerabilities
+   agent scan --adapter camera_security --asset ip-camera
+   ```
+
+3. **Review camera-specific findings:**
+   ```bash
+   agent show-findings --asset ip-camera --filter camera
+   ```
+
+4. **Generate camera security report:**
+   ```bash
+   agent report --asset ip-camera --format markdown
+   ```
+
+### Supported Camera Vendors (v1.1.0)
+- Hikvision (ports 8000, 8080, 554)
+- Dahua (ports 37777, 80, 554)
+- Axis (ports 80, 443, 554)
+- Uniview (ports 80, 554)
+- Xiongmai (ports 34567, 80, 554)
+- GeoVision (ports 80, 4550, 554)
+- Avigilon (ports 80, 443, 554)
+- Mobotix (ports 80, 443)
+- Hanwha/Samsung (ports 80, 4520, 554)
+- Generic ONVIF (ports 80, 8080, 554)
+
+### Camera Security Features
+- **Port Coverage**: 22 camera-specific ports
+- **RTSP Testing**: 19 vendor-specific RTSP paths
+- **Vendor Detection**: HTTP header fingerprinting
+- **Risk Assessment**: Brand-specific vulnerability warnings
+- **Evidence Storage**: Structured JSON output with timestamps

@@ -120,17 +120,19 @@ class TestCentralizedPolicyEnforcement:
             metadata={}
         ))
         
-        with patch.object(plugin_manager_with_policy.adapter_manager, 'list_loaded_adapters', return_value=['whois']):
-            with patch.object(plugin_manager_with_policy.adapter_manager, '_loaded_adapters', {'whois': mock_adapter}):
-                # First 2 requests should succeed (max_requests = 2)
-                for i in range(2):
+        # Mock target validation to ensure we hit rate limiting logic
+        with patch.object(plugin_manager_with_policy.policy_engine.target_validator, 'validate_target', return_value=True):
+            with patch.object(plugin_manager_with_policy.adapter_manager, 'list_loaded_adapters', return_value=['whois']):
+                with patch.object(plugin_manager_with_policy.adapter_manager, '_loaded_adapters', {'whois': mock_adapter}):
+                    # First 2 requests should succeed (max_requests = 2)
+                    for i in range(2):
+                        result = plugin_manager_with_policy.run_adapter("whois", params)
+                        assert result.status.value == AdapterResultStatus.SUCCESS.value, f"Request {i+1} should succeed"
+                    
+                    # Third request should be rate limited
                     result = plugin_manager_with_policy.run_adapter("whois", params)
-                    assert result.status.value == AdapterResultStatus.SUCCESS.value, f"Request {i+1} should succeed"
-                
-                # Third request should be rate limited
-                result = plugin_manager_with_policy.run_adapter("whois", params)
-                assert result.status.value == AdapterResultStatus.ERROR.value
-                assert "Rate limit exceeded" in result.error_message
+                    assert result.status.value == AdapterResultStatus.ERROR.value
+                    assert "Rate limit exceeded" in result.error_message
     
     def test_no_policy_engine_allows_execution(self):
         """Verify that PluginManager without policy_engine still works."""
