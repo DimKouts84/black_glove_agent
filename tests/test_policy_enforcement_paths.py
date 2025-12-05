@@ -109,7 +109,8 @@ class TestCentralizedPolicyEnforcement:
     
     def test_rate_limit_enforced(self, plugin_manager_with_policy):
         """Verify PluginManager enforces rate limits."""
-        params = {"domain": "example.com"}
+        # Use authorized target (192.168.1.0/24)
+        params = {"domain": "example.com", "target": "192.168.1.100"}
         
         # Mock successful adapter execution
         mock_adapter = Mock()
@@ -121,7 +122,8 @@ class TestCentralizedPolicyEnforcement:
         ))
         
         # Mock target validation to ensure we hit rate limiting logic
-        with patch.object(plugin_manager_with_policy.policy_engine.target_validator, 'validate_target', return_value=True):
+        # Note: run_adapter calls policy_engine.validate_asset, not target_validator.validate_target
+        with patch.object(plugin_manager_with_policy.policy_engine, 'validate_asset', return_value=True):
             with patch.object(plugin_manager_with_policy.adapter_manager, 'list_loaded_adapters', return_value=['whois']):
                 with patch.object(plugin_manager_with_policy.adapter_manager, '_loaded_adapters', {'whois': mock_adapter}):
                     # First 2 requests should succeed (max_requests = 2)
