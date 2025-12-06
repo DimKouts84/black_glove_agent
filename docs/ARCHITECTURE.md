@@ -8,32 +8,26 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 
 ```
 ┌─────────────────┐    ┌────────────────────┐    ┌──────────────────┐
-│   CLI Frontend  │◄──►│ Agent Orchestrator │◄──►│ LLM Abstraction  │
-│   (Typer)       │    │                    │    │ (LMStudio/Ollama)│
+│   CLI Frontend  │◄──►│    AgentExecutor   │◄──►│    LLM Client    │
+│   (Typer)       │    │   (ReAct Loop)     │    │ (LMStudio/Ollama)│
 └─────────────────┘    └────────────────────┘    └──────────────────┘
                                 │
                                 ▼
                         ┌────────────────────┐
-                        │  Plugin Manager    │
-                        │                    │
+                        │   Tool Registry    │
+                        │ (Adapters & Subs)  │
                         └────────────────────┘
                                 │
                                 ▼
                         ┌────────────────────┐    ┌──────────────────┐
-                        │  Tool Adapters     │◄──►│ Process          │
-                        │                    │    │ Execution        │
+                        │   Tool Adapters    │◄──►│ Process          │
+                        │ (Nmap, DNS, etc.)  │    │ Execution        │
                         └────────────────────┘    └──────────────────┘
                                 │
                                 ▼
                         ┌────────────────────┐    ┌──────────────────┐
-                        │ Results Processing │◄──►│ Findings DB      │
-                        │                    │    │ (SQLite)         │
-                        └────────────────────┘    └──────────────────┘
-                                │
-                                ▼
-                        ┌────────────────────┐    ┌──────────────────┐
-                        │  Reporting Module  │◄──►│ Audit Log        │
-                        │                    │    │ (Append-only)    │
+                        │ Results Processing │◄──►│   Session DB     │
+                        │                    │    │ (SQLite/Chroma)  │
                         └────────────────────┘    └──────────────────┘
 ```
 
@@ -47,20 +41,29 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Handle user input and output
   - Coordinate with the orchestrator
 
-### 2. Agent Orchestrator (`src/agent/orchestrator.py`)
-- **Purpose**: Central coordination point for all agent operations
+### 2. Agent Executor (`src/agent/executor.py`)
+- **Purpose**: Core engine that runs the ReAct (Reasoning + Acting) loop
 - **Responsibilities**:
-  - Manage workflow execution
-  - Coordinate between components
-  - Handle state management
-  - Implement safety controls
+  - Manage the conversation state and history
+  - Execute the think-act-observe loop
+  - Dispatch tool calls to the Tool Registry
+  - Handle sub-agent delegation
+  - Enforce max turns and error handling
 - **Key Features**:
-  - Passive reconnaissance workflow management
-  - Active scan planning with LLM integration
-  - Scan step execution with approval workflow
-  - Results processing and normalization
-  - Comprehensive reporting capabilities
-  - Asset management and workflow state tracking
+  - **Dynamic Tool Injection**: Adds `complete_task` tool automatically
+  - **Robust JSON Parsing**: Handles reasoning traces (`<think>` tags) and malformed outputs
+  - **Subagent Support**: seamless execution of nested agents
+
+### 3. Agent Library (`src/agent/agent_library/`)
+- **Purpose**: Declarative definitions of specialized agents
+- **Components**:
+  - `ROOT_AGENT`: The main orchestrator that users interact with
+  - `PLANNER_AGENT`: Specialized in decomposing complex security tasks
+  - `RESEARCHER_AGENT`: Executes specific tool-based reconnaissance
+  - `ANALYST_AGENT`: Interprets raw data into actionable findings
+- **Structure**:
+  - Defined using `AgentDefinition` Pydantic models
+  - Contains system prompts, input/output schemas, and allowed tools
 
 ### 3. LLM Abstraction Layer (`src/agent/llm_client.py`)
 - **Purpose**: Enhanced unified interface for different LLM providers with advanced features
@@ -86,18 +89,15 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - `add_rag_document()`: Add documents to RAG system for enhanced context
   - `search_rag_documents()`: Search for relevant documents in RAG system
 
-### 4. Plugin Manager (`src/agent/plugin_manager.py`)
-- **Purpose**: Discover and manage tool adapters
+### 4. Tool Registry (`src/agent/tools/registry.py`)
+- **Purpose**: Central catalog of all available capabilities
+- **Types of Tools**:
+  - **Adapter Tools**: Wrappers around system tools (Nmap, Dig, etc.) via `AdapterToolWrapper`
+  - **Subagent Tools**: Other agents wrapped as callable tools via `SubagentTool`
 - **Responsibilities**:
-  - Load and unload adapters
-  - Validate adapter interfaces
-  - Provide adapter metadata
-  - Execute adapters with parameters
-- **Key Features**:
-  - Dynamic adapter discovery from `src/adapters/` directory
-  - Adapter validation against standardized interface
-  - Metadata retrieval and capability reporting
-  - Safe adapter execution with error handling
+  - Tool discovery and registration
+  - Input validation against schema
+  - Execution handling and output formatting
 
 ### 5. Tool Adapters (`src/adapters/`)
 - **Purpose**: Standardized interfaces for security tools
@@ -168,20 +168,18 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 User → CLI → Orchestrator → Database → Confirmation
 ```
 
-### 2. Passive Reconnaissance
+### 2. Agentic Chat Workflow
 ```
-User → CLI → Orchestrator → LLM Planner → Adapter → 
-Tool Container → Raw Output → Evidence Store → 
-LLM Analyst → Findings DB → User Report
+User → CLI → Root Executor → LLM (Reasoning) → 
+Json Parser → Tool Registry → Adapter Execution → 
+Tool Output → History Update → Loop Continue
 ```
 
-### 3. Active Scanning (Human-approved)
+### 3. Subagent Delegation
 ```
-User → CLI → Orchestrator → LLM Planner → 
-User Approval → Policy Engine → Rate Limiter → 
-Adapter → Tool Container → Raw Output → 
-Evidence Store → LLM Analyst → Findings DB → 
-User Report
+Root Agent → Planner Agent (Subtool Call) → 
+Planner Loop (Think/Act) → Planner Final Answer → 
+Root Agent Context (Observation)
 ```
 
 ### 4. Audit Logging

@@ -113,9 +113,9 @@
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
 | **13** | **Advanced Agentic Workflow** | Enhance LLM reasoning | Evolve the custom agent into a more formal, multi-step reasoning system | In Progress 🔄 |
-| 13.1 | Evaluate Agentic Frameworks | Research CrewAI, LangGraph, etc. | Analyze the trade-offs of integrating a formal agentic framework versus enhancing the custom orchestrator | Not Started |
-| 13.2 | Refactor to Formal Agent Roles | Improve modularity | Refactor the Orchestrator and LLMClient to define explicit agent roles (e.g., Planner, Analyst, Researcher) with distinct tools and responsibilities | Not Started |
-| 13.3 | Implement Multi-Step Reasoning | Increase autonomy | Enhance the agent's ability to break down complex goals into multi-step plans and adapt based on intermediate results without requiring user intervention for every step | Not Started |
+| 13.1 | Evaluate Agentic Frameworks | Research CrewAI, LangGraph, etc. | Analyze the trade-offs of integrating a formal agentic framework versus enhancing the custom orchestrator | Completed ✅ |
+| 13.2 | Refactor to Formal Agent Roles | Improve modularity | Refactor the Orchestrator and LLMClient to define explicit agent roles (e.g., Planner, Analyst, Researcher) with distinct tools and responsibilities | Completed ✅ |
+| 13.3 | Implement Multi-Step Reasoning | Increase autonomy | Enhance the agent's ability to break down complex goals into multi-step plans and adapt based on intermediate results without requiring user intervention for every step | Completed ✅ |
 | 13.4 | Conversational Tool Use | Enable interactive pentesting | Enhance the `chat` command to allow the LLM to understand user requests for actions (e.g., "run a port scan on host X"), select the appropriate tool adapter, execute it (with user approval for active scans), and return the results within the conversation. | Completed ✅ |
 | 13.5 | ChromaDB Integration Architecture | Choose storage strategy | Decide dual-store (SQLite for OLTP + ChromaDB for vectors) vs single-store; document trade-offs and decision in ARCHITECTURE.md | Completed ✅ |
 | 13.6 | ChromaDB Service & Config | Infra & configuration | Add ChromaDB to docker-compose; extend config.yaml (host, port, collection, vector sizes, distance, on_disk, auth) | Completed ✅ |
