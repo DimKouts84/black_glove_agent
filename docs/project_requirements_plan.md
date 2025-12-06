@@ -366,7 +366,15 @@ home-pentest-agent/
 
 ### Configuration Workflow
 
-The agent uses a single configuration file located at `~/.homepentest/config.yaml`. On first run, the `agent init` command will create this directory and copy a default configuration template from the installed package. Users can then modify this file to configure their LLM endpoints, default scan parameters, and other settings.
+The agent uses a hierarchical configuration approach:
+1. First, it looks for `./config.yaml` in the current working directory
+2. If not found, it falls back to `~/.homepentest/config.yaml` in the user's home directory
+
+The `agent init` command implements the following initialization flow:
+- Checks for existing configuration in current directory or home directory
+- If no config exists: Shows legal notice → Requires acknowledgment → Runs configuration wizard → Creates config file in current directory → Initializes database and directories → Starts chat
+- If config exists: Skips wizard and jumps directly to chat mode
+- The configuration wizard guides users through LLM provider setup and asset configuration
 
 ## 16. Testing & validation (lab targets)
 

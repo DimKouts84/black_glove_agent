@@ -157,6 +157,7 @@ flowchart TD
 
 
 
+
 ### Configuration
 
 1. **Initialize the agent:**
@@ -164,19 +165,21 @@ flowchart TD
    agent init
    ```
 
-   This creates `~/.homepentest/config.yaml` from the template at `config/default_config.yaml`.
+   This command implements the following initialization flow:
+   - Checks for existing configuration in current directory (`./config.yaml`) or home directory (`~/.homepentest/config.yaml`)
+   - If no config exists: Shows legal notice → Requires acknowledgment → Runs configuration wizard → Creates config file → Initializes database and directories → Starts chat
+   - If config exists: Skips wizard and jumps directly to chat mode
+   - The configuration wizard guides you through LLM provider setup and creates `config.yaml` in the current directory
 
 2. **Edit configuration:**
-   Open `~/.homepentest/config.yaml` and adjust settings as needed (see full sample below). You can also copy the template directly:
-   - Linux/macOS: `cp config/default_config.yaml ~/.homepentest/config.yaml`
-   - Windows PowerShell: `Copy-Item -Path config/default_config.yaml -Destination "$HOME/.homepentest/config.yaml" -Force`
+   The agent first looks for `./config.yaml` (current directory), then falls back to `~/.homepentest/config.yaml`. You can edit the generated config file to adjust settings as needed (see full sample below).
 
 3. **(Optional) Configure API keys:**
    Copy `.env.example` to `.env` and add your API keys:
    ```bash
    cp .env.example .env
    # Edit .env and add your SHODAN_API_KEY and VIEWDNS_API_KEY
-   ```
+   }
 
 ## 🎮 Basic Usage
 

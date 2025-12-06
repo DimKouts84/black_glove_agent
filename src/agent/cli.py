@@ -110,9 +110,7 @@ def show_legal_notice() -> bool:
     """
     console.print(Panel.fit(
         "[bold yellow]⚠️  BLACK GLOVE LEGAL NOTICE ⚠️[/bold yellow]\n\n"
-        "[red]This tool is designed for authorized security testing of systems you own or[/red]\n"
-        "[red]have explicit written permission to test. Unauthorized scanning or penetration[/red]\n"
-        "[red]testing is illegal and unethical.[/red]\n\n"
+        "[red]This tool is designed for authorized security testing of systems you own or have explicit written permission to test. Unauthorized scanning or penetration testing is illegal and unethical.[/red]\n\n"
         "By using this tool, you acknowledge that:\n\n"
         "1. You only test systems you own or have explicit permission to test\n"
         "2. You accept full responsibility for your actions\n"
@@ -1072,14 +1070,14 @@ def chat(
     from .models import ConfigModel
 
     # New Imports
-    from .tools.registry import ToolRegistry
-    from .tools.adapter_wrapper import AdapterToolWrapper
-    from .subagent_tool import SubagentTool
-    from .executor import AgentExecutor
-    from .agent_library.root import ROOT_AGENT
-    from .agent_library.planner import PLANNER_AGENT
-    from .agent_library.researcher import RESEARCHER_AGENT
-    from .agent_library.analyst import ANALYST_AGENT
+    from agent.tools.registry import ToolRegistry
+    from agent.tools.adapter_wrapper import AdapterToolWrapper
+    from agent.subagent_tool import SubagentTool
+    from agent.executor import AgentExecutor
+    from agent.agent_library.root import ROOT_AGENT
+    from agent.agent_library.planner import PLANNER_AGENT
+    from agent.agent_library.researcher import RESEARCHER_AGENT
+    from agent.agent_library.analyst import ANALYST_AGENT
     
     # Load configuration
     config = load_config()

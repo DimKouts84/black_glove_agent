@@ -1,8 +1,8 @@
 from typing import Dict, Any, List
-from src.agent.definitions import AgentDefinition
-from src.agent.executor import AgentExecutor
-from src.agent.llm_client import LLMClient
-from src.agent.tools.registry import ToolRegistry, Tool
+from agent.definitions import AgentDefinition
+from agent.executor import AgentExecutor
+from agent.llm_client import LLMClient
+from agent.tools.registry import ToolRegistry, Tool
 
 class SubagentTool:
     def __init__(

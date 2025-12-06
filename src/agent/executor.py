@@ -5,9 +5,9 @@ import re
 import datetime
 import inspect
 
-from src.agent.definitions import AgentDefinition, AgentInput
-from src.agent.llm_client import LLMClient, LLMMessage
-from src.agent.tools.registry import ToolRegistry
+from agent.definitions import AgentDefinition, AgentInput
+from agent.llm_client import LLMClient, LLMMessage
+from agent.tools.registry import ToolRegistry
 
 class AgentExecutor:
     def __init__(

@@ -172,6 +172,7 @@
 - [x] Added safe JSON serializer for datetime and other non-serializable types (src/agent/reporting.py) to ensure report generation and findings serialization do not fail.
 - [x] Updated default configuration to the user's local LLM endpoint and model (config/default_config.yaml).
 - [x] Verified targeted unit tests for LLM client and reporting modules (tests/test_llm_client.py, tests/test_reporting.py, tests/test_orchestrator_parsing.py) — passed successfully.
+- [x] Fixed initialization flow: Updated import resolution and configuration loading to support both current directory and home directory config files with proper fallback behavior (src/agent/cli.py, src/agent/tools/adapter_wrapper.py, src/agent/subagent_tool.py, etc.)
 
 ### ✅ **Fully Implemented & Tested**
 - **Project Initialization**: All setup commands and database initialization working

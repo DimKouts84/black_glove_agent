@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from src.agent.plugin_manager import PluginManager
+from agent.plugin_manager import PluginManager
 
 class AdapterToolWrapper:
     def __init__(self, adapter_name: str, plugin_manager: PluginManager):

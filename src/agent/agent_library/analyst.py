@@ -1,6 +1,6 @@
 from typing import List
 from pydantic import BaseModel
-from src.agent.definitions import AgentDefinition, AgentInput, AgentOutput, AgentToolConfig, AgentPromptConfig
+from agent.definitions import AgentDefinition, AgentInput, AgentOutput, AgentToolConfig, AgentPromptConfig
 
 class Finding(BaseModel):
     title: str

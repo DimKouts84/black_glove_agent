@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
 from pydantic import BaseModel
-from src.agent.definitions import AgentDefinition, AgentInput, AgentOutput, AgentToolConfig, AgentPromptConfig
+from agent.definitions import AgentDefinition, AgentInput, AgentOutput, AgentToolConfig, AgentPromptConfig
 
 class ScanStep(BaseModel):
     tool: str
