@@ -1,12 +1,14 @@
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
+from rich.markdown import Markdown
 from rich.layout import Layout
 from rich.prompt import Prompt
 from rich.style import Style
 from rich.align import Align
 import shutil
 import html
+
 
 # Prompt Toolkit imports
 try:
@@ -26,16 +28,24 @@ ACCENT_COLOR = "magenta"
 TEXT_COLOR = "white"
 DIM_COLOR = "dim white"
 
-BANNER_ART = """
+BANNER_BLACK = r"""
 
 
-██████╗ ██╗      █████╗  ██████╗██╗  ██╗    ██████╗ ██╗      ██████╗ ██╗   ██╗███████╗
-██╔══██╗██║     ██╔══██╗██╔════╝██║ ██╔╝   ██╔════╝ ██║     ██╔═══██╗██║   ██║██╔════╝
-██████╔╝██║     ███████║██║     █████╔╝    ██║  ███╗██║     ██║   ██║██║   ██║█████╗  
-██╔══██╗██║     ██╔══██║██║     ██╔═██╗    ██║   ██║██║     ██║   ██║╚██╗ ██╔╝██╔══╝  
-██████╔╝███████╗██║  ██║╚██████╗██║  ██╗   ╚██████╔╝███████╗╚██████╔╝ ╚████╔╝ ███████╗
-╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝    ╚═════╝ ╚══════╝ ╚═════╝   ╚═══╝  ╚══════╝
-"""
+██████╗ ██╗      █████╗  ██████╗██╗  ██╗
+██╔══██╗██║     ██╔══██╗██╔════╝██║ ██╔╝
+██████╔╝██║     ███████║██║     █████╔╝ 
+██╔══██╗██║     ██╔══██║██║     ██╔═██╗ 
+██████╔╝███████╗██║  ██║╚██████╗██║  ██╗
+╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝"""
+
+BANNER_GLOVE = r"""
+
+ ██████╗ ██╗      ██████╗ ██╗   ██╗███████╗
+██╔════╝ ██║     ██╔═══██╗██║   ██║██╔════╝
+██║  ███╗██║     ██║   ██║██║   ██║█████╗  
+██║   ██║██║     ██║   ██║╚██╗ ██╔╝██╔══╝  
+╚██████╔╝███████╗╚██████╔╝ ╚████╔╝ ███████╗
+ ╚═════╝ ╚══════╝ ╚═════╝   ╚═══╝  ╚══════╝"""
 
 # Global session state
 _session = None
@@ -87,9 +97,25 @@ def get_session():
 def print_banner():
     """Prints the Black Glove banner with tips."""
     console.clear()
+    console.log(Markdown("<br/><br/>"))
+    # Combine BLACK (Gray) and GLOVE (Red)
+    black_lines = BANNER_BLACK.strip().split('\n')
+    glove_lines = BANNER_GLOVE.strip().split('\n')
     
-    # Create the banner text with gradient-like effect (simulated with colors)
-    banner_text = Text(BANNER_ART, style=f"bold {PRIMARY_COLOR}")
+    # Ensure equal height (padding if necessary, though these match)
+    max_lines = max(len(black_lines), len(glove_lines))
+    
+    combined_text = Text()
+    
+    for i in range(max_lines):
+        b_line = black_lines[i] if i < len(black_lines) else ""
+        g_line = glove_lines[i] if i < len(glove_lines) else ""
+        
+        # Append BLACK part in Gray (bright_black)
+        combined_text.append(b_line, style="bold bright_black")
+        # Append GLOVE part in Red
+        combined_text.append(g_line, style="bold red")
+        combined_text.append("\n")
     
     # Tips section
     tips_text = Text()
@@ -103,7 +129,7 @@ def print_banner():
     tips_text.append("\"Scan my local network for open ports\"", style="italic green")
     
     # Combine into a layout or just print
-    console.print(Align.center(banner_text))
+    console.print(Align.center(combined_text))
     console.print(Align.center(tips_text))
     console.print("\n")
 
