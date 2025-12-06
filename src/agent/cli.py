@@ -227,6 +227,7 @@ llm_provider: "{config.llm_provider}"
 llm_endpoint: "{config.llm_endpoint}"
 llm_model: "{config.llm_model}"
 llm_temperature: {config.llm_temperature}
+llm_timeout: {config.llm_timeout}
 
 # Scan Settings
 default_rate_limit: {config.default_rate_limit}
@@ -997,20 +998,24 @@ def chat(
     Features a continuous conversation experience with context persistence and
     multi-step tool execution. Type 'exit', 'quit', or press Ctrl+C to end session.
     """
+    import asyncio
     from rich.prompt import Prompt
     from rich.markdown import Markdown
     from .plugin_manager import create_plugin_manager
     from .llm_client import create_llm_client
     from .session_manager import SessionManager
-    from .agents.investigator import InvestigatorAgent
-    from .models import ConfigModel
     from .db import init_db
-    from .rag.chroma_store import ChromaDBManager
-    from .rag.manager import RAGDocument
-    from rich.status import Status
-    from enum import Enum
-    from datetime import datetime
-    from typing import Dict, Any
+    from .models import ConfigModel
+
+    # New Imports
+    from src.agent.tools.registry import ToolRegistry
+    from src.agent.tools.adapter_wrapper import AdapterToolWrapper
+    from src.agent.subagent_tool import SubagentTool
+    from src.agent.executor import AgentExecutor
+    from src.agent.agent_library.root import ROOT_AGENT
+    from src.agent.agent_library.planner import PLANNER_AGENT
+    from src.agent.agent_library.researcher import RESEARCHER_AGENT
+    from src.agent.agent_library.analyst import ANALYST_AGENT
     
     # Load configuration
     config = load_config()
@@ -1018,7 +1023,7 @@ def chat(
     console.print(Panel.fit(
         "[bold blue]BLACK GLOVE AGENT CHAT[/bold blue]\n\n"
         "This is a multi-agent system for security testing.\n"
-        "The agent can maintain context across sessions and chain multiple tool executions.\n"
+        "Refactored agentic workflow active.\n"
         "Type [bold red]exit[/bold red] to end the session.",
         border_style="blue"
     ))
@@ -1041,34 +1046,65 @@ def chat(
     else:
         session_id = session_manager.create_session("Security Assessment")
         os.environ["CHAT_SESSION_ID"] = session_id
+
+    # Initialize components
+    plugin_manager = create_plugin_manager(config=config.dict())
+    llm_client = create_llm_client(config)
     
-    from .policy_engine import create_policy_engine
+    # --- Tool Registry Setup ---
+    master_tool_registry = ToolRegistry()
     
-    try:
-        # Initialize components
-        with console.status("[bold green]Booting security agency...[/bold green]"):
-            plugin_manager = create_plugin_manager(config=config.dict())
-            llm_client = create_llm_client(config)
-            policy_engine = create_policy_engine(config.dict().get("policy", {}))
-            
-            # Initialize investigator agent - main entry point
-            investigator = InvestigatorAgent(llm_client, plugin_manager, policy_engine, session_id=session_id)
-            
-            # Load session history if available
-            history = session_manager.load_session(session_id)
-            if history:
-                for msg in history[-5:]:  # Only load last 5 messages to keep context focused
-                    investigator.conversation_memory.add_message(msg)
-                console.print(f"[cyan]✓ Loaded {len(history)} previous messages[/cyan]")
-            
-            console.print("[green]✓ Security agency online[/green]")
-            console.print(f"[dim]Session ID: {session_id}[/dim]")
+    # 1. Register Adapter Tools (from PluginManager to Registry)
+    # These are needed so the Researcher agent can use them
+    adapter_names = plugin_manager.discover_adapters()
+    for adapter_name in adapter_names:
+        adapter_tool = AdapterToolWrapper(adapter_name, plugin_manager)
+        master_tool_registry.register(adapter_tool)
+        
+    # 2. Register Subagent Tools
+    planner_tool = SubagentTool(PLANNER_AGENT, llm_client, master_tool_registry)
+    researcher_tool = SubagentTool(RESEARCHER_AGENT, llm_client, master_tool_registry)
+    analyst_tool = SubagentTool(ANALYST_AGENT, llm_client, master_tool_registry)
     
-        # Conversation loop
+    master_tool_registry.register(planner_tool)
+    master_tool_registry.register(researcher_tool)
+    master_tool_registry.register(analyst_tool)
+    
+    # Callback for CLI rendering
+    def on_activity(event):
+        try:
+            agent_name = event.get("agent", "unknown")
+            event_type = event.get("type")
+            content = event.get("content")
+            
+            if event_type == "thinking":
+                 console.print(f"[dim]🤖 {agent_name} thinking: {content}[/dim]")
+            elif event_type == "tool_call":
+                 console.print(f"🛠️  [bold blue]{agent_name}[/bold blue] calling [bold cyan]{content}[/bold cyan]")
+            elif event_type == "tool_result":
+                 console.print(f"✅ [dim]{agent_name} tool result received[/dim]")
+            elif event_type == "answer":
+                 if agent_name != "root_agent":
+                     console.print(f"📤 [bold green]{agent_name} finished task[/bold green]")
+            elif event_type == "warning":
+                 console.print(f"[yellow]⚠️ {content}[/yellow]")
+        except Exception:
+            pass
+
+    # Initialize Root Executor
+    root_executor = AgentExecutor(
+        agent_definition=ROOT_AGENT, 
+        llm_client=llm_client, 
+        tool_registry=master_tool_registry,
+        on_activity=on_activity
+    )
+
+    # CLI Loop
+    async def chat_loop():
         while True:
             try:
-                # Get user input
                 user_input = Prompt.ask("\n[bold cyan]You[/bold cyan]")
+                
                 
                 if not user_input.strip():
                     continue
@@ -1077,8 +1113,11 @@ def chat(
                     console.print("[yellow]Goodbye![/yellow]")
                     break
                 
-                # Process message through investigator agent (yield-based for interactive updates)
                 session_manager.update_session_activity(session_id)
+                
+                # Load history before saving current message to avoid duplication
+                history = session_manager.load_session(session_id)
+                
                 session_manager.save_message(
                     session_id, 
                     "user", 
@@ -1086,42 +1125,55 @@ def chat(
                     metadata={"type": "user_input"}
                 )
                 
-                with console.status("[bold green]Consulting security experts...[/bold green]") as status:
-                    for event in investigator.handle_user_query(user_input):
-                        if event['type'] == 'thinking':
-                            status.update(f"🔍 {event['content']}")
-                            time.sleep(0.3)  # Visual pacing
-                        elif event['type'] == 'tool_call':
-                            console.print(f"🛠️  [bold blue]{event['tool']}[/bold blue] (params: {event['params']})")
-                        elif event['type'] == 'tool_result':
-                            console.print(f"✅ [dim]Tool completed[/dim]")
-                        elif event['type'] == 'answer':
-                            console.print(f"\n[bold green]🛡️ Analysis:[/bold green]")
-                            console.print(Markdown(event['content']))
-                            # Save final answer to session
-                            session_manager.save_message(
-                                session_id, 
-                                "assistant", 
-                                event['content'],
-                                metadata={"type": "response", "is_final": True}
-                            )
+                with console.status("[bold green]Acting...[/bold green]"):
+                    try:
+                        result = await root_executor.run({"user_query": user_input}, conversation_history=history)
+                        
+                        # Process Result
+                        final_output = result.get("final_answer", {})
+                        if isinstance(final_output, str):
+                            answer_text = final_output
+                        else:
+                            answer_text = final_output.get("answer", str(result))
+                        
+                        # Handle empty answer
+                        if not answer_text or answer_text.strip() == "":
+                            answer_text = "I apologize, but I couldn't generate a response. Please try again."
+                        
+                        console.print(f"\n[bold green]🛡️ Black Glove:[/bold green]")
+                        console.print(Markdown(answer_text))
+                        
+                        session_manager.save_message(
+                            session_id, 
+                            "assistant", 
+                            answer_text,
+                            metadata={"type": "response", "is_final": True}
+                        )
+                        
+                    except Exception as e:
+                        console.print(f"[bold red]Error during execution: {e}[/bold red]")
             
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Goodbye![/yellow]")
+                break
+            except Exception as e:
+                console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+                break
+
             except EOFError:
-                console.print("\n[yellow]End of input stream. Exiting.[/yellow]")
                 break
             except KeyboardInterrupt:
-                console.print("\n[yellow]Session interrupted. Type 'exit' to quit.[/yellow]")
-                continue
-    
+                break
+
+    # Run loop
+    try:
+        asyncio.run(chat_loop())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Session interrupted.[/yellow]")
     except Exception as e:
-        console.print(f"[bold red]Chat session failed: {e}[/bold red]")
-        import traceback
-        console.print(traceback.format_exc())
-        raise typer.Exit(code=1)
-    
+         console.print(f"[bold red]System Error: {e}[/bold red]")
     finally:
-        if 'session_manager' in locals() and 'session_id' in locals():
-            console.print(f"[dim]Session saved: {session_id}[/dim]")
+         console.print(f"[dim]Session saved: {session_id}[/dim]")
 
 if __name__ == "__main__":
     app()

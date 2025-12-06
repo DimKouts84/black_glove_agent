@@ -55,6 +55,7 @@ class ConfigModel(BaseModel):
     llm_model: str = Field(default="local-model", description="LLM model name")
     llm_temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="LLM temperature setting")
     llm_api_key: Optional[str] = Field(default=None, description="LLM Provider API Key")
+    llm_timeout: int = Field(default=240, ge=30, description="LLM request timeout in seconds")
     
     # Scan settings
     default_rate_limit: int = Field(default=50, ge=1, description="Default packets per second rate limit")

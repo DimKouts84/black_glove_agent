@@ -56,7 +56,7 @@ class LLMConfig:
     endpoint: str
     model: str
     temperature: float = 0.7
-    timeout: int = 30
+    timeout: int = 240
     api_key: Optional[str] = None
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
@@ -65,7 +65,7 @@ class LLMConfig:
     enable_rag: bool = False
     rag_db_path: str = "data/chroma_db"
     conversation_memory_size: int = 10
-    retry_attempts: int = 5
+    retry_attempts: int = 2
     retry_backoff_factor: float = 1.0
 
 import uuid
@@ -431,6 +431,12 @@ class LLMClient:
             LLMError: If generation fails
         """
         self.logger.debug(f"Generating response with {len(messages)} messages")
+        # DEBUG: Log full context for visibility
+        try:
+            context_dump = json.dumps([{"role": m.role, "content": m.content} for m in messages], indent=2)
+            self.logger.debug(f"LLM Context:\n{context_dump}")
+        except:
+            pass
         
         try:
             if add_to_memory:
@@ -807,6 +813,7 @@ def create_llm_client(config=None) -> LLMClient:
             endpoint=getattr(config, 'llm_endpoint', 'http://localhost:1234/v1'),
             model=getattr(config, 'llm_model', 'local-model'),
             temperature=getattr(config, 'llm_temperature', 0.7),
+            timeout=getattr(config, 'llm_timeout', 120),
             api_key=api_key,
             enable_rag=True,
             conversation_memory_size=10

@@ -99,12 +99,14 @@ flowchart TD
 
 ### 🧠 LLM-Powered Analysis
 - **Local LLM Support**: Works with LMStudio, Ollama, OpenAI, and Anthropic
+- **Agentic Workflow**: Multi-agent architecture with ROOT, Planner, Researcher, and Analyst agents
+- **Interactive Chat**: Natural language interface for security tasks via `agent chat`
 - **Intelligent Planning**: LLM suggests next steps based on findings with context awareness
 - **Result Interpretation**: Converts raw tool output into actionable insights with RAG support
 - **Risk Assessment**: Provides clear explanations of potential impact
-- **Conversation Memory**: Maintains context across multiple interactions
+- **Conversation Memory**: Maintains context across multiple interactions within a session
 - **Retrieval-Augmented Generation**: Enhances responses with security knowledge base using ChromaDB
-- **Streaming Responses**: Real-time output processing for better user experience
+- **Reasoning Model Support**: Compatible with thinking/reasoning models (e.g., Qwen-Thinking)
 
 ### 🛠️ Modular Architecture
 - **Tool Adapters**: Standardized interface for security tools (Nmap, Gobuster, ZAP, etc.)
@@ -183,29 +185,41 @@ flowchart TD
 agent init
 ```
 
-### 2. Add Target Assets
+### 2. Interactive Chat (Recommended)
+Start the interactive chat interface for natural language security tasks:
 ```bash
-agent add-asset --name home-router --type host --value 192.168.1.1
-agent add-asset --name personal-website --type domain --value example.com
+agent chat
 ```
 
-### 3. Run Passive Reconnaissance
+Example interactions:
+- "Check my public IP"
+- "Scan my_domain_here.com for DNS records"
+- "Check for exposed cameras on 192.168.1.0/24"
+- "What is SSL status for my_domain_here.com?"
+
+### 3. Add Target Assets
+```bash
+agent add-asset --name home-router --type host --value 192.168.1.1
+agent add-asset --name personal-website --type domain --value my_domain_here.com
+```
+
+### 4. Run Passive Reconnaissance
 ```bash
 agent recon passive --asset personal-website
 ```
 
-### 4. Plan Active Scanning
+### 5. Plan Active Scanning
 ```bash
 agent recon active --asset home-router --preset fingerprint
 ```
 
-### 5. Review and Approve
+### 6. Review and Approve
 ```bash
 # Review suggested actions
 # Type 'approve <id>' to proceed
 ```
 
-### 6. Generate Report
+### 7. Generate Report
 ```bash
 agent report --asset home-router
 ```
@@ -219,6 +233,11 @@ black-glove/
 ├── src/
 │   ├── agent/          # Core agent components
 │   │   ├── cli.py      # Command-line interface
+│   │   ├── executor.py # AgentExecutor (agentic loop)
+│   │   ├── definitions.py # Agent schema definitions
+│   │   ├── agent_library/ # Agent definitions (root, planner, etc)
+│   │   ├── tools/      # Tool registry and wrappers
+│   │   ├── agentic_workflow.md # Architecture documentation
 │   │   ├── db.py       # Database management
 │   │   ├── models.py   # Data models and validation
 │   │   └── __init__.py # Package initialization
@@ -245,9 +264,9 @@ Black Glove reads settings from `~/.homepentest/config.yaml`. On first run, this
 
 # LLM Settings
 # Configure your LLM provider and endpoint
-llm_provider: "llmlocal_or_cloud_provider"  # Options: lmstudio, ollama, openrouter
+llm_provider: "llm_local_or_cloud_provider"  # Options: lmstudio, ollama, openrouter
 llm_endpoint: "http://localhost:1234/v1"  # Update with your LLM service URL
-llm_model: "local-model"  # Specify your local model name
+llm_model: "local-model"  # The model name here. For small reasoning LLMs we tested `qwen3-4b-thinking-2507` (locally with LM Studio) and it works surprisingly well. 
 llm_temperature: 0.1  # Controls randomness (0.0 = deterministic, 1.0 = creative)
 enable_rag: true  # Enable Retrieval-Augmented Generation with ChromaDB
 rag_db_path: "~/.homepentest/chroma_db"  # Path to ChromaDB vector store
@@ -279,7 +298,7 @@ evidence_storage_path: "~/.homepentest/evidence"
 authorized_domains:
    # Add domains you are authorized to scan
    # Example:
-   # - "your-domain.com"
+   # - "my_domain_here.com"
    # - "test-environment.com"
    - "localhost"  # Local testing
 
@@ -356,6 +375,7 @@ The deployment process will:
 ## 📚 Documentation
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed system architecture
+- [agentic_workflow.md](src/agent/agentic_workflow.md) - Multi-agent workflow documentation
 - [SECURITY.md](docs/SECURITY.md) - Security policies and safety controls
 - [examples/workflows.md](examples/workflows.md) - Example usage workflows
 - [examples/assets.yml](examples/assets.yml) - Sample asset configurations
