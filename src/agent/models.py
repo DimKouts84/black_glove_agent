@@ -344,7 +344,10 @@ def load_config_from_file() -> ConfigModel:
     
     logger = logging.getLogger("black_glove.config")
     
-    config_path = Path.home() / ".homepentest" / "config.yaml"
+    # Check current directory first, then home directory
+    config_path = Path.cwd() / "config.yaml"
+    if not config_path.exists():
+        config_path = Path.home() / ".homepentest" / "config.yaml"
     
     if not config_path.exists():
         logger.warning(f"Configuration file not found at {config_path}, using defaults")

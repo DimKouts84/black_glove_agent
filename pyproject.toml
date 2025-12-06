@@ -44,6 +44,7 @@ dependencies = [
     "sublist3r-lib",
     "wappalyzer",
     "shodan",
+    "questionary",
 ]
 
 [project.optional-dependencies]

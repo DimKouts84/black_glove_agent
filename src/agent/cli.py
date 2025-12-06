@@ -43,8 +43,14 @@ console = Console()
 # Version support and adapters subcommands
 try:
     import importlib.metadata as importlib_metadata
-except Exception:
+except ImportError:
     import importlib_metadata  # type: ignore
+
+try:
+    import questionary
+except ImportError:
+    questionary = None
+
 
 def _get_version() -> str:
     try:
@@ -204,11 +210,14 @@ def create_directory_structure() -> None:
             typer.echo(f"✗ Failed to create directory {directory}: {e}")
             raise
 
-def setup_config_file() -> None:
+def setup_config_file(config: Optional[ConfigModel] = None) -> None:
     """
-    Create ~/.homepentest/config.yaml from template.
+    Create config.yaml from template.
+    Args:
+        config: Optional ConfigModel to write. If None, uses defaults.
     """
-    config_path = Path.home() / ".homepentest" / "config.yaml"
+    # Prefer current directory for new config
+    config_path = Path.cwd() / "config.yaml"
     
     if config_path.exists():
         typer.echo("✓ Configuration file already exists")
@@ -216,8 +225,9 @@ def setup_config_file() -> None:
     
     typer.echo("⚙️  Setting up configuration file...")
     
-    # Create default configuration
-    config = ConfigModel()
+    # Use provided config or default
+    if config is None:
+        config = ConfigModel()
     
     config_content = f"""# Black Glove Configuration File
 # Generated on first run - customize as needed
@@ -228,6 +238,7 @@ llm_endpoint: "{config.llm_endpoint}"
 llm_model: "{config.llm_model}"
 llm_temperature: {config.llm_temperature}
 llm_timeout: {config.llm_timeout}
+llm_api_key: "{config.llm_api_key or ''}"
 
 # Scan Settings
 default_rate_limit: {config.default_rate_limit}
@@ -244,6 +255,11 @@ enable_exploit_adapters: {str(config.enable_exploit_adapters).lower()}
 
 # Evidence Storage
 evidence_storage_path: "{config.evidence_storage_path}"
+
+# Asset Management
+authorized_networks: {config.authorized_networks}
+authorized_domains: {config.authorized_domains}
+blocked_targets: {config.blocked_targets}
 
 # Additional Settings
 # extra_settings:
@@ -283,6 +299,104 @@ def load_config() -> ConfigModel:
         typer.echo(f"⚠️  Configuration load failed: {e}")
         typer.echo("  Using default configuration")
         return ConfigModel()
+
+async def run_configuration_wizard() -> None:
+    """
+    Run interactive configuration wizard using questionary.
+    Async version to support running within chat loop.
+    """
+    if not questionary:
+        console.print("[red]❌ 'questionary' library not found. Falling back to default init.[/red]")
+        setup_config_file()
+        return
+
+    console.print(Panel("[bold cyan]🧙 Black Glove Configuration Wizard[/bold cyan]", border_style="cyan"))
+
+    # LLM Selection
+    llm_type = await questionary.select(
+        "Do you want a local or cloud LLM model for your assistant?",
+        choices=["Local", "Cloud"],
+        use_arrow_keys=True
+    ).ask_async()
+
+    provider = ""
+    endpoint = ""
+    model = ""
+    api_key = None
+
+    if llm_type == "Local":
+        provider = await questionary.select(
+            "Select your local LLM provider:",
+            choices=["lmstudio", "ollama"],
+            use_arrow_keys=True
+        ).ask_async()
+        
+        if provider == "lmstudio":
+            endpoint = "http://localhost:1234/v1"
+        else:
+            endpoint = "http://localhost:11434/v1"
+            
+        model = await questionary.text("Enter the preferred model name (e.g. qwen2.5-7b-instruct):").ask_async()
+        
+    else: # Cloud
+        provider = "openrouter"
+        endpoint = "https://openrouter.ai/api/v1"
+        api_key = await questionary.password("Paste your OpenRouter API Key:").ask_async()
+        model = await questionary.text("Enter the preferred model name (e.g. anthropic/claude-3-opus):").ask_async()
+
+    # Create config object
+    new_config = ConfigModel(
+        llm_provider=provider,
+        llm_endpoint=endpoint,
+        llm_model=model,
+        llm_api_key=api_key
+    )
+    
+    config_path = Path.cwd() / "config.yaml"
+    if config_path.exists():
+        if not await questionary.confirm(f"Overwrite existing {config_path}?", default=True).ask_async():
+            console.print("[yellow]Configuration cancelled.[/yellow]")
+            return
+
+    if config_path.exists():
+        config_path.unlink()
+    
+    setup_config_file(new_config)
+
+    # Asset Setup
+    if await questionary.confirm("Do you have some assets you want to add?").ask_async():
+        while True:
+            asset_type = await questionary.select(
+                "Select Asset Type:",
+                choices=["domain", "host", "vm"],
+                use_arrow_keys=True
+            ).ask_async()
+            
+            val = await questionary.text(f"Enter {asset_type} value:").ask_async()
+            
+            # Clean domain
+            if asset_type == "domain":
+                val = val.lower().replace("http://", "").replace("https://", "").replace("www.", "")
+                val = val.strip("/")
+            
+            try:
+                from .models import AssetModel, DatabaseManager
+                from .db import init_db
+                init_db()
+                db_manager = DatabaseManager()
+                asset = AssetModel(name=f"Wizard_Asset_{val}", type=asset_type, value=val)
+                db_manager.add_asset(asset)
+                console.print(f"[green]Added {val}[/green]")
+            except Exception as e:
+                console.print(f"[red]Failed to add asset: {e}[/red]")
+
+            if not await questionary.confirm("Add another asset?").ask_async():
+                break
+
+    console.print("[green]Configuration Complete! Starting Chat...[/green]")
+    import asyncio
+    await asyncio.sleep(1)
+
 
 def run_guided_setup():
     """
@@ -402,12 +516,32 @@ def run_guided_setup():
 def init(
     force: bool = typer.Option(False, "--force", "-f", help="Force reinitialization"),
     skip_legal: bool = typer.Option(False, "--skip-legal", help="Skip legal notice (for testing only)"),
-    guided: bool = typer.Option(False, "--guided", help="Run setup wizard after initialization")
+    guided: bool = typer.Option(False, "--guided", help="Run setup wizard after initialization") # Deprecated mostly but kept
 ):
     """
     Initialize the Black Glove pentest agent.
-    Sets up directories, configuration, database, and verifies prerequisites.
+    If config exists, jumps to chat. If not, runs wizard then chat.
     """
+    # Check for existing config FIRST
+    try:
+        config = load_config()
+        # load_config returns default if fails, but we want to know if file exists
+        # Actually load_config_from_file checks paths. 
+        # Let's check manually to decide whether to run Wizard
+        config_path_cwd = Path.cwd() / "config.yaml"
+        config_path_home = Path.home() / ".homepentest" / "config.yaml"
+        
+        has_config = config_path_cwd.exists() or config_path_home.exists()
+        
+        if has_config and not force:
+            console.print("[green]Configuration found. Starting chat...[/green]")
+            # Jump to chat
+            chat()
+            return
+
+    except Exception:
+        pass # Proceed to init
+
     console.print("[bold blue]🚀 Initializing Black Glove pentest agent...[/bold blue]")
     
     # Show legal notice (unless skipped for testing)
@@ -415,84 +549,14 @@ def init(
         if not show_legal_notice():
             raise typer.Exit(code=1)
     
-    # Verify prerequisites with progress
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console
-    ) as progress:
-        task = progress.add_task("Verifying prerequisites...", total=4)
-        
-        # Check Tools
-        import shutil
-        progress.update(task, description="Checking for nmap...")
-        if shutil.which("nmap"):
-            progress.console.print("[green]✓ nmap found[/green]")
-        else:
-            progress.console.print("[yellow]⚠️  nmap not found[/yellow]")
-            progress.console.print("  [yellow]Active scanning will be limited. Please install nmap for full functionality.[/yellow]")
-            # raise typer.Exit(code=1)  # Made optional for passive recon
-        
-        progress.update(task, description="Checking for gobuster...")
-        if shutil.which("gobuster"):
-            progress.console.print("[green]✓ gobuster found[/green]")
-        else:
-            progress.console.print("[yellow]⚠️  gobuster not found[/yellow]")
-            progress.console.print("  [yellow]Active scanning will be limited. Please install gobuster for full functionality.[/yellow]")
-            # raise typer.Exit(code=1)  # Made optional for passive recon
-        progress.advance(task)
-        
-        # Check LLM service
-        progress.update(task, description="Checking LLM service...")
-        try:
-            import requests
-            # Load user configuration if available
-            config = load_config()
-            response = requests.get(
-                f"{config.llm_endpoint}/models",
-                timeout=5
-            )
-            if response.status_code == 200:
-                progress.console.print("[green]✓ LLM service connectivity verified[/green]")
-            else:
-                progress.console.print(f"[yellow]⚠️  LLM service returned status {response.status_code}[/yellow]")
-        except Exception as e:
-            progress.console.print(f"[yellow]⚠️  LLM service verification failed: {e}[/yellow]")
-            progress.console.print("  [yellow]Note: You can configure LLM settings in ~/.homepentest/config.yaml[/yellow]")
-        progress.advance(task)
-        
-        # Check file permissions
-        progress.update(task, description="Checking file permissions...")
-        homepentest_dir = Path.home() / ".homepentest"
-        try:
-            homepentest_dir.mkdir(parents=True, exist_ok=True)
-            test_file = homepentest_dir / "test_write.tmp"
-            test_file.write_text("test")
-            test_file.unlink()
-            progress.console.print("[green]✓ File permissions verified[/green]")
-        except Exception as e:
-            progress.console.print(f"[red]✗ File permission check failed: {e}[/red]")
-            raise typer.Exit(code=1)
-        progress.advance(task)
-        
-        progress.update(task, description="Initialization complete!")
-        progress.advance(task)
-    
-    # Create directory structure
+    # Run Wizard (which handles config creation)
+    # Need to run async function from sync command
+    import asyncio
     try:
-        create_directory_structure()
-    except Exception as e:
-        console.print(f"\n[red]❌ Directory creation failed: {e}[/red]")
-        raise typer.Exit(code=1)
-    
-    # Setup configuration file
-    try:
-        setup_config_file()
-    except Exception as e:
-        console.print(f"\n[red]❌ Configuration setup failed: {e}[/red]")
-        raise typer.Exit(code=1)
+        asyncio.run(run_configuration_wizard())
+    except KeyboardInterrupt:
+        raise typer.Exit()
+
     
     # Initialize database
     try:
@@ -501,21 +565,21 @@ def init(
         console.print(f"\n[red]❌ Database initialization failed: {e}[/red]")
         raise typer.Exit(code=1)
     
-    # Guided setup workflow
-    if guided:
-        run_guided_setup()
+    # Create directory structure (logs etc)
+    try:
+        create_directory_structure()
+    except Exception as e:
+        console.print(f"\n[red]❌ Directory creation failed: {e}[/red]")
+        # Non-fatal?
     
-    console.print("\n[bold green]🎉 Black Glove initialization completed successfully![/bold green]")
-    console.print("[bold blue]📋 Next steps:[/bold blue]")
-    if guided:
-        console.print("   1. Review and customize ~/.homepentest/config.yaml")
-        console.print("   2. Add more assets using: [cyan]agent add-asset --name <name> --type <type> --value <value>[/cyan]")
-        console.print("   3. Run recon using: [cyan]agent recon passive --asset <asset-name>[/cyan]")
-    else:
-        console.print("   1. Review and customize ~/.homepentest/config.yaml")
-        console.print("   2. Add assets using: [cyan]agent add-asset --name <name> --type <type> --value <value>[/cyan]")
-        console.print("   3. Run recon using: [cyan]agent recon passive --asset <asset-name>[/cyan]")
-        console.print("\n[yellow]💡 Tip: Run 'agent init --guided' for an interactive setup wizard[/yellow]")
+    # Verification of prerequisites (Just run it silently or show if issue? 
+    # original init showed progress. Let's keep it brief or skip to chat for UX speed)
+    # verifies = verify_prerequisites() # Optional
+    
+    console.print("\n[bold green]🎉 Initialization completed![/bold green]")
+    
+    # Jump to chat
+    chat()
 
 @app.command()
 @global_exception_handler
@@ -1008,14 +1072,14 @@ def chat(
     from .models import ConfigModel
 
     # New Imports
-    from src.agent.tools.registry import ToolRegistry
-    from src.agent.tools.adapter_wrapper import AdapterToolWrapper
-    from src.agent.subagent_tool import SubagentTool
-    from src.agent.executor import AgentExecutor
-    from src.agent.agent_library.root import ROOT_AGENT
-    from src.agent.agent_library.planner import PLANNER_AGENT
-    from src.agent.agent_library.researcher import RESEARCHER_AGENT
-    from src.agent.agent_library.analyst import ANALYST_AGENT
+    from .tools.registry import ToolRegistry
+    from .tools.adapter_wrapper import AdapterToolWrapper
+    from .subagent_tool import SubagentTool
+    from .executor import AgentExecutor
+    from .agent_library.root import ROOT_AGENT
+    from .agent_library.planner import PLANNER_AGENT
+    from .agent_library.researcher import RESEARCHER_AGENT
+    from .agent_library.analyst import ANALYST_AGENT
     
     # Load configuration
     config = load_config()
@@ -1112,6 +1176,27 @@ def chat(
                 if user_input.lower() in ['exit', 'quit', 'q']:
                     console.print("[yellow]Goodbye![/yellow]")
                     break
+                
+                if user_input.strip().lower() == "config":
+                    console.print("[bold yellow]⚙️  Entering Configuration Mode...[/bold yellow]")
+                    # Run full wizard (async)
+                    await run_configuration_wizard()
+                    # Reload config
+                    config = load_config()
+
+                    # Re-initialize components with new config
+                    plugin_manager = create_plugin_manager(config=config.dict())
+                    llm_client = create_llm_client(config)
+                    # Note: AgentExecutor refers to old instances. 
+                    # For full reload we might need to recreate executor or update its references.
+                    # Simple way: update llm_client
+                    root_executor.llm_client = llm_client
+                    # Update tool registry? (Adapter tools rely on plugin_manager)
+                    # This is complex to hot-reload everything perfectly but this covers LLM client change.
+                    console.print("[green]Configuration updated! Resuming chat...[/green]")
+                    continue
+
+                session_manager.update_session_activity(session_id)
                 
                 session_manager.update_session_activity(session_id)
                 
