@@ -532,7 +532,6 @@ def init(
         has_config = config_path_cwd.exists() or config_path_home.exists()
         
         if has_config and not force:
-            console.print("[green]Configuration found. Starting chat...[/green]")
             # Jump to chat
             chat()
             return
@@ -1078,17 +1077,12 @@ def chat(
     from agent.agent_library.planner import PLANNER_AGENT
     from agent.agent_library.researcher import RESEARCHER_AGENT
     from agent.agent_library.analyst import ANALYST_AGENT
+    from . import ui
     
     # Load configuration
     config = load_config()
     
-    console.print(Panel.fit(
-        "[bold blue]BLACK GLOVE AGENT CHAT[/bold blue]\n\n"
-        "This is a multi-agent system for security testing.\n"
-        "Refactored agentic workflow active.\n"
-        "Type [bold red]exit[/bold red] to end the session.",
-        border_style="blue"
-    ))
+    ui.print_banner()
     
     # Initialize database and session manager
     init_db()
@@ -1163,9 +1157,11 @@ def chat(
 
     # CLI Loop
     async def chat_loop():
+        nonlocal config
         while True:
             try:
-                user_input = Prompt.ask("\n[bold cyan]You[/bold cyan]")
+                ui.print_status_bar(config.llm_provider, config.llm_model)
+                user_input = await ui.get_user_input_async()
                 
                 
                 if not user_input.strip():
@@ -1225,6 +1221,7 @@ def chat(
                         
                         console.print(f"\n[bold green]🛡️ Black Glove:[/bold green]")
                         console.print(Markdown(answer_text))
+                        console.print(Markdown("<br/><br/>"))
                         
                         session_manager.save_message(
                             session_id, 

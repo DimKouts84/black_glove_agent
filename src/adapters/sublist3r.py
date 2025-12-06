@@ -1,4 +1,27 @@
-import sublist3r
+import sys
+import os
+from contextlib import contextmanager
+
+@contextmanager
+def suppress_output():
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = devnull
+        sys.stderr = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
+try:
+    with suppress_output():
+        import sublist3r
+except ImportError:
+    # Fallback if sublist3r is not installed or fails to import
+    sublist3r = None
+
 from typing import Any, Dict
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
