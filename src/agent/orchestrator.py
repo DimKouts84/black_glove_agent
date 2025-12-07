@@ -984,17 +984,40 @@ class Orchestrator:
 
         elif tool_name == "gobuster":
             # Gobuster needs mode and wordlist parameters
-            # Default to DNS mode for domain targets, dir mode for URLs
-            if asset_type == "domain":
-                params["mode"] = "dns"
-                params["domain"] = asset.target
-                # Use default wordlist path
-                params["wordlist"] = "debug/gobuster_words.txt"
-            else:
-                # For non-domain targets, assume it's a URL for directory scanning
-                params["mode"] = "dir"
-                params["url"] = f"http://{asset.target}" if not asset.target.startswith(('http://', 'https://')) else asset.target
-                params["wordlist"] = "debug/gobuster_words.txt"
+            # Respect existing mode if provided
+            mode = params.get("mode")
+            
+            # Determine default wordlist path
+            # We assume the tool_setup.py installed it to bin/wordlists/common.txt
+            # But we should let the adapter handle the default if we pass None, 
+            # or pass the absolute path if we know it.
+            # Since we updated the adapter to have a default, we can omit it if not provided.
+            # However, the adapter validation requires it if not in config.
+            # Let's try to find the bundled one.
+            wordlist = params.get("wordlist")
+            if not wordlist:
+                try:
+                    root_dir = Path(__file__).parent.parent.parent
+                    bundled_wordlist = root_dir / "bin" / "wordlists" / "common.txt"
+                    if bundled_wordlist.exists():
+                        params["wordlist"] = str(bundled_wordlist)
+                except Exception:
+                    pass
+
+            if not mode:
+                # Default to DNS mode for domain targets, dir mode for URLs
+                if asset_type == "domain":
+                    mode = "dns"
+                else:
+                    mode = "dir"
+                params["mode"] = mode
+
+            if mode == "dns":
+                if "domain" not in params:
+                    params["domain"] = asset.target
+            elif mode == "dir":
+                if "url" not in params:
+                    params["url"] = f"http://{asset.target}" if not asset.target.startswith(('http://', 'https://')) else asset.target
 
         return params
 

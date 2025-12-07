@@ -64,7 +64,8 @@ ROOT_AGENT = AgentDefinition(
             - 'researcher_agent': For executing multiple tools
                 - method: researcher_agent(tool_name="nmap", target="example.com", parameters={...})
             - 'analyst_agent': For interpreting results
-                - method: analyst_agent(data="raw output", query="What vulnerabilities are present?")
+                - method: analyst_agent(raw_data="output", query="...") OR analyst_agent(evidence_path="path/to/file", query="...")
+                - Use evidence_path for large outputs to avoid errors.
 
             Always provide clear, actionable answers to the user.
 

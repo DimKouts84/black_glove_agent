@@ -71,6 +71,24 @@ class SubagentTool:
             # print(f"DEBUG: Injecting available tools into planner: {available_tools_list}")
             params["executor_tools"] = "\n".join(available_tools_list)
 
+        # Special handling for Analyst Agent: Read evidence files
+        if self.name == "analyst_agent":
+            evidence_path = params.get("evidence_path")
+            if evidence_path and not params.get("raw_data"):
+                try:
+                    from pathlib import Path
+                    path = Path(evidence_path)
+                    if path.exists():
+                        # Read file, limit to 50KB to prevent context overflow
+                        content = path.read_text(encoding="utf-8", errors="replace")
+                        if len(content) > 50000:
+                            content = content[:50000] + "\n...[TRUNCATED]..."
+                        params["raw_data"] = content
+                    else:
+                        params["raw_data"] = f"Error: Evidence file not found at {evidence_path}"
+                except Exception as e:
+                    params["raw_data"] = f"Error reading evidence file: {e}"
+
         # Create executor
         executor = AgentExecutor(
             agent_definition=self.definition,

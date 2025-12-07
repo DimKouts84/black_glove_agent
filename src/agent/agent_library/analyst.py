@@ -16,7 +16,8 @@ ANALYST_AGENT = AgentDefinition(
     name="analyst_agent",
     description="A specialized agent that analyzes raw security data to find vulnerabilities.",
     input_config={
-        "raw_data": AgentInput(description="The raw output from security tools."),
+        "raw_data": AgentInput(description="The raw output from security tools.", required=False),
+        "evidence_path": AgentInput(description="Path to an evidence file to analyze.", required=False),
         "context": AgentInput(description="Context about the scan target.", required=False)
     },
     output_config=AgentOutput(

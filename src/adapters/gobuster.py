@@ -11,6 +11,7 @@ import re
 import time
 import shutil
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
@@ -34,12 +35,34 @@ class GobusterAdapter(BaseAdapter):
         self._required_params = ["mode"]
         self.version = "1.1.0"
         self._runner: ProcessRunner = self.config.get("_runner") or ProcessRunner()
+        
+        # Determine gobuster executable path
+        self._gobuster_path = "gobuster" # Default to system PATH
+        
+        # Check for bundled binary in bin/gobuster/gobuster.exe
+        try:
+            root_dir = Path(__file__).parent.parent.parent
+            bundled_path = root_dir / "bin" / "gobuster" / "gobuster.exe"
+            if bundled_path.exists():
+                self._gobuster_path = str(bundled_path)
+        except Exception:
+            pass
+            
+        # Determine default wordlist path
+        self._default_wordlist = None
+        try:
+            root_dir = Path(__file__).parent.parent.parent
+            bundled_wordlist = root_dir / "bin" / "wordlists" / "common.txt"
+            if bundled_wordlist.exists():
+                self._default_wordlist = str(bundled_wordlist)
+        except Exception:
+            pass
 
         # Defaults
         self._defaults = {
             "timeout": 300.0,
             "default_mode": "dir",
-            "wordlist": None,  # host path to wordlist
+            "wordlist": self._default_wordlist,  # host path to wordlist
             "rate_limit_rpm": None,  # reserved for orchestrator/policy engine
         }
 
@@ -60,7 +83,7 @@ class GobusterAdapter(BaseAdapter):
                 raise ValueError("wordlist must be a non-empty string path or None")
 
         # Check if gobuster is available
-        if not shutil.which("gobuster"):
+        if self._gobuster_path == "gobuster" and not shutil.which("gobuster"):
              # We don't raise here to allow instantiation, but execution will fail.
              pass
 
@@ -73,9 +96,24 @@ class GobusterAdapter(BaseAdapter):
         if mode not in ("dir", "dns"):
             raise ValueError("mode must be 'dir' or 'dns'")
 
-        wordlist = params.get("wordlist") or self.config.get("wordlist")
+        # Smart mapping for target -> url/domain
+        if "target" in params:
+            if mode == "dir" and "url" not in params:
+                target = params["target"]
+                if not target.startswith(("http://", "https://")):
+                    params["url"] = f"http://{target}"
+                else:
+                    params["url"] = target
+            elif mode == "dns" and "domain" not in params:
+                params["domain"] = params["target"]
+
+        wordlist = params.get("wordlist") or self.config.get("wordlist") or self._defaults["wordlist"]
         if not isinstance(wordlist, str) or not wordlist.strip():
             raise ValueError("wordlist must be provided in params or config")
+        
+        # Ensure wordlist is in params for execution
+        if "wordlist" not in params:
+            params["wordlist"] = wordlist
 
         if mode == "dir":
             url = params.get("url")
@@ -121,7 +159,7 @@ class GobusterAdapter(BaseAdapter):
 
         # Resolve mode and build command
         mode = params.get("mode") or cfg.get("default_mode", self._defaults["default_mode"])
-        wordlist = params.get("wordlist") or cfg.get("wordlist")
+        wordlist = params.get("wordlist") or cfg.get("wordlist") or self._defaults["wordlist"]
         cmd = self._build_command(params=params, wordlist=wordlist, mode=mode)
 
         # Evidence directory
@@ -133,11 +171,11 @@ class GobusterAdapter(BaseAdapter):
             pass
 
         # Execute process
-        # cmd[0] is 'gobuster', but ProcessRunner expects command and args separately
+        # cmd[0] is the executable path (system or bundled)
         run_result = self._runner.run(
             {
-                "command": "gobuster",
-                "args": cmd[1:], # skip 'gobuster'
+                "command": cmd[0],
+                "args": cmd[1:], 
                 "env": {},
                 "cwd": None,
                 "timeout": timeout,
@@ -194,7 +232,7 @@ class GobusterAdapter(BaseAdapter):
         extra_flags: List[str] = params.get("extra_flags") or []
         threads: Optional[int] = params.get("threads")
 
-        cmd: List[str] = ["gobuster", mode]
+        cmd: List[str] = [self._gobuster_path, mode]
 
         # common: wordlist
         # For local execution, we just pass the path directly
