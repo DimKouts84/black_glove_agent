@@ -98,6 +98,10 @@ class AdapterManager:
             # Initialize the adapter
             adapter_instance = adapter_class(config)
             
+            # Force name to match the requested adapter name (e.g. "nmap" instead of "NmapAdapter")
+            # This ensures consistency between discovery, loading, and registry
+            adapter_instance.name = adapter_name
+            
             # Validate the adapter implements the interface correctly
             if not self.validate_adapter(adapter_instance):
                 raise ValueError(f"Adapter {adapter_name} does not properly implement interface")

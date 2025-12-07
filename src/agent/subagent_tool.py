@@ -54,7 +54,23 @@ class SubagentTool:
             else:
                  # Warn or fail? For now, we just skip incomplete tools which might fail execution
                  pass
-                 
+        
+        # Special handling for Planner Agent: Inject available tools from PARENT registry
+        # The planner needs to know what the ROOT agent can do, not what the planner can do (which is nothing)
+        if self.name == "planner_agent":
+            available_tools_list = []
+            for name in self.parent_tool_registry.list_tools():
+                # Skip the planner itself to avoid confusion
+                if name == "planner_agent":
+                    continue
+                    
+                info = self.parent_tool_registry.get_tool_info(name)
+                desc = info.get("description", "No description") if info else "No description"
+                available_tools_list.append(f"- {name}: {desc}")
+            
+            # print(f"DEBUG: Injecting available tools into planner: {available_tools_list}")
+            params["executor_tools"] = "\n".join(available_tools_list)
+
         # Create executor
         executor = AgentExecutor(
             agent_definition=self.definition,
