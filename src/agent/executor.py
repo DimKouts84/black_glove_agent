@@ -82,6 +82,11 @@ class AgentExecutor:
 
         tools_desc.append(f"- complete_task: {self.complete_task_tool_def['description']}")
         
+        # Determine output format for complete_task
+        output_name = "final_answer"
+        if self.definition.output_config:
+            output_name = self.definition.output_config.output_name
+        
         # DEBUG: Log tools being included in prompt
         self.logger.info(f"Building system prompt with tools: {[t.split(':')[0].strip('- ') for t in tools_desc]}")
 
@@ -118,8 +123,8 @@ EXAMPLE 2 - User says "Hello":
 {{
     "tool": "complete_task",
     "parameters": {{
-        "final_answer": {{
-            "answer": "Hello! I'm Black Glove, your penetration testing assistant. I can help you with security scans, asset management, and more. What would you like to do?"
+        "{output_name}": {{
+            "answer": "Hello! I'm Black Glove..."
         }}
     }},
     "rationale": "Greeting the user"
@@ -129,7 +134,7 @@ EXAMPLE 3 - After receiving tool results, provide the answer:
 {{
     "tool": "complete_task",
     "parameters": {{
-        "final_answer": {{
+        "{output_name}": {{
             "answer": "Your public IP address is 1.2.3.4"
         }}
     }},
@@ -202,8 +207,27 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                 if start != -1 and end != -1:
                     clean_content = clean_content[start:end+1]
                 
-                action = json.loads(clean_content)
+                # Attempt to fix common JSON errors (unescaped newlines in strings)
+                # This is a simple heuristic: if we see a newline that is NOT followed by a quote or whitespace+quote, it might be inside a string.
+                # Better approach: Use a robust parser or just try/except.
+                # Let's try a simple regex replacement for unescaped newlines inside values if json.loads fails.
                 
+                try:
+                    action = json.loads(clean_content)
+                except json.JSONDecodeError:
+                    # Try to escape newlines
+                    # This is risky but often fixes "text block" issues
+                    # We replace actual newlines with \n, but we need to be careful not to break structure.
+                    # A safer bet is to tell the agent to fix it (which we do below), but let's try one simple fix.
+                    try:
+                        # Replace newlines that are likely inside strings
+                        # This is hard to do perfectly with regex.
+                        # Let's just try strict=False if available (python standard lib doesn't support it fully for this)
+                        pass
+                    except:
+                        pass
+                    raise # Re-raise to hit the error handler below
+
                 if not isinstance(action, dict):
                     msg = "Agent output valid JSON but it was not an object (dictionary)."
                     self.logger.warning(msg)
@@ -226,7 +250,14 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                 # Heuristic: If the response is short plain text, maybe it's the final answer?
                 # But we want strict JSON.
                 conversation_history.append(LLMMessage(role="assistant", content=content))
-                conversation_history.append(LLMMessage(role="user", content="Error: Your response was NOT valid JSON. You must respond with a JSON object. \nExample:\n{\n    \"tool\": \"complete_task\",\n    \"parameters\": {\n        \"final_answer\": \"Your answer here\"\n    }\n}"))
+                
+                # Stronger error message to break "apology loops"
+                error_msg = "SYSTEM ERROR: Your response was NOT valid JSON.\n"
+                error_msg += "CRITICAL: Do NOT apologize. Do NOT explain. Output ONLY a valid JSON object.\n"
+                error_msg += "If you are trying to give the final answer, use the 'complete_task' tool.\n"
+                error_msg += "Example:\n{\n    \"tool\": \"complete_task\",\n    \"parameters\": {\n        \"final_answer\": \"Your answer here\"\n    }\n}"
+                
+                conversation_history.append(LLMMessage(role="user", content=error_msg))
                 continue
 
             tool_name = action.get("tool")

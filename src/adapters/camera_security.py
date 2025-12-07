@@ -490,13 +490,30 @@ class CameraSecurityAdapter(BaseAdapter):
         Returns:
             Dict containing adapter metadata
         """
-        return {
+        base_info = super().get_info()
+        base_info.update({
             "name": "camera_security",
             "version": self.version,
             "description": "Comprehensive security testing for IP cameras and surveillance devices with vendor identification",
             "category": "security_assessment",
-            "required_params": self._required_params,
-            "optional_params": ["timeout", "test_credentials"],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "The target IP address or hostname of the camera (e.g., '192.168.1.50')"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional: Connection timeout in seconds (default: 5)"
+                    },
+                    "test_credentials": {
+                        "type": "boolean",
+                        "description": "Optional: Whether to test default credentials (default: True)"
+                    }
+                },
+                "required": ["target"]
+            },
             "capabilities": [
                 "Port scanning for 26+ camera-specific ports",
                 "Vendor fingerprinting (Hikvision, Dahua, Axis, Xiongmai, etc.)",
@@ -511,4 +528,5 @@ class CameraSecurityAdapter(BaseAdapter):
             ],
             "ports_checked": list(self.CAMERA_PORTS.keys()),
             "safety_notes": "Only use on authorized assets. Unauthorized testing may violate laws."
-        }
+        })
+        return base_info
