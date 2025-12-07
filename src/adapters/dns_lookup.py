@@ -201,10 +201,24 @@ class DnsLookupAdapter(BaseAdapter):
         base_info.update({
             "name": "DnsLookupAdapter",
             "version": self.version,
-            "description": "DNS lookup adapter for DNS record enumeration",
+            "description": "DNS lookup adapter for DNS record enumeration. Use for domain names, not IP addresses.",
             "capabilities": base_info["capabilities"] + ["dns_enumeration", "record_lookup"],
             "requirements": ["dnspython"],
             "supported_record_types": self.default_record_types,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "The domain name to lookup (e.g., 'example.com'). NOT an IP address."
+                    },
+                    "record_types": {
+                        "type": "array",
+                        "description": "Optional: List of DNS record types to query (e.g., ['A', 'MX', 'NS'])"
+                    }
+                },
+                "required": ["domain"]
+            },
             "example_usage": {
                 "domain": "example.com",
                 "record_types": ["A", "MX", "NS"],

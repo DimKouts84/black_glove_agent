@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 import time
 import shutil
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from xml.etree import ElementTree as ET
@@ -47,6 +49,20 @@ class NmapAdapter(BaseAdapter):
         self.version = "1.1.0"
         # Dependency injection for tests
         self._runner: ProcessRunner = self.config.get("_runner") or ProcessRunner()
+        
+        # Determine nmap executable path
+        self._nmap_path = "nmap" # Default to system PATH
+        
+        # Check for bundled binary in bin/nmap/nmap.exe
+        # We assume the project root is 3 levels up from this file (src/adapters/nmap.py)
+        # Adjust based on actual structure: src/adapters/nmap.py -> src/adapters -> src -> root
+        try:
+            root_dir = Path(__file__).parent.parent.parent
+            bundled_path = root_dir / "bin" / "nmap" / "nmap.exe"
+            if bundled_path.exists():
+                self._nmap_path = str(bundled_path)
+        except Exception:
+            pass
 
         # Defaults
         self._defaults = {
@@ -130,6 +146,25 @@ class NmapAdapter(BaseAdapter):
     # ---- Core execution ----
 
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
+        # Check if nmap is installed before attempting execution
+        # Use self._nmap_path which might be the bundled one
+        nmap_cmd = self._nmap_path
+        
+        # If it's just "nmap", check PATH. If it's a path, check existence.
+        if nmap_cmd == "nmap":
+             if not shutil.which("nmap"):
+                return AdapterResult(
+                    status=AdapterResultStatus.FAILURE,
+                    data=None,
+                    error_message="Nmap executable not found. Please install nmap or place portable nmap in bin/nmap/."
+                )
+        elif not Path(nmap_cmd).exists():
+             return AdapterResult(
+                status=AdapterResultStatus.FAILURE,
+                data=None,
+                error_message=f"Bundled Nmap not found at {nmap_cmd}"
+            )
+
         # Effective config
         cfg = self.config or {}
         timeout = float(cfg.get("timeout", self._defaults["timeout"]))
@@ -166,10 +201,11 @@ class NmapAdapter(BaseAdapter):
 
         # Execute process
         # cmd[0] is 'nmap', but ProcessRunner expects command and args separately
+        # We need to use the resolved nmap_cmd
         run_result = self._runner.run(
             {
-                "command": "nmap",
-                "args": cmd[1:], # skip 'nmap'
+                "command": nmap_cmd,
+                "args": cmd[1:], # skip 'nmap' placeholder from _build_command
                 "env": {},
                 "cwd": None,
                 "timeout": timeout,
@@ -331,14 +367,37 @@ class NmapAdapter(BaseAdapter):
 
     def get_info(self) -> Dict[str, Any]:
         base_info = super().get_info()
+        
+        # Check availability (system or bundled)
+        is_installed = bool(shutil.which("nmap")) or Path(self._nmap_path).exists()
+        status_msg = "" if is_installed else " [WARNING: nmap executable not found on system or in bin/nmap/]"
+
         base_info.update(
             {
                 "name": "NmapAdapter",
                 "version": self.version,
-                "description": "Local nmap execution with XML parsing and evidence storage",
+                "description": f"Local nmap execution for network scanning. Use for IP addresses or hostnames.{status_msg}",
                 "capabilities": base_info["capabilities"]
                 + ["network_scan", "service_detection", "xml_parsing", "evidence_storage"],
                 "requirements": ["nmap"],
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "The target IP address, hostname, or CIDR range to scan (e.g., '192.168.1.1', 'example.com', '192.168.1.0/24')"
+                        },
+                        "ports": {
+                            "type": "string",
+                            "description": "Optional: Port range to scan (e.g., '1-1024', '22,80,443')"
+                        },
+                        "extra_flags": {
+                            "type": "array",
+                            "description": "Optional: Additional nmap flags (e.g., ['-Pn', '-sV'])"
+                        }
+                    },
+                    "required": ["target"]
+                },
                 "example_usage": {
                     "target": "192.168.1.1",
                     "ports": "1-1024",

@@ -471,10 +471,24 @@ class PassiveReconAdapter(BaseAdapter):
             {
                 "name": "PassiveReconAdapter",
                 "version": self.version,
-                "description": "Passive reconnaissance via crt.sh and Wayback Machine",
+                "description": "Passive reconnaissance via crt.sh and Wayback Machine. REQUIRES A VALID DOMAIN NAME (e.g., example.com). DO NOT USE WITH IP ADDRESSES.",
                 "capabilities": base_info["capabilities"]
                 + ["certificate_history", "archived_url_discovery", "evidence_storage"],
                 "requirements": ["stdlib-urllib", "json"],
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {
+                            "type": "string",
+                            "description": "The domain name to research (e.g., 'example.com'). NOT an IP address."
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Optional: Maximum number of results to return"
+                        }
+                    },
+                    "required": ["domain"]
+                },
                 "example_usage": {
                     "domain": "example.com",
                     "max_results": 100,

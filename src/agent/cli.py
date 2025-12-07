@@ -520,6 +520,17 @@ def init(
     Initialize the Black Glove pentest agent.
     If config exists, jumps to chat. If not, runs wizard then chat.
     """
+    # 1. Ensure portable tools are installed (Fast check)
+    try:
+        # Import here to avoid circular dependencies
+        try:
+            from utils.tool_setup import setup_tools
+        except ImportError:
+            from ..utils.tool_setup import setup_tools
+        setup_tools()
+    except Exception as e:
+        console.print(f"[yellow]⚠️  Tool setup check failed: {e}[/yellow]")
+
     # Check for existing config FIRST
     try:
         config = load_config()
@@ -1210,10 +1221,55 @@ def chat(
                         
                         # Process Result
                         final_output = result.get("final_answer", {})
-                        if isinstance(final_output, str):
-                            answer_text = final_output
-                        else:
-                            answer_text = final_output.get("answer", str(result))
+                        
+                        # Helper to format structured output
+                        def format_output(output):
+                            if isinstance(output, str):
+                                return output
+                            if isinstance(output, dict):
+                                # Handle simple "answer" key wrapper
+                                if "answer" in output and len(output) == 1:
+                                    return str(output["answer"])
+                                    
+                                # Handle structured security report
+                                if any(k in output for k in ["summary", "findings", "conclusion"]):
+                                    md_lines = []
+                                    if "summary" in output:
+                                        md_lines.append(f"### {output['summary']}")
+                                    if "findings" in output:
+                                        md_lines.append("\n**Findings:**")
+                                        findings = output["findings"]
+                                        if isinstance(findings, list):
+                                            for f in findings:
+                                                md_lines.append(f"- {f}")
+                                        else:
+                                            md_lines.append(str(findings))
+                                    if "interpretation" in output:
+                                        md_lines.append("\n**Interpretation:**")
+                                        interp = output["interpretation"]
+                                        if isinstance(interp, list):
+                                            for i in interp:
+                                                md_lines.append(f"- {i}")
+                                        else:
+                                            md_lines.append(str(interp))
+                                    if "conclusion" in output:
+                                        md_lines.append(f"\n**Conclusion:**\n{output['conclusion']}")
+                                    if "recommendations" in output:
+                                        md_lines.append("\n**Recommendations:**")
+                                        recs = output["recommendations"]
+                                        if isinstance(recs, list):
+                                            for r in recs:
+                                                md_lines.append(f"- {r}")
+                                        else:
+                                            md_lines.append(str(recs))
+                                    return "\n".join(md_lines)
+                                
+                                # Fallback for other dicts
+                                import yaml
+                                return f"```yaml\n{yaml.dump(output, default_flow_style=False)}\n```"
+                            return str(output)
+
+                        answer_text = format_output(final_output)
                         
                         # Handle empty answer
                         if not answer_text or answer_text.strip() == "":

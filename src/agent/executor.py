@@ -66,7 +66,15 @@ class AgentExecutor:
         for tool_name in self.definition.tool_config.tools:
             tool_info = self.tool_registry.get_tool_info(tool_name)
             if tool_info:
-                tools_desc.append(f"- {tool_name}: {tool_info.get('description', '')}")
+                desc = tool_info.get('description', '')
+                # Add parameter information if available
+                params = tool_info.get('parameters', {})
+                required = params.get('required', [])
+                if required:
+                    param_str = ', '.join(required)
+                    tools_desc.append(f"- {tool_name}: {desc} (Required params: {param_str})")
+                else:
+                    tools_desc.append(f"- {tool_name}: {desc}")
             else:
                  # It might be in the plugin manager if it's a raw adapter
                  # We probably need a unified way to get descriptions, but for now:

@@ -265,10 +265,24 @@ class SslCheckAdapter(BaseAdapter):
         base_info.update({
             "name": "SslCheckAdapter",
             "version": self.version,
-            "description": "SSL check adapter for SSL/TLS certificate validation",
+            "description": "SSL check adapter for SSL/TLS certificate validation. Use for hostnames or IP addresses.",
             "capabilities": base_info["capabilities"] + ["ssl_validation", "certificate_info"],
             "requirements": ["ssl", "socket"],
             "default_port": self.default_port,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string",
+                        "description": "The target hostname or IP address to check SSL certificate (e.g., 'example.com' or '1.2.3.4')"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "Optional: Port number (default: 443)"
+                    }
+                },
+                "required": ["host"]
+            },
             "example_usage": {
                 "host": "example.com",
                 "port": 443,

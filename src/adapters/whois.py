@@ -156,9 +156,19 @@ class WhoisAdapter(BaseAdapter):
         base_info.update({
             "name": "WhoisAdapter",
             "version": self.version,
-            "description": "WHOIS adapter for domain registration information lookup",
+            "description": "WHOIS adapter for domain registration information lookup. Use for domain names, not IP addresses.",
             "capabilities": base_info["capabilities"] + ["domain_lookup", "registration_info"],
             "requirements": ["python-whois"],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "The domain name to lookup (e.g., 'example.com'). NOT an IP address."
+                    }
+                },
+                "required": ["domain"]
+            },
             "example_usage": {
                 "domain": "example.com",
                 "timeout": 30

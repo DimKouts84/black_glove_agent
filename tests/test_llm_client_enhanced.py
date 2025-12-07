@@ -37,7 +37,7 @@ class TestLLMConfig:
         assert config.provider == LLMProvider.LMSTUDIO
         assert config.endpoint == "http://localhost:1234/v1"
         assert config.model == "test-model"
-        assert config.temperature == 0.7
+        assert config.temperature == 0.0
         assert config.enable_rag is False
         assert config.conversation_memory_size == 10
     

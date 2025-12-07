@@ -25,7 +25,7 @@ class TestConfiguration:
         assert config.llm_provider == "lmstudio"
         assert config.llm_endpoint == "http://localhost:1234/v1"
         assert config.llm_model == "local-model"
-        assert config.llm_temperature == 0.7
+        assert config.llm_temperature == 0.0
         
         # Test scan settings
         assert config.default_rate_limit == 50

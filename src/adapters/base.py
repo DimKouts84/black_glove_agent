@@ -161,12 +161,28 @@ class BaseAdapter(AdapterInterface):
         Returns:
             Dict containing basic adapter information
         """
+        # Build parameters schema from _required_params
+        required_params = getattr(self, '_required_params', [])
+        parameters = {
+            "type": "object",
+            "properties": {},
+            "required": required_params
+        }
+        
+        # Add basic property definitions for required params
+        for param in required_params:
+            parameters["properties"][param] = {
+                "type": "string",
+                "description": f"Required parameter: {param}"
+            }
+        
         return {
             "name": self.name,
             "version": self.version,
             "description": f"Base adapter for {self.name}",
             "capabilities": ["basic_execution", "timing", "logging"],
-            "requirements": []
+            "requirements": [],
+            "parameters": parameters
         }
     
     def cleanup(self) -> None:

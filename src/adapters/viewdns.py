@@ -120,9 +120,19 @@ class ViewDnsAdapter(BaseAdapter):
         base_info.update({
             "name": "ViewDnsAdapter",
             "version": "1.0.0",
-            "description": "Active port scanning using ViewDNS.info API",
+            "description": "Active port scanning using ViewDNS.info API. Use for IP addresses or hostnames.",
             "capabilities": base_info["capabilities"] + ["active_scan", "port_scan"],
-            "requirements": ["requests", "viewdns_api_key"]
+            "requirements": ["requests", "viewdns_api_key"],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string",
+                        "description": "The target IP address or hostname to scan (e.g., '192.168.1.1' or 'example.com')"
+                    }
+                },
+                "required": ["host"]
+            }
         })
         return base_info
 
