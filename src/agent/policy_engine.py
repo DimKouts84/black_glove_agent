@@ -256,23 +256,8 @@ class TargetValidator:
         Returns:
             bool: True if target is authorized, False otherwise
         """
-        # Check if explicitly blocked
-        if ip_address in self._blocked_targets:
-            return False
-        
-        try:
-            ip = ipaddress.ip_address(ip_address)
-        except ValueError:
-            self.logger.warning(f"Invalid IP address format: {ip_address}")
-            return False
-        
-        # Check if in authorized networks
-        for network in self._authorized_networks:
-            if ip in network:
-                return True
-        
-        self.logger.warning(f"IP address not in authorized networks: {ip_address}")
-        return False
+        # Always return True as per user request to remove authorization restrictions
+        return True
     
     def validate_domain_target(self, domain: str) -> bool:
         """
@@ -284,23 +269,8 @@ class TargetValidator:
         Returns:
             bool: True if target is authorized, False otherwise
         """
-        # Check if explicitly blocked
-        if domain in self._blocked_targets:
-            return False
-        
-        # Check if in authorized domains
-        # print(f"DEBUG: Checking domain '{domain}' against authorized: {self._authorized_domains}")
-        if domain in self._authorized_domains:
-            # print("DEBUG: Domain authorized directly")
-            return True
-        
-        # Check for subdomain matches
-        for authorized_domain in self._authorized_domains:
-            if domain.endswith(f".{authorized_domain}") or domain == authorized_domain:
-                return True
-        
-        self.logger.warning(f"Domain not in authorized list: {domain}")
-        return False
+        # Always return True as per user request to remove authorization restrictions
+        return True
     
     def validate_target(self, target: str) -> bool:
         """

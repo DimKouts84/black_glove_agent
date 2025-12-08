@@ -83,13 +83,14 @@ class Orchestrator:
     plugin manager, and LLM client.
     """
     
-    def __init__(self, config: Dict[str, Any], db_connection=None):
+    def __init__(self, config: Dict[str, Any], db_connection=None, llm_client=None):
         """
         Initialize the orchestrator.
         
         Args:
             config: Orchestrator configuration
             db_connection: Optional database connection
+            llm_client: Optional existing LLM client
         """
         self.config = config
         self.db_connection = db_connection
@@ -101,7 +102,11 @@ class Orchestrator:
             config.get("adapters_path"),
             policy_engine=self.policy_engine
         )
-        self.llm_client = create_llm_client(config.get("llm"))
+        
+        if llm_client:
+            self.llm_client = llm_client
+        else:
+            self.llm_client = create_llm_client(config.get("llm"))
         
         # Initialize workflow components
         self.workflow_manager = WorkflowManager()
@@ -1022,13 +1027,14 @@ class Orchestrator:
         return params
 
 
-def create_orchestrator(config: Dict[str, Any] = None, db_connection=None) -> Orchestrator:
+def create_orchestrator(config: Dict[str, Any] = None, db_connection=None, llm_client=None) -> Orchestrator:
     """
     Factory function to create an orchestrator instance.
     
     Args:
         config: Optional orchestrator configuration
         db_connection: Optional database connection
+        llm_client: Optional existing LLM client
         
     Returns:
         Orchestrator: Configured orchestrator instance
@@ -1099,7 +1105,7 @@ def create_orchestrator(config: Dict[str, Any] = None, db_connection=None) -> Or
                 conversation_memory_size=conversation_memory_size,
             )
     
-    return Orchestrator(config, db_connection)
+    return Orchestrator(config, db_connection, llm_client)
 
 
 # Context manager for orchestrator

@@ -52,7 +52,7 @@ ROOT_AGENT = AgentDefinition(
             - nmap: Port scanning
             - gobuster: Directory enumeration
             - passive_recon: Passive reconnaissance
-            - asset_manager: Manage target assets
+            - asset_manager: Manage target assets (add, list, remove)
             - camera_security: Check for exposed cameras
             - viewdns: Reverse IP and port scan
             - wappalyzer: Detect web technologies
@@ -70,6 +70,10 @@ ROOT_AGENT = AgentDefinition(
             Always provide clear, actionable answers to the user.
 
             IMPORTANT: When asked about past actions or tools used, DO NOT call the tool again. Refer to your context memory and describe what you already did.
+            
+            ASSET MANAGEMENT:
+            - To remove an asset, use asset_manager with command="remove" and name="asset_name".
+            - Example: asset_manager(command="remove", name="test-target")
 
             EXAMPLE:
             User: "What did you just do?"

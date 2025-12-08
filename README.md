@@ -132,9 +132,6 @@ flowchart TD
   - **Windows**: Automatically installed as portable binaries by the agent.
   - **Linux/macOS**: Recommended to install via package manager (e.g., `apt install nmap gobuster`), though the agent can attempt portable setup.
 
-### Optional (for enhanced OSINT capabilities)
-- **Shodan API Key**: For passive reconnaissance (free tier available)
-- **ViewDNS API Key**: For active external port scanning
 
 ## 🛠️ Installation
 
@@ -185,7 +182,9 @@ flowchart TD
 
 ## 🎮 Basic Usage
 
-![Black Glove Demo](assets/V0_1_demo_gif_mvp.gif)
+<p align="center">
+   <img src="assets/V0_1_demo_gif_mvp.gif" alt="Black Glove Demo" width="1200" style="max-width:100%;height:auto;" />
+</p>
 
 ### 1. Initialize the Agent
 ```bash
@@ -200,29 +199,44 @@ Example interactions:
 - "Check for exposed cameras on 192.168.1.0/24"
 - "What is SSL status for my_domain_here.com?"
 
-### 2. Add Target Assets
+### 2. Manage Assets
+
+**Via CLI:**
 ```bash
+# Add assets
 agent add-asset --name home-router --type host --value 192.168.1.1
 agent add-asset --name personal-website --type domain --value my_domain_here.com
+
+# List assets
+agent list-assets
+
+# Remove asset (by ID)
+agent remove-asset 1
 ```
 
-### 4. Run Passive Reconnaissance
+**Via Interactive Chat:**
+You can also manage assets using natural language within `agent init`:
+- "Add example.com as a domain asset"
+- "List all my assets"
+- "Remove the asset named personal-website"
+
+### 3. Run Passive Reconnaissance
 ```bash
 agent recon passive --asset personal-website
 ```
 
-### 5. Plan Active Scanning
+### 4. Plan Active Scanning
 ```bash
 agent recon active --asset home-router --preset fingerprint
 ```
 
-### 6. Review and Approve
+### 5. Review and Approve
 ```bash
 # Review suggested actions
 # Type 'approve <id>' to proceed
 ```
 
-### 7. Generate Report
+### 6. Generate Report
 ```bash
 agent report --asset home-router
 ```
@@ -296,27 +310,8 @@ enable_exploit_adapters: false  # Enable exploit adapters (disabled by default f
 evidence_storage_path: "~/.homepentest/evidence"
 
 # Asset Management Settings
-# IMPORTANT: Configure authorized targets for security
-# Only targets in these lists will be allowed for scanning
-
-authorized_domains:
-   # Add domains you are authorized to scan
-   # Example:
-   # - "my_domain_here.com"
-   # - "test-environment.com"
-   - "localhost"  # Local testing
-
-authorized_networks:
-   # Add IP networks you are authorized to scan (CIDR notation)
-   # Example:
-   # - "192.168.1.0/24"  # Your local network
-   # - "10.0.0.0/8"      # Private network range
-   - "192.168.0.0/16"    # Default private network range
-   - "10.0.0.0/8"        # Default private network range
-   - "172.16.0.0/12"     # Default private network range
-
 blocked_targets:
-   # Explicitly block specific targets (takes precedence over authorized lists)
+   # Explicitly block specific targets
    # Example:
    # - "192.168.1.1"     # Block specific IP
    # - "blocked-domain.com"  # Block specific domain

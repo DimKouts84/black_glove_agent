@@ -104,15 +104,15 @@
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
 | **12** | **Official Release** | Production ready | Prepare for public release | Not Started |
-| 12.1 | Release Packaging | Distribution | Create release packages | Not Started |
-| 12.2 | Version Tagging | Release management | Tag and document release | Not Started |
+| 12.1 | Release Packaging | Distribution | Create release packages | **Will Not Do** |
+| 12.2 | Version Tagging | Release management | Tag and document release | **Will Not Do** |
 | 12.3 | Public Announcement | Community | Announce release to community | Not Started |
 
 ---
 
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
-| **13** | **Advanced Agentic Workflow** | Enhance LLM reasoning | Evolve the custom agent into a more formal, multi-step reasoning system | In Progress 🔄 |
+| **13** | **Advanced Agentic Workflow** | Enhance LLM reasoning | Evolve the custom agent into a more formal, multi-step reasoning system | Completed ✅ |
 | 13.1 | Evaluate Agentic Frameworks | Research CrewAI, LangGraph, etc. | Analyze the trade-offs of integrating a formal agentic framework versus enhancing the custom orchestrator | Completed ✅ |
 | 13.2 | Refactor to Formal Agent Roles | Improve modularity | Refactor the Orchestrator and LLMClient to define explicit agent roles (e.g., Planner, Analyst, Researcher) with distinct tools and responsibilities | Completed ✅ |
 | 13.3 | Implement Multi-Step Reasoning | Increase autonomy | Enhance the agent's ability to break down complex goals into multi-step plans and adapt based on intermediate results without requiring user intervention for every step | Completed ✅ |
@@ -129,7 +129,7 @@
 
 | Number | Title | Scope & Goal | Description | Status |
 |--------|-------|--------------|-------------|--------|
-| **14** | **Agentic Workflow Review Remediation** | Fix critical issues & tech debt | Address findings from 2025-12-03 deep review of agent interactions, tool handling, DB usage, and RAG | In Progress 🔄 |
+| **14** | **Agentic Workflow Review Remediation** | Fix critical issues & tech debt | Address findings from 2025-12-03 deep review of agent interactions, tool handling, DB usage, and RAG | Completed ✅ |
 | 14.1 | Fix missing `json` import | **IMMEDIATE** - Critical bug | Add `import json` to `session_manager.py` (lines 79, 119 use json.loads/dumps) | Completed ✅ |
 | 14.2 | Fix RAGDocument attribute error | **IMMEDIATE** - Critical bug | Change `document.title` to `document.doc_id` or `document.metadata.get('title')` in `investigator.py:281` | Completed ✅ |
 | 14.3 | Fix execute_tool → run_adapter | **IMMEDIATE** - Critical bug | Rename method call from `execute_tool` to `run_adapter` in `researcher.py:119` to match PluginManager API | Completed ✅ |

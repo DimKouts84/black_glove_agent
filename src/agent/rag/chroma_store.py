@@ -35,8 +35,47 @@ class ChromaDBManager(RAGManager):
             self.collection = self.client.get_or_create_collection(name=collection_name)
             self.logger.info(f"ChromaDB initialized at {self.db_path}, collection: {collection_name}")
         except Exception as e:
+            # Handle Windows-specific file locking/existence race condition (OS Error 183)
+            if "os error 183" in str(e) or "Cannot create a file when that file already exists" in str(e):
+                self.logger.warning(f"ChromaDB initialization encountered OS error 183. Retrying after delay...")
+                try:
+                    import time
+                    time.sleep(2.0) # Increased delay
+                    # Try to re-initialize client
+                    self.client = chromadb.PersistentClient(path=str(self.db_path))
+                    self.collection = self.client.get_or_create_collection(name=collection_name)
+                    self.logger.info(f"ChromaDB initialized successfully on retry.")
+                    return
+                except Exception as retry_error:
+                    # If tenant error occurs, it might be a transient state.
+                    if "Could not connect to tenant" in str(retry_error):
+                         self.logger.warning(f"ChromaDB tenant error on retry. Attempting one last time...")
+                         time.sleep(2.0)
+                         try:
+                             self.client = chromadb.PersistentClient(path=str(self.db_path))
+                             self.collection = self.client.get_or_create_collection(name=collection_name)
+                             self.logger.info(f"ChromaDB initialized successfully on second retry.")
+                             return
+                         except Exception as final_error:
+                             self.logger.error(f"ChromaDB final retry failed: {final_error}")
+                             # Graceful degradation: Disable RAG instead of crashing
+                             self.logger.warning("Disabling RAG functionality due to persistent database errors.")
+                             self.client = None
+                             self.collection = None
+                             return
+                    
+                    self.logger.error(f"ChromaDB retry failed: {retry_error}")
+                    # Graceful degradation
+                    self.logger.warning("Disabling RAG functionality due to persistent database errors.")
+                    self.client = None
+                    self.collection = None
+                    return
+
             self.logger.error(f"Failed to initialize ChromaDB: {e}")
-            raise
+            # Graceful degradation
+            self.logger.warning("Disabling RAG functionality due to persistent database errors.")
+            self.client = None
+            self.collection = None
 
     def add_document(self, document: RAGDocument) -> None:
         """
@@ -45,6 +84,9 @@ class ChromaDBManager(RAGManager):
         Args:
             document: Document to add
         """
+        if not self.collection:
+            return
+
         try:
             # Prepare metadata (ensure values are simple types for Chroma)
             # Chroma metadata values must be str, int, float, or bool
@@ -76,6 +118,9 @@ class ChromaDBManager(RAGManager):
         Returns:
             List of relevant documents
         """
+        if not self.collection:
+            return []
+
         try:
             results = self.collection.query(
                 query_texts=[query],

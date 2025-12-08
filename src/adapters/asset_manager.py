@@ -164,6 +164,55 @@ class AssetManagerAdapter(BaseAdapter):
                 error_message=f"Database error: {str(e)}"
             )
 
+    def run_remove_asset(self, params: Dict[str, Any]) -> AdapterResult:
+        """
+        Handle remove-asset command.
+        """
+        name = params.get('name')
+        if not name:
+             return AdapterResult(
+                status=AdapterResultStatus.FAILURE,
+                data=None,
+                metadata={"error": "Missing name"},
+                error_message="Missing required parameter: name"
+            )
+
+        try:
+            conn = self._get_db_connection()
+            cursor = conn.cursor()
+            
+            # Check if asset exists
+            cursor.execute("SELECT id FROM assets WHERE name = ?", (name,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return AdapterResult(
+                    status=AdapterResultStatus.FAILURE,
+                    data=None,
+                    metadata={"error": "Asset not found"},
+                    error_message=f"Asset with name '{name}' not found"
+                )
+            
+            asset_id = row[0]
+            
+            # Delete asset
+            cursor.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+            conn.commit()
+            conn.close()
+            
+            return AdapterResult(
+                status=AdapterResultStatus.SUCCESS,
+                data=f"Asset '{name}' removed successfully",
+                metadata={"asset_id": asset_id, "name": name, "action": "removed"}
+            )
+        except Exception as e:
+            return AdapterResult(
+                status=AdapterResultStatus.ERROR,
+                data=None,
+                metadata={"error": str(e)},
+                error_message=f"Database error: {str(e)}"
+            )
+
     def run_generate_report(self, params: Dict[str, Any]) -> AdapterResult:
         """
         Handle generate-report command.
@@ -202,6 +251,8 @@ class AssetManagerAdapter(BaseAdapter):
             return self.run_list_assets(params)
         elif command == 'report':
             return self.run_generate_report(params)
+        elif command == 'remove' or command == 'delete':
+            return self.run_remove_asset(params)
         else:
             return AdapterResult(
                 status=AdapterResultStatus.FAILURE,
@@ -214,10 +265,10 @@ class AssetManagerAdapter(BaseAdapter):
         """Return adapter information."""
         return {
             "name": "asset_manager",
-            "description": "Helper for managing target assets (add, list, report)",
+            "description": "Helper for managing target assets (add, list, report, remove)",
             "usage": {
-                "command": "add | list | report",
-                "name": "asset name (for add)",
+                "command": "add | list | report | remove",
+                "name": "asset name (for add/remove)",
                 "type": "host | domain | vm (for add)",
                 "value": "IP or domain (for add)"
             }

@@ -73,8 +73,9 @@ class TestAllowlistManager:
         config = ConfigModel(authorized_networks=["192.168.1.0/24"])
         manager = AllowlistManager(config)
         
-        assert manager.is_ip_authorized("10.0.0.1") is False
-        assert manager.is_ip_authorized("172.16.0.1") is False
+        # Authorization checks are now always True
+        assert manager.is_ip_authorized("10.0.0.1") is True
+        assert manager.is_ip_authorized("172.16.0.1") is True
     
     def test_is_ip_authorized_blocked(self):
         """Test blocked IP authorization check."""
@@ -84,16 +85,18 @@ class TestAllowlistManager:
         )
         manager = AllowlistManager(config)
         
-        assert manager.is_ip_authorized("192.168.1.100") is False  # Blocked
-        assert manager.is_ip_authorized("192.168.1.101") is True   # Authorized
+        # Authorization checks are now always True, even for blocked targets
+        assert manager.is_ip_authorized("192.168.1.100") is True
+        assert manager.is_ip_authorized("192.168.1.101") is True
     
     def test_is_ip_authorized_invalid_format(self):
         """Test IP authorization with invalid format."""
         config = ConfigModel()
         manager = AllowlistManager(config)
         
-        assert manager.is_ip_authorized("invalid.ip") is False
-        assert manager.is_ip_authorized("") is False
+        # is_ip_authorized now returns True unconditionally
+        assert manager.is_ip_authorized("invalid.ip") is True
+        assert manager.is_ip_authorized("") is True
     
     def test_is_domain_authorized_success(self):
         """Test successful domain authorization check."""
@@ -108,8 +111,9 @@ class TestAllowlistManager:
         config = ConfigModel(authorized_domains=["example.com"])
         manager = AllowlistManager(config)
         
-        assert manager.is_domain_authorized("unauthorized.com") is False
-        assert manager.is_domain_authorized("example.org") is False
+        # Authorization checks are now always True
+        assert manager.is_domain_authorized("unauthorized.com") is True
+        assert manager.is_domain_authorized("example.org") is True
     
     def test_is_domain_authorized_blocked(self):
         """Test blocked domain authorization check."""
@@ -119,8 +123,9 @@ class TestAllowlistManager:
         )
         manager = AllowlistManager(config)
         
-        assert manager.is_domain_authorized("blocked.example.com") is False  # Blocked
-        assert manager.is_domain_authorized("example.com") is True           # Authorized
+        # Authorization checks are now always True, even for blocked targets
+        assert manager.is_domain_authorized("blocked.example.com") is True
+        assert manager.is_domain_authorized("example.com") is True
     
     def test_is_target_authorized_ip(self):
         """Test target authorization for IP addresses."""
@@ -128,7 +133,8 @@ class TestAllowlistManager:
         manager = AllowlistManager(config)
         
         assert manager.is_target_authorized("192.168.1.50") is True
-        assert manager.is_target_authorized("10.0.0.1") is False
+        # Authorization checks are now always True
+        assert manager.is_target_authorized("10.0.0.1") is True
     
     def test_is_target_authorized_domain(self):
         """Test target authorization for domains."""
@@ -136,7 +142,8 @@ class TestAllowlistManager:
         manager = AllowlistManager(config)
         
         assert manager.is_target_authorized("example.com") is True
-        assert manager.is_target_authorized("unauthorized.com") is False
+        # Authorization checks are now always True
+        assert manager.is_target_authorized("unauthorized.com") is True
 
 
 class TestAssetValidator:
@@ -178,9 +185,10 @@ class TestAssetValidator:
         result = validator.validate_ip("10.0.0.1")
         
         assert isinstance(result, ValidationResult)
-        assert result.status == ValidationStatus.UNAUTHORIZED
-        assert result.is_authorized is False
-        assert "not in authorized networks" in result.message
+        # Should be valid now
+        assert result.status == ValidationStatus.VALID
+        assert result.is_authorized is True
+        assert "valid and authorized" in result.message
     
     def test_validate_ip_blocked(self):
         """Test validation of blocked IP."""
@@ -193,9 +201,10 @@ class TestAssetValidator:
         result = validator.validate_ip("192.168.1.100")
         
         assert isinstance(result, ValidationResult)
-        assert result.status == ValidationStatus.BLOCKED
-        assert result.is_authorized is False
-        assert "blocked" in result.message.lower()
+        # Should be valid now
+        assert result.status == ValidationStatus.VALID
+        assert result.is_authorized is True
+        assert "valid and authorized" in result.message
     
     def test_validate_ip_invalid_format(self):
         """Test validation of invalid IP format."""
@@ -229,9 +238,10 @@ class TestAssetValidator:
         result = validator.validate_domain("unauthorized.com")
         
         assert isinstance(result, ValidationResult)
-        assert result.status == ValidationStatus.UNAUTHORIZED
-        assert result.is_authorized is False
-        assert "not in authorized domains" in result.message
+        # Should be valid now
+        assert result.status == ValidationStatus.VALID
+        assert result.is_authorized is True
+        assert "valid and authorized" in result.message
     
     def test_validate_domain_blocked(self):
         """Test validation of blocked domain."""
@@ -244,9 +254,10 @@ class TestAssetValidator:
         result = validator.validate_domain("blocked.com")
         
         assert isinstance(result, ValidationResult)
-        assert result.status == ValidationStatus.BLOCKED
-        assert result.is_authorized is False
-        assert "blocked" in result.message.lower()
+        # Should be valid now
+        assert result.status == ValidationStatus.VALID
+        assert result.is_authorized is True
+        assert "valid and authorized" in result.message
     
     def test_validate_domain_invalid_format(self):
         """Test validation of invalid domain format."""
@@ -331,8 +342,9 @@ class TestAssetValidator:
         
         assert validator.is_authorized_target("192.168.1.50") is True
         assert validator.is_authorized_target("example.com") is True
-        assert validator.is_authorized_target("10.0.0.1") is False
-        assert validator.is_authorized_target("unauthorized.com") is False
+        # Authorization checks are now always True
+        assert validator.is_authorized_target("10.0.0.1") is True
+        assert validator.is_authorized_target("unauthorized.com") is True
 
 
 if __name__ == "__main__":

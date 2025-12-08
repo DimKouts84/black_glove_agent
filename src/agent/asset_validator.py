@@ -92,21 +92,8 @@ class AllowlistManager:
         Returns:
             bool: True if authorized, False otherwise
         """
-        # Check if explicitly blocked
-        if ip_address in self._blocked_targets:
-            return False
-        
-        try:
-            ip = ipaddress.ip_address(ip_address)
-        except ValueError:
-            return False
-        
-        # Check if in authorized networks
-        for network in self._authorized_networks:
-            if ip in network:
-                return True
-        
-        return False
+        # Always return True as per user request to remove authorization restrictions
+        return True
     
     def is_domain_authorized(self, domain: str) -> bool:
         """
@@ -118,20 +105,8 @@ class AllowlistManager:
         Returns:
             bool: True if authorized, False otherwise
         """
-        # Check if explicitly blocked
-        if domain in self._blocked_targets:
-            return False
-        
-        # Check if in authorized domains
-        if domain in self._authorized_domains:
-            return True
-        
-        # Check for subdomain matches
-        for authorized_domain in self._authorized_domains:
-            if domain.endswith(f".{authorized_domain}") or domain == authorized_domain:
-                return True
-        
-        return False
+        # Always return True as per user request to remove authorization restrictions
+        return True
     
     def is_target_authorized(self, target: str) -> bool:
         """
@@ -143,13 +118,8 @@ class AllowlistManager:
         Returns:
             bool: True if authorized, False otherwise
         """
-        # Try to parse as IP first
-        try:
-            ipaddress.ip_address(target)
-            return self.is_ip_authorized(target)
-        except ValueError:
-            # Not an IP, treat as domain
-            return self.is_domain_authorized(target)
+        # Always return True as per user request to remove authorization restrictions
+        return True
 
 
 class AssetValidator:
@@ -178,15 +148,6 @@ class AssetValidator:
         Returns:
             ValidationResult: Validation result
         """
-        # Check if explicitly blocked
-        if ip_address in self.allowlist_manager._blocked_targets:
-            return ValidationResult(
-                status=ValidationStatus.BLOCKED,
-                message=f"IP address {ip_address} is explicitly blocked",
-                suggestions=[],
-                is_authorized=False
-            )
-        
         # Validate IP format
         try:
             ip = ipaddress.ip_address(ip_address)
@@ -198,24 +159,13 @@ class AssetValidator:
                 is_authorized=False
             )
         
-        # Check authorization
-        if self.allowlist_manager.is_ip_authorized(ip_address):
-            return ValidationResult(
-                status=ValidationStatus.VALID,
-                message=f"IP address {ip_address} is valid and authorized",
-                suggestions=[],
-                is_authorized=True
-            )
-        else:
-            return ValidationResult(
-                status=ValidationStatus.UNAUTHORIZED,
-                message=f"IP address {ip_address} is not in authorized networks",
-                suggestions=[
-                    "Add the network to authorized_networks in config",
-                    "Verify you have permission to scan this target"
-                ],
-                is_authorized=False
-            )
+        # Always return authorized
+        return ValidationResult(
+            status=ValidationStatus.VALID,
+            message=f"IP address {ip_address} is valid and authorized",
+            suggestions=[],
+            is_authorized=True
+        )
     
     def validate_domain(self, domain: str) -> ValidationResult:
         """
@@ -227,15 +177,6 @@ class AssetValidator:
         Returns:
             ValidationResult: Validation result
         """
-        # Check if explicitly blocked
-        if domain in self.allowlist_manager._blocked_targets:
-            return ValidationResult(
-                status=ValidationStatus.BLOCKED,
-                message=f"Domain {domain} is explicitly blocked",
-                suggestions=[],
-                is_authorized=False
-            )
-        
         # Basic domain format validation
         if not domain or '.' not in domain:
             return ValidationResult(
@@ -245,24 +186,13 @@ class AssetValidator:
                 is_authorized=False
             )
         
-        # Check authorization
-        if self.allowlist_manager.is_domain_authorized(domain):
-            return ValidationResult(
-                status=ValidationStatus.VALID,
-                message=f"Domain {domain} is valid and authorized",
-                suggestions=[],
-                is_authorized=True
-            )
-        else:
-            return ValidationResult(
-                status=ValidationStatus.UNAUTHORIZED,
-                message=f"Domain {domain} is not in authorized domains",
-                suggestions=[
-                    "Add the domain to authorized_domains in config",
-                    "Verify you have permission to scan this target"
-                ],
-                is_authorized=False
-            )
+        # Always return authorized
+        return ValidationResult(
+            status=ValidationStatus.VALID,
+            message=f"Domain {domain} is valid and authorized",
+            suggestions=[],
+            is_authorized=True
+        )
     
     def validate_asset(self, asset: AssetModel) -> ValidationResult:
         """

@@ -255,8 +255,7 @@ enable_exploit_adapters: {str(config.enable_exploit_adapters).lower()}
 evidence_storage_path: "{config.evidence_storage_path}"
 
 # Asset Management
-authorized_networks: {config.authorized_networks}
-authorized_domains: {config.authorized_domains}
+# authorized_networks and authorized_domains are no longer enforced
 blocked_targets: {config.blocked_targets}
 
 # Additional Settings
@@ -589,17 +588,9 @@ def init(
     # Jump to chat
     chat()
 
-@app.command()
-@global_exception_handler
-def recon(
-    mode: str = typer.Argument(..., help="Recon mode: passive, active, or lab"),
-    asset: str = typer.Option(None, "--asset", "-a", help="Asset name to scan"),
-    preset: str = typer.Option("default", "--preset", "-p", help="Scan preset to use"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Plan/validate only; do not execute"),
-    adapters: Optional[str] = typer.Option(None, "--adapters", "-A", help="Comma-separated adapter names to execute (active/lab only)")
-):
+def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, adapters: Optional[str], llm_client=None):
     """
-    Run reconnaissance on specified assets.
+    Implementation of recon logic.
     """
     from .orchestrator import create_orchestrator
     from .models import DatabaseManager, AssetModel
@@ -612,13 +603,13 @@ def recon(
         init_db()
     except Exception as e:
         console.print(f"[red]❌ Database initialization failed: {e}[/red]")
-        raise typer.Exit(code=1)
+        return
     
     # Load configuration
     config = load_config()
     
     # Create orchestrator
-    orchestrator = create_orchestrator(config.model_dump())
+    orchestrator = create_orchestrator(config.model_dump(), llm_client=llm_client)
     
     # Get assets
     db_manager = DatabaseManager()
@@ -629,14 +620,14 @@ def recon(
         asset_model = db_manager.get_asset_by_name(asset)
         if not asset_model:
             console.print(f"[red]❌ Asset '{asset}' not found[/red]")
-            raise typer.Exit(code=1)
+            return
         assets = [asset_model]
     else:
         # Get all assets
         assets = db_manager.list_assets()
         if not assets:
             console.print("[red]❌ No assets found. Add assets first using 'agent add-asset'[/red]")
-            raise typer.Exit(code=1)
+            return
     
     # Add assets to orchestrator - THIS IS CRITICAL FOR ACTIVE/LAB MODES
     for asset_model in assets:
@@ -799,7 +790,7 @@ def recon(
         console.print(f"[green]✅ Lab scanning completed with {executed_count} successful steps[/green]")
     else:
         console.print(f"[red]❌ Invalid recon mode: {mode}. Use 'passive', 'active', or 'lab'[/red]")
-        raise typer.Exit(code=1)
+        return
     
     # Generate report with progress
     console.print("[cyan]📊 Generating security assessment report...[/cyan]")
@@ -846,13 +837,21 @@ def recon(
 
 @app.command()
 @global_exception_handler
-def report(
-    asset: str = typer.Option(None, "--asset", "-a", help="Asset name to generate report for"),
-    format: str = typer.Option("json", "--format", "-f", help="Report format (json, markdown, html)"),
-    output: str = typer.Option(None, "--output", "-o", help="Output file path")
+def recon(
+    mode: str = typer.Argument(..., help="Recon mode: passive, active, or lab"),
+    asset: str = typer.Option(None, "--asset", "-a", help="Asset name to scan"),
+    preset: str = typer.Option("default", "--preset", "-p", help="Scan preset to use"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan/validate only; do not execute"),
+    adapters: Optional[str] = typer.Option(None, "--adapters", "-A", help="Comma-separated adapter names to execute (active/lab only)")
 ):
     """
-    Generate security assessment report.
+    Run reconnaissance on specified assets.
+    """
+    _recon_impl(mode, asset, preset, dry_run, adapters)
+
+def _report_impl(asset: Optional[str], format: str, output: Optional[str]):
+    """
+    Implementation of report generation logic.
     """
     from .reporting import create_reporting_manager, ReportFormat
     from .models import DatabaseManager
@@ -865,7 +864,7 @@ def report(
         init_db()
     except Exception as e:
         console.print(f"[red]❌ Database initialization failed: {e}[/red]")
-        raise typer.Exit(code=1)
+        return
     
     # Create reporting manager
     reporting_manager = create_reporting_manager()
@@ -902,17 +901,22 @@ def report(
             
     except Exception as e:
         console.print(f"[red]❌ Report generation failed: {e}[/red]")
-        raise typer.Exit(code=1)
 
 @app.command()
 @global_exception_handler
-def add_asset(
-    name: str = typer.Argument(..., help="Name for the asset"),
-    type: str = typer.Argument(..., help="Type of asset (host, domain, vm)"),
-    value: str = typer.Argument(..., help="IP address, domain name, or VM identifier")
+def report(
+    asset: str = typer.Option(None, "--asset", "-a", help="Asset name to generate report for"),
+    format: str = typer.Option("json", "--format", "-f", help="Report format (json, markdown, html)"),
+    output: str = typer.Option(None, "--output", "-o", help="Output file path")
 ):
     """
-    Add an asset to the database with validation.
+    Generate security assessment report.
+    """
+    _report_impl(asset, format, output)
+
+def _add_asset_impl(name: str, type: str, value: str):
+    """
+    Implementation of add_asset logic.
     """
     console.print(f"[bold blue]➕ Adding asset: {name} ({type}: {value})[/bold blue]")
     
@@ -920,7 +924,7 @@ def add_asset(
     valid_types = ["host", "domain", "vm"]
     if type not in valid_types:
         console.print(f"[red]❌ Invalid asset type. Must be one of: {', '.join(valid_types)}[/red]")
-        raise typer.Exit(code=1)
+        return
     
     # Add asset to database with validation
     try:
@@ -945,7 +949,7 @@ def add_asset(
                 console.print("[yellow]💡 Suggestions:[/yellow]")
                 for suggestion in validation_result.suggestions:
                     console.print(f"   • {suggestion}")
-            raise typer.Exit(code=1)
+            return
         
         console.print(f"[green]✅ {validation_result.message}[/green]")
         
@@ -957,13 +961,22 @@ def add_asset(
         
     except Exception as e:
         console.print(f"[red]❌ Failed to add asset: {e}[/red]")
-        raise typer.Exit(code=1)
 
 @app.command()
 @global_exception_handler
-def list_assets():
+def add_asset(
+    name: str = typer.Argument(..., help="Name for the asset"),
+    type: str = typer.Argument(..., help="Type of asset (host, domain, vm)"),
+    value: str = typer.Argument(..., help="IP address, domain name, or VM identifier")
+):
     """
-    List all assets in the database.
+    Add an asset to the database with validation.
+    """
+    _add_asset_impl(name, type, value)
+
+def _list_assets_impl():
+    """
+    Implementation of list_assets logic.
     """
     console.print("[bold blue]📋 Listing all assets...[/bold blue]")
     
@@ -1001,7 +1014,14 @@ def list_assets():
             
     except Exception as e:
         console.print(f"[red]❌ Failed to list assets: {e}[/red]")
-        raise typer.Exit(code=1)
+
+@app.command()
+@global_exception_handler
+def list_assets():
+    """
+    List all assets in the database.
+    """
+    _list_assets_impl()
 
 @app.command()
 @global_exception_handler
@@ -1168,7 +1188,7 @@ def chat(
 
     # CLI Loop
     async def chat_loop():
-        nonlocal config
+        nonlocal config, llm_client
         while True:
             try:
                 ui.print_status_bar(config.llm_provider, config.llm_model)
@@ -1178,10 +1198,10 @@ def chat(
                 if not user_input.strip():
                     continue
                 
-                if user_input.lower() in ['exit', 'quit', 'q']:
+                if user_input.strip().lower() in ["exit", "quit"]:
                     console.print("[yellow]Goodbye![/yellow]")
                     break
-                
+
                 if user_input.strip().lower() == "config":
                     console.print("[bold yellow]⚙️  Entering Configuration Mode...[/bold yellow]")
                     # Run full wizard (async)
@@ -1201,8 +1221,131 @@ def chat(
                     console.print("[green]Configuration updated! Resuming chat...[/green]")
                     continue
 
-                session_manager.update_session_activity(session_id)
+                # --- Integrated CLI Commands ---
+                import shlex
+                try:
+                    parts = shlex.split(user_input)
+                except ValueError:
+                    parts = user_input.split()
                 
+                cmd = parts[0].lower() if parts else ""
+                
+                if cmd == "add-asset" or (cmd == "add" and len(parts) > 1 and parts[1].lower() == "asset"):
+                    # Syntax: add-asset <name> <type> <value>
+                    # Or: add asset <name> <type> <value>
+                    args = parts[1:] if cmd == "add-asset" else parts[2:]
+                    
+                    # Handle flags if present (simple parsing)
+                    name, type_, value = None, None, None
+                    if "--name" in args:
+                        try:
+                            name_idx = args.index("--name")
+                            name = args[name_idx + 1]
+                            args.pop(name_idx) # remove flag
+                            args.pop(name_idx) # remove value
+                        except: pass
+                    if "--type" in args:
+                        try:
+                            type_idx = args.index("--type")
+                            type_ = args[type_idx + 1]
+                            args.pop(type_idx)
+                            args.pop(type_idx)
+                        except: pass
+                    if "--value" in args:
+                        try:
+                            val_idx = args.index("--value")
+                            value = args[val_idx + 1]
+                            args.pop(val_idx)
+                            args.pop(val_idx)
+                        except: pass
+                    
+                    # Fallback to positional if flags not used
+                    remaining = [a for a in args if not a.startswith("-")]
+                    if not name and len(remaining) > 0: name = remaining[0]
+                    if not type_ and len(remaining) > 1: type_ = remaining[1]
+                    if not value and len(remaining) > 2: value = remaining[2]
+                    
+                    if name and type_ and value:
+                        _add_asset_impl(name, type_, value)
+                        continue
+                    else:
+                        console.print("[red]Usage: add-asset <name> <type> <value> OR add-asset --name <n> --type <t> --value <v>[/red]")
+                        continue
+
+                if cmd == "list-assets" or (cmd == "list" and len(parts) > 1 and parts[1].lower() == "assets"):
+                    _list_assets_impl()
+                    continue
+
+                if cmd == "recon":
+                    # Syntax: recon <mode> [--asset <asset>] [--preset <preset>]
+                    if len(parts) < 2:
+                        console.print("[red]Usage: recon <mode> [options][/red]")
+                        continue
+                    
+                    mode = parts[1]
+                    asset = None
+                    preset = "default"
+                    dry_run = False
+                    adapters = None
+                    
+                    # Simple flag parsing
+                    if "--asset" in parts:
+                        try: asset = parts[parts.index("--asset") + 1]
+                        except: pass
+                    elif "-a" in parts:
+                        try: asset = parts[parts.index("-a") + 1]
+                        except: pass
+                        
+                    if "--preset" in parts:
+                        try: preset = parts[parts.index("--preset") + 1]
+                        except: pass
+                    elif "-p" in parts:
+                        try: preset = parts[parts.index("-p") + 1]
+                        except: pass
+                        
+                    if "--dry-run" in parts:
+                        dry_run = True
+                        
+                    if "--adapters" in parts:
+                        try: adapters = parts[parts.index("--adapters") + 1]
+                        except: pass
+                    elif "-A" in parts:
+                        try: adapters = parts[parts.index("-A") + 1]
+                        except: pass
+                        
+                    _recon_impl(mode, asset, preset, dry_run, adapters, llm_client=llm_client)
+                    continue
+
+                if cmd == "report":
+                    # Syntax: report [--asset <asset>] [--format <fmt>] [--output <out>]
+                    asset = None
+                    fmt = "json"
+                    output = None
+                    
+                    if "--asset" in parts:
+                        try: asset = parts[parts.index("--asset") + 1]
+                        except: pass
+                    elif "-a" in parts:
+                        try: asset = parts[parts.index("-a") + 1]
+                        except: pass
+                        
+                    if "--format" in parts:
+                        try: fmt = parts[parts.index("--format") + 1]
+                        except: pass
+                    elif "-f" in parts:
+                        try: fmt = parts[parts.index("-f") + 1]
+                        except: pass
+                        
+                    if "--output" in parts:
+                        try: output = parts[parts.index("--output") + 1]
+                        except: pass
+                    elif "-o" in parts:
+                        try: output = parts[parts.index("-o") + 1]
+                        except: pass
+                        
+                    _report_impl(asset, fmt, output)
+                    continue
+
                 session_manager.update_session_activity(session_id)
                 
                 # Load history before saving current message to avoid duplication
