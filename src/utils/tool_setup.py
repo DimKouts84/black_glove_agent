@@ -34,7 +34,6 @@ def install_wordlists(force: bool = False) -> bool:
     wordlist_path = wordlist_dir / "common.txt"
     
     if wordlist_path.exists() and not force:
-        console.print(f"[green]✓ Wordlist already exists at {wordlist_path}[/green]")
         return True
         
     console.print(f"[blue]Downloading wordlist from {WORDLIST_URL}...[/blue]")
@@ -62,7 +61,6 @@ def install_gobuster(force: bool = False) -> bool:
     gobuster_exe = gobuster_dir / "gobuster.exe"
     
     if gobuster_exe.exists() and not force:
-        console.print(f"[green]✓ Gobuster is already installed at {gobuster_exe}[/green]")
         return True
 
     console.print(f"[blue]Downloading Gobuster {GOBUSTER_VERSION}...[/blue]")
@@ -134,7 +132,6 @@ def install_nmap(force: bool = False) -> bool:
     nmap_exe = nmap_dir / "nmap.exe"
     
     if nmap_exe.exists() and not force:
-        console.print(f"[green]✓ Nmap is already installed at {nmap_exe}[/green]")
         return True
 
     console.print(f"[blue]Downloading Nmap {NMAP_VERSION} from {NMAP_URL}...[/blue]")
