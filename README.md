@@ -113,6 +113,7 @@ flowchart TD
 - **Plugin System**: Easy to extend with new tools and capabilities
 - **Configuration-Driven**: YAML-based configuration for customization
 - **Audit Logging**: Complete immutable record of all actions
+- **Portable Tooling**: Automatically downloads and configures portable versions of Nmap and Gobuster (Windows support included), simplifying setup.
 
 ### 📊 Comprehensive Testing
 - **Passive Recon**: DNS, subdomain enumeration, technology detection, and historical data gathering
@@ -125,10 +126,11 @@ flowchart TD
 ## 📋 Requirements
 
 - **Python**: 3.8 or higher
-- **Nmap**: Network discovery and security auditing
-- **Gobuster**: Directory/File, DNS and VHost busting tool
 - **LLM Service**: LMStudio, Ollama, or OpenRouter account
 - **Operating System**: Windows, macOS, or Linux
+- **Nmap & Gobuster**: 
+  - **Windows**: Automatically installed as portable binaries by the agent.
+  - **Linux/macOS**: Recommended to install via package manager (e.g., `apt install nmap gobuster`), though the agent can attempt portable setup.
 
 ### Optional (for enhanced OSINT capabilities)
 - **Shodan API Key**: For passive reconnaissance (free tier available)
@@ -183,16 +185,14 @@ flowchart TD
 
 ## 🎮 Basic Usage
 
+![Black Glove Demo](assets/V0_1_demo_gif_mvp.gif)
+
 ### 1. Initialize the Agent
 ```bash
 agent init
 ```
 
-### 2. Interactive Chat (Recommended)
 Start the interactive chat interface for natural language security tasks:
-```bash
-agent chat
-```
 
 Example interactions:
 - "Check my public IP"
@@ -200,7 +200,7 @@ Example interactions:
 - "Check for exposed cameras on 192.168.1.0/24"
 - "What is SSL status for my_domain_here.com?"
 
-### 3. Add Target Assets
+### 2. Add Target Assets
 ```bash
 agent add-asset --name home-router --type host --value 192.168.1.1
 agent add-asset --name personal-website --type domain --value my_domain_here.com
@@ -228,7 +228,6 @@ agent report --asset home-router
 ```
 
 ---
-
 ## 🏗️ Project Structure
 
 ```
@@ -245,7 +244,9 @@ black-glove/
 │   │   ├── models.py   # Data models and validation
 │   │   └── __init__.py # Package initialization
 │   ├── adapters/       # Tool adapters
-│   └── utils/          # Utility functions
+│   └── utils/          # Utility functions (tool_setup.py, etc.)
+├── bin/                # Portable tools (Nmap, Gobuster)
+├── config/             # Configuration templates
 ├── config/             # Configuration templates
 ├── docker/             # Container definitions
 ├── docs/               # Documentation
@@ -377,11 +378,11 @@ The deployment process will:
 
 ## 📚 Documentation
 
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed system architecture
-- [agentic_workflow.md](src/agent/agentic_workflow.md) - Multi-agent workflow documentation
-- [SECURITY.md](docs/SECURITY.md) - Security policies and safety controls
-- [examples/workflows.md](examples/workflows.md) - Example usage workflows
-- [examples/assets.yml](examples/assets.yml) - Sample asset configurations
+- [**System Architecture**](docs/ARCHITECTURE.md) - High-level design and component interaction.
+- [**Agentic Workflow**](src/agent/agentic_workflow.md) - Deep dive into the multi-agent system (Root, Planner, Researcher, Analyst).
+- [**Project Requirements**](docs/project_requirements_plan.md) - Functional and non-functional requirements.
+- [**Development Tasks**](docs/project_tasks.md) - Current roadmap and task tracking.
+- [**Example Workflows**](examples/workflows.md) - Common usage patterns.
 
 ---
 

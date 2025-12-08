@@ -67,7 +67,7 @@ evidence/
 uv.lock
 
 # The folder `data` and subfolders
-data/
+data*
 *config.yaml
-bin/nmap
-bin/gobuster
+bin/nmap/*
+bin/gobuster/gobuster.exe
