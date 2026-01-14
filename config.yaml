@@ -2,12 +2,12 @@
 # Generated on first run - customize as needed
 
 # LLM Settings
-llm_provider: "lmstudio"
-llm_endpoint: "http://localhost:1234/v1"
-llm_model: "qwen2.5-7b"
-llm_temperature: 0.7
+llm_provider: "openrouter"
+llm_endpoint: "https://openrouter.ai/api/v1"
+llm_model: "z-ai/glm-4.7" # "qwen/qwen3-235b-a22b-2507"
+llm_temperature: 0.0
 llm_timeout: 240
-llm_api_key: ""
+llm_api_key: "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"
 
 # Scan Settings
 default_rate_limit: 50

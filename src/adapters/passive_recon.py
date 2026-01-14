@@ -275,6 +275,9 @@ class PassiveReconAdapter(BaseAdapter):
             errors["wayback"] = str(e)
             wb_result = {"snapshots": [], "count": 0}
 
+        # Scan for secrets in found URLs
+        potential_secrets = self._scan_for_secrets(wb_result.get("snapshots", []))
+
         # Determine status
         both_empty = crt_result.get("count", 0) == 0 and wb_result.get("count", 0) == 0
         if errors and not both_empty and (crt_result.get("count", 0) > 0 or wb_result.get("count", 0) > 0):
@@ -290,6 +293,7 @@ class PassiveReconAdapter(BaseAdapter):
             "domain": domain,
             "crt_sh": crt_result,
             "wayback": wb_result,
+            "potential_secrets": potential_secrets,
             "timings": timings,
             "errors": errors,
         }
@@ -464,6 +468,78 @@ class PassiveReconAdapter(BaseAdapter):
             r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9\-]{2,63}$"
         )
         return bool(pattern.match(domain))
+
+    def _scan_for_secrets(self, snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Scan URLs in snapshots for potential secrets (API keys, files).
+        """
+        found = []
+        
+        # 1. File extensions of interest
+        sensitive_exts = {
+            ".env", ".env.local", ".env.development", ".env.production",
+            ".config", ".conf", ".ini",
+            ".bak", ".backup", ".old", ".tmp",
+            ".sql", ".dump", ".db", ".sqlite",
+            ".git", ".git/config", ".gitignore",
+            ".pem", ".crt", ".key", ".cer", ".p12",
+            ".json", ".xml", ".yaml", ".yml",  # Config files often JSON/YAML
+            ".log",
+            "wp-config.php"
+        }
+
+        # 2. Keywords in query parameters or path
+        sensitive_keywords = [
+            "key=", "api_key=", "apikey=", "access_token=", "token=",
+            "secret=", "client_secret=", "auth=", "password=", "passwd=",
+            "pwd=", "private_key=", "aws_access_key_id=", "aws_secret_access_key="
+        ]
+
+        # 3. High-entropy matching (simplified via keywords for now to avoid false positives on hashes)
+        
+        seen_urls = set()
+
+        for snap in snapshots:
+            url = snap.get("url", "")
+            if not url or url in seen_urls:
+                continue
+            
+            seen_urls.add(url)
+            lower_url = url.lower()
+            
+            # Check extensions
+            parsed = parse.urlparse(url)
+            path = parsed.path
+            
+            # Simple extension check: does it end with one of them?
+            # Or is it exactly one of them (e.g. /.env)?
+            ext_match = False
+            for ext in sensitive_exts:
+                if path.endswith(ext):
+                    found.append({
+                        "type": "sensitive_extension",
+                        "match": ext,
+                        "url": url,
+                        "timestamp": snap.get("timestamp")
+                    })
+                    ext_match = True
+                    break
+            
+            if ext_match:
+                continue
+
+            # Check keywords
+            for kw in sensitive_keywords:
+                if kw in lower_url:
+                    found.append({
+                        "type": "sensitive_keyword",
+                        "match": kw,
+                        "url": url,
+                        "timestamp": snap.get("timestamp")
+                    })
+                    break
+                    
+        return found
 
     def get_info(self) -> Dict[str, Any]:
         base_info = super().get_info()
