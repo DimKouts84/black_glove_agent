@@ -69,5 +69,6 @@ uv.lock
 # The folder `data` and subfolders
 data*
 *config.yaml
+config.yaml
 bin/nmap/*
 bin/gobuster/gobuster.exe
