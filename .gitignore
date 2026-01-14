@@ -1,6 +1,7 @@
-# Virtual Environment
+# Virtual Environment & Configuration (config.yaml)
 .venv/
 .env
+config.yaml
 
 # Database files
 *.db
@@ -67,8 +68,6 @@ evidence/
 uv.lock
 
 # The folder `data` and subfolders
-data*
-*config.yaml
-config.yaml
+data/
 bin/nmap/*
 bin/gobuster/gobuster.exe
