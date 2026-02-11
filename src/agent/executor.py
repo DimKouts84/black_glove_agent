@@ -186,6 +186,7 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
         conversation_history = current_history
         
         # 3. Execution Loop
+        intermediate_results = []
         for turn in range(self.max_turns):
             self.logger.info(f"Turn {turn+1}/{self.max_turns}")
             # self._emit("thinking", f"Reasoning (Turn {turn+1})")
@@ -317,8 +318,39 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                 
                 conversation_history.append(LLMMessage(role="user", content=f"Tool Result ({tool_name}): {result_str}"))
 
+                # Track for partial return if we timeout (Issue B fix)
+                intermediate_results.append({
+                    "tool": tool_name,
+                    "result": result_str,
+                    "turn": turn + 1
+                })
+
             except Exception as e:
                 self.logger.error(f"Tool execution error: {e}")
                 conversation_history.append(LLMMessage(role="user", content=f"Error executing {tool_name}: {str(e)}"))
 
-        raise TimeoutError("Max turns exceeded")
+        # Graceful degradation: return what we have instead of losing everything (Issue B fix)
+        self.logger.warning(f"Max turns ({self.max_turns}) exceeded. Returning partial results.")
+        self._emit("warning", f"Max turns exceeded. Returning {len(intermediate_results)} partial results.")
+        
+        if self.definition.output_config:
+            output_name = self.definition.output_config.output_name
+            
+            # Build a partial result summary
+            summary = f"[TIMEOUT] Agent '{self.definition.name}' hit max turns ({self.max_turns}).\n"
+            summary += "Intermediate discoveries:\n"
+            for ir in intermediate_results:
+                summary += f"- Turn {ir['turn']} ({ir['tool']}): {ir['result'][:100].strip()}...\n"
+                
+            # We assume a standard structure for subagent outputs (summary, raw_output, success)
+            # which is common in researcher/analyst/planner.
+            # If the schema is different, we just return the tool_params dictionary with keys we have.
+            return {
+                output_name: {
+                    "summary": summary,
+                    "raw_output": "\n".join([f"--- {ir['tool']} ---\n{ir['result']}" for ir in intermediate_results]),
+                    "success": False
+                }
+            }
+        else:
+            return {"result": "Max turns exceeded", "partial_results": intermediate_results}

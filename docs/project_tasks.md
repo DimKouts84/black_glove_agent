@@ -44,6 +44,12 @@
 | 5.1 | Nmap Adapter | Section 12 example | Implement with 2-layer sanitization and local process execution | Completed ✅ |
 | 5.2 | Gobuster Adapter | Section 12 spec | Create web directory scanning adapter | Completed ✅ |
 | 5.3 | Process Runner | Process execution | Create utility to run tools as local processes | Completed ✅ |
+| 5.4 | OSINT Harvester Adapter | Email/Subdomain discovery | Implement passive scraping adapter (emails, subdomains, metadata) | Completed ✅ |
+| 5.5 | DNS Recon Adapter | Email/Subdomain discovery | Implement passive scraping adapter (emails, subdomains, metadata) | Completed ✅ |
+| 5.6 | Web Server Scanner Adapter | HTTP Security Checks | Nikto-like checks (headers, files, methods) | Completed ✅ |
+| 5.7 | Credential Tester Adapter | Brute-force Testing | SSH/FTP/HTTP credential testing (lab safe) | Completed ✅ |
+| 5.8 | SQL Injection Scanner Adapter | Active Web Scanning | Error-based, boolean-blind, and time-blind SQLi detection | Completed ✅ |
+| 5.9 | Web Vulnerability Scanner Adapter | Active Web Scanning | XSS, LFI, SSTI, and security header analysis | Completed ✅ |
 
 ---
 

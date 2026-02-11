@@ -37,7 +37,16 @@ RESEARCHER_AGENT = AgentDefinition(
             # Asset management
             "asset_manager",
             # Specialized tools
-            "camera_security"
+            "camera_security",
+            # OSINT & reconnaissance
+            "osint_harvester",
+            "dns_recon",
+            # Web vulnerability scanning
+            "web_server_scanner",
+            "sqli_scanner",
+            "web_vuln_scanner",
+            # Credential testing
+            "credential_tester"
         ]
     ),
     prompt_config=AgentPromptConfig(

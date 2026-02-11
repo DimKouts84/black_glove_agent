@@ -65,8 +65,9 @@ class LLMConfig:
     enable_rag: bool = False
     rag_db_path: str = "data/chroma_db"
     conversation_memory_size: int = 10
-    retry_attempts: int = 2
-    retry_backoff_factor: float = 1.0
+    retry_attempts: int = 5
+    retry_backoff_factor: float = 2.0
+
 
 import uuid
 
@@ -813,10 +814,12 @@ def create_llm_client(config=None) -> LLMClient:
             endpoint=getattr(config, 'llm_endpoint', 'http://localhost:1234/v1'),
             model=getattr(config, 'llm_model', 'local-model'),
             temperature=getattr(config, 'llm_temperature', 0.7),
-            timeout=getattr(config, 'llm_timeout', 120),
-            api_key=api_key,
-            enable_rag=True,
-            conversation_memory_size=10
+            timeout=getattr(config, 'llm_timeout', 240),
+            api_key=getattr(config, 'llm_api_key', get_api_key(provider_str)),
+            enable_rag=getattr(config, 'enable_rag', True),
+            conversation_memory_size=getattr(config, 'conversation_memory_size', 10),
+            retry_attempts=getattr(config, 'llm_retry_attempts', 5),
+            retry_backoff_factor=getattr(config, 'llm_retry_backoff_factor', 2.0)
         )
     
     return LLMClient(config)

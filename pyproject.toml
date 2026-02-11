@@ -45,6 +45,7 @@ dependencies = [
     "wappalyzer",
     "shodan",
     "questionary",
+    "paramiko",
 ]
 
 [project.optional-dependencies]

@@ -30,6 +30,7 @@ All skills leverage the `AdapterInterface` to ensure uniform execution, error ha
 | **nmap** | Network Discovery | `src/adapters/nmap.py` | Port scanning, service version detection, OS detection. |
 | **public_ip** | Identity Verification | `src/adapters/public_ip.py` | Detects the agent's public-facing IP address to verify VPN/Proxy status. |
 | **dns_lookup** | DNS Enumeration | `src/adapters/dns_lookup.py` | Retrieves A, AAAA, MX, NS, and TXT records for a domain. |
+| **dns_recon** | Advanced DNS Recon | `src/adapters/dns_recon.py` | Zone transfers, subdomain brute-forcing, and thorough DNS discovery. |
 | **whois** | Registration Info | `src/adapters/whois.py` | Queries registrar data to identify domain ownership details. |
 | **ssl_check** | Certificate Analysis | `src/adapters/ssl_check.py` | Analyzes SSL/TLS certificates for validity, issuer, and expiration. |
 | **viewdns** | Reverse Intelligence | `src/adapters/viewdns.py` | Performs Reverse IP lookups and port scanning via ViewDNS API. |
@@ -41,12 +42,17 @@ All skills leverage the `AdapterInterface` to ensure uniform execution, error ha
 | **gobuster** | Directory Bruteforce | `src/adapters/gobuster.py` | Discovers hidden directories and files (URIs) on a web server. |
 | **wappalyzer** | Tech Stack Detection | `src/adapters/wappalyzer.py` | Identifies technologies used on a website (CMS, Frameworks, Analytics). |
 | **sublist3r** | Subdomain Enum | `src/adapters/sublist3r.py` | Aggregates subdomains from many public sources (Google, Yahoo, Bing, etc.). |
+| **web_server_scanner**| Server Analysis | `src/adapters/web_server_scanner.py` | Nikto-like checks for headers, dangerous files, methods, and versions. |
+| **sqli_scanner** | SQLi Detection | `src/adapters/sqli_scanner.py` | Detects SQL injection vulnerabilities using multiple techniques. |
+| **web_vuln_scanner**| Web Vulnerability | `src/adapters/web_vuln_scanner.py` | Active scanning for XSS, Path Traversal, SSTI, and more. |
 
 ### 3. Specialized Intelligence
 
 | Skill Name | Description | Responsible File | Key Capabilities |
 |------------|-------------|------------------|------------------|
 | **passive_recon** | Deep Passive Intel | `src/adapters/passive_recon.py` | **Enhanced Secret Scanning**: Automatically scans Wayback Machine snapshots for leaked API keys, `.env` files, and credentials. |
+| **osint_harvester** | OSINT Discovery | `src/adapters/osint_harvester.py` | Email harvesting, crt.sh subdomains, and web metadata extraction. |
+| **credential_tester**| Brute-force | `src/adapters/credential_tester.py` | Lab-safe credential testing for SSH, FTP, and HTTP Basic. |
 | **camera_security**| IoT Exposure | `src/adapters/camera_security.py` | Checks for known vulnerabilities or exposures in IP cameras. |
 
 ### 4. Operational Skills

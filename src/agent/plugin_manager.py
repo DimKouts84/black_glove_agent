@@ -324,6 +324,9 @@ class PluginManager:
         """
         self.logger.debug(f"Running adapter {adapter_name} with params: {params}")
         
+        # Normalize parameters for common aliases (Issue A fix)
+        params = self._normalize_params(adapter_name, params)
+        
         # CENTRALIZED POLICY ENFORCEMENT
         if self.policy_engine:
             # 1. Extract target from parameters (try multiple common keys)
@@ -331,7 +334,8 @@ class PluginManager:
                 params.get("target") or 
                 params.get("domain") or 
                 params.get("host") or 
-                params.get("url")
+                params.get("url") or
+                params.get("target_url")
             )
             
             # 2. Validate target if present
@@ -385,7 +389,41 @@ class PluginManager:
         except Exception as e:
             self.logger.error(f"Adapter {adapter_name} execution failed: {e}")
             raise
-    
+
+    def _normalize_params(self, adapter_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize parameters for common aliases (e.g. target -> target_url).
+        Helpful when LLM agents use different naming conventions than adapters.
+        """
+        if not params:
+            return {}
+            
+        normalized = dict(params)
+        
+        # Mapping for adapters that strictly require target_url
+        url_adapters = {"web_vuln_scanner", "sqli_scanner", "web_server_scanner"}
+        
+        if adapter_name in url_adapters and "target_url" not in normalized:
+            # Try to find target from common keys
+            target = (
+                normalized.get("target") or 
+                normalized.get("domain") or 
+                normalized.get("host") or 
+                normalized.get("url")
+            )
+            
+            if target:
+                # Ensure it has a scheme
+                if not target.startswith(("http://", "https://")):
+                    target_url = f"https://{target}"
+                else:
+                    target_url = target
+                
+                normalized["target_url"] = target_url
+                self.logger.debug(f"Normalized '{target}' to target_url: '{target_url}' for {adapter_name}")
+
+        return normalized
+
     def validate_adapter(self, adapter_name: str) -> bool:
         """
         Validate that an adapter properly implements the interface.

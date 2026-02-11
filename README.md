@@ -111,14 +111,14 @@ flowchart TD
 ### 🛠️ Modular Architecture
 - **Tool Adapters**: Standardized interface for security tools (Nmap, Gobuster, ZAP, etc.)
 - **Plugin System**: Easy to extend with new tools and capabilities
-- **Configuration-Driven**: YAML-based configuration for customization
+- **Configuration-Driven**: YAML-based configuration for customization, including tuned **LLM retry logic** for unstable endpoints.
 - **Audit Logging**: Complete immutable record of all actions
 - **Portable Tooling**: Automatically downloads and configures portable versions of Nmap and Gobuster (Windows support included), simplifying setup.
 
 ### 📊 Comprehensive Testing
 - **Passive Recon**: DNS, subdomain enumeration, technology detection, and historical data gathering
-- **OSINT Adapters**: DnsLookup, Sublist3r, Wappalyzer, Shodan (API), ViewDNS (API)
-- **Active Scanning**: Nmap, Gobuster, and external port scanning with human approval workflow
+- **OSINT Adapters**: DnsLookup, Sublist3r, Wappalyzer, Shodan (API), ViewDNS (API), **OSINT Harvester** (emails/docs), **DNS Recon** (zone transfers)
+- **Active Scanning**: Nmap, Gobuster, **Web Server Scanner**, **SQL Injection Scanner**, **Web Vulnerability Scanner**, **Credential Tester** (lab-gated)
 - **Specialized Adapters**: Camera Security Adapter v1.1.0 for IP camera vulnerability assessment
 - **Vulnerability Analysis**: Normalized findings with severity ratings
 - **Reporting**: Markdown and JSON report generation
@@ -286,6 +286,8 @@ llm_provider: "llm_local_or_cloud_provider"  # Options: lmstudio, ollama, openro
 llm_endpoint: "http://localhost:1234/v1"  # Update with your LLM service URL
 llm_model: "local-model"  # The model name here. For small reasoning LLMs we tested `qwen3-4b-thinking-2507` (locally with LM Studio) and it works surprisingly well. 
 llm_temperature: 0.1  # Controls randomness (0.0 = deterministic, 1.0 = creative)
+llm_retry_attempts: 5  # Number of retries for failed API calls
+llm_retry_backoff_factor: 2.0  # Exponential backoff factor (e.g., 2s, 4s, 8s...)
 enable_rag: true  # Enable Retrieval-Augmented Generation with ChromaDB
 rag_db_path: "~/.homepentest/chroma_db"  # Path to ChromaDB vector store
 

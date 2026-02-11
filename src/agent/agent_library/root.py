@@ -33,7 +33,16 @@ ROOT_AGENT = AgentDefinition(
             "camera_security",
             "viewdns",
             "wappalyzer",
-            "sublist3r"
+            "sublist3r",
+            # OSINT & reconnaissance
+            "osint_harvester",
+            "dns_recon",
+            # Web vulnerability scanning
+            "web_server_scanner",
+            "sqli_scanner",
+            "web_vuln_scanner",
+            # Credential testing
+            "credential_tester"
         ]
     ),
     prompt_config=AgentPromptConfig(
@@ -57,6 +66,12 @@ ROOT_AGENT = AgentDefinition(
             - viewdns: Reverse IP and port scan
             - wappalyzer: Detect web technologies
             - sublist3r: Subdomain enumeration
+            - osint_harvester: OSINT subdomain harvesting via crt.sh and metadata extraction
+            - dns_recon: Enhanced DNS recon with zone transfer checks and record enumeration
+            - web_server_scanner: Web server security header and configuration analysis
+            - sqli_scanner: SQL injection vulnerability detection (error-based, boolean-based)
+            - web_vuln_scanner: Web vulnerability scanning (XSS, LFI, directory listing, headers)
+            - credential_tester: Default credential and common password testing
 
             FOR COMPLEX TASKS, delegate to sub-agents (Use these parameters):
             - 'planner_agent': For multi-step attack planning
