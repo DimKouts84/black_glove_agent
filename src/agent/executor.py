@@ -15,7 +15,7 @@ class AgentExecutor:
         agent_definition: AgentDefinition, 
         llm_client: LLMClient, 
         tool_registry: ToolRegistry,
-        max_turns: int = 15,
+        max_turns: int = 30,
         on_activity: Optional[Any] = None
     ):
         self.definition = agent_definition
@@ -329,28 +329,41 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                 self.logger.error(f"Tool execution error: {e}")
                 conversation_history.append(LLMMessage(role="user", content=f"Error executing {tool_name}: {str(e)}"))
 
-        # Graceful degradation: return what we have instead of losing everything (Issue B fix)
-        self.logger.warning(f"Max turns ({self.max_turns}) exceeded. Returning partial results.")
-        self._emit("warning", f"Max turns exceeded. Returning {len(intermediate_results)} partial results.")
+        # Graceful degradation: auto-generate structured report from DB findings
+        self.logger.warning(f"Max turns ({self.max_turns}) exceeded. Auto-generating report.")
+        self._emit("warning", f"Max turns exceeded after {len(intermediate_results)} tool calls. Generating report...")
+        
+        # Try to generate a structured report from whatever findings were saved
+        report_content = None
+        try:
+            from agent.tools.report_tool import ReportTool
+            report_tool = ReportTool()
+            report_content = report_tool.execute({"format": "markdown"})
+        except Exception as e:
+            self.logger.error(f"Auto-report generation failed: {e}")
         
         if self.definition.output_config:
             output_name = self.definition.output_config.output_name
             
-            # Build a partial result summary
-            summary = f"[TIMEOUT] Agent '{self.definition.name}' hit max turns ({self.max_turns}).\n"
-            summary += "Intermediate discoveries:\n"
-            for ir in intermediate_results:
-                summary += f"- Turn {ir['turn']} ({ir['tool']}): {ir['result'][:100].strip()}...\n"
-                
-            # We assume a standard structure for subagent outputs (summary, raw_output, success)
-            # which is common in researcher/analyst/planner.
-            # If the schema is different, we just return the tool_params dictionary with keys we have.
-            return {
-                output_name: {
-                    "summary": summary,
-                    "raw_output": "\n".join([f"--- {ir['tool']} ---\n{ir['result']}" for ir in intermediate_results]),
-                    "success": False
+            if report_content and len(report_content) > 50:
+                # We got a real report from the DB findings
+                return {
+                    output_name: {
+                        "answer": report_content
+                    }
                 }
-            }
+            else:
+                # Fallback: build a partial result summary
+                summary = f"Scan completed {len(intermediate_results)} steps but could not generate a full report.\n\n"
+                summary += "**Tools Executed:**\n"
+                for ir in intermediate_results:
+                    status = "✅" if not ir['result'].startswith('Error') else "❌"
+                    summary += f"- {status} {ir['tool']}\n"
+                
+                return {
+                    output_name: {
+                        "answer": summary
+                    }
+                }
         else:
-            return {"result": "Max turns exceeded", "partial_results": intermediate_results}
+            return {"result": report_content or "Max turns exceeded", "partial_results": intermediate_results}

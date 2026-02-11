@@ -1,0 +1,58 @@
+# {{ report.title }}
+
+**Date:** {{ report.date.strftime('%Y-%m-%d') }}
+**Target:** {{ report.target }}
+
+## Executive Summary
+
+{{ report.executive_summary.overview }}
+
+### Key Findings
+{% for finding in report.executive_summary.key_findings %}
+- **{{ finding.title }}** ({{ finding.severity.value }})
+{% endfor %}
+
+### Risk Score: {{ report.executive_summary.risk_score }}/10
+
+### Recommendations
+{% for rec in report.executive_summary.recommendations %}
+- {{ rec }}
+{% endfor %}
+
+---
+
+## Scanned Assets
+
+| Target | IP Addresses | Tech Stack |
+| :--- | :--- | :--- |
+{% for asset in report.assets %}
+| {{ asset.target }} | {{ asset.ip_addresses | join(', ') }} | {{ asset.tech_stack | join(', ') }} |
+{% endfor %}
+
+---
+
+## Detailed Findings
+
+{% for finding in report.all_findings %}
+### {{ finding.title }}
+
+- **Severity:** {{ finding.severity.value }}
+- **Affected Assets:** {{ finding.affected_assets | join(', ') }}
+
+**Description**
+{{ finding.description }}
+
+{% if finding.remediation %}
+**Remediation**
+{{ finding.remediation }}
+{% endif %}
+
+{% if finding.evidence %}
+**Evidence**
+{% for evidence_item in finding.evidence %}
+- `{{ evidence_item }}`
+{% endfor %}
+{% endif %}
+
+---
+{% endfor %}

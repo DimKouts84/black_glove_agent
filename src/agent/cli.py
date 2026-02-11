@@ -1102,6 +1102,7 @@ def chat(
     # New Imports
     from agent.tools.registry import ToolRegistry
     from agent.tools.adapter_wrapper import AdapterToolWrapper
+    from agent.tools.report_tool import ReportTool
     from agent.subagent_tool import SubagentTool
     from agent.executor import AgentExecutor
     from agent.agent_library.root import ROOT_AGENT
@@ -1152,10 +1153,12 @@ def chat(
     planner_tool = SubagentTool(PLANNER_AGENT, llm_client, master_tool_registry)
     researcher_tool = SubagentTool(RESEARCHER_AGENT, llm_client, master_tool_registry)
     analyst_tool = SubagentTool(ANALYST_AGENT, llm_client, master_tool_registry)
+    report_tool = ReportTool()
     
     master_tool_registry.register(planner_tool)
     master_tool_registry.register(researcher_tool)
     master_tool_registry.register(analyst_tool)
+    master_tool_registry.register(report_tool)
     
     # Callback for CLI rendering
     def on_activity(event):

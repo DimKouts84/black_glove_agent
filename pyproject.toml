@@ -46,6 +46,7 @@ dependencies = [
     "shodan",
     "questionary",
     "paramiko",
+    "jinja2",
 ]
 
 [project.optional-dependencies]

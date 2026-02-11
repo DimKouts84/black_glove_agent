@@ -22,6 +22,7 @@ class SeverityLevel(str, Enum):
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+    INFO = "info"
 
 class EventType(str, Enum):
     """Enumeration of audit log event types."""

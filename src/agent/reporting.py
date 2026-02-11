@@ -411,8 +411,14 @@ class FindingsNormalizer:
                         ports.append(port_info.get("port", 0))
         elif isinstance(output, str):
             # Simple regex extraction
+            # Simple regex extraction for "80/tcp open" or "port 80 open"
             import re
-            port_matches = re.findall(r'port\s+(\d+).*?open', output, re.IGNORECASE)
+            # Match standard nmap output: 80/tcp open
+            port_matches = re.findall(r'(\d+)/(?:tcp|udp)\s+open', output, re.IGNORECASE)
+            # Match alternative output: Port 80 open
+            if not port_matches:
+                port_matches = re.findall(r'port\s+(\d+).*?open', output, re.IGNORECASE)
+            
             ports = [int(p) for p in port_matches]
         return ports
     
@@ -474,7 +480,7 @@ class ReportGenerator:
         if format_type == ReportFormat.JSON:
             return self._generate_json_report(findings, assets, metadata)
         elif format_type == ReportFormat.MARKDOWN:
-            return self._generate_markdown_report(findings, assets, metadata)
+            return self._generate_markdown_report_v2(findings, assets, metadata)
         elif format_type == ReportFormat.HTML:
             return self._generate_html_report(findings, assets, metadata)
         elif format_type == ReportFormat.CSV:
@@ -759,6 +765,97 @@ class ReportGenerator:
             severity = finding.severity.value
             counts[severity] = counts.get(severity, 0) + 1
         return counts
+
+    def _generate_markdown_report_v2(self, findings: List[Finding], assets: List[AssetModel], 
+                                   metadata: Dict[str, Any]) -> str:
+        """
+        Generate Markdown report using Jinja2 template and Pydantic models.
+        This is the new "thin/structured" format.
+        """
+        from .report_models import (
+            FullReport, ExecutiveSummary, AssetReport, 
+            Finding as ReportFinding, Severity as ReportSeverity
+        )
+        from jinja2 import Environment, FileSystemLoader
+        
+        # 1. Map Internal Findings -> Report Findings
+        report_findings = []
+        for f in findings:
+            severity_map = {
+                "critical": ReportSeverity.CRITICAL,
+                "high": ReportSeverity.HIGH,
+                "medium": ReportSeverity.MEDIUM,
+                "low": ReportSeverity.LOW,
+                "info": ReportSeverity.INFO
+            }
+            
+            report_findings.append(ReportFinding(
+                title=f.title,
+                severity=severity_map.get(f.severity.value, ReportSeverity.INFO),
+                description=f.description,
+                remediation=f.recommended_fix,
+                evidence=[f.evidence_path] if f.evidence_path else [],
+                affected_assets=[f.asset_name]
+            ))
+            
+        # 2. Map Assets -> Asset Reports
+        asset_reports = []
+        for asset in assets:
+            # Find findings for this asset
+            asset_specific_findings = [
+                rf for rf in report_findings 
+                if asset.name in rf.affected_assets
+            ]
+            
+            asset_reports.append(AssetReport(
+                target=asset.name,
+                ip_addresses=[asset.value] if asset.type.value == "host" else [],
+                findings=asset_specific_findings
+                # tech_stack and open_ports would be populated from refined asset data if available
+            ))
+
+        # 3. Create Executive Summary
+        severity_counts = self._count_findings_by_severity(findings)
+        risk_score = 10.0
+        if severity_counts.get("critical", 0) > 0:
+            risk_score = 2.0
+        elif severity_counts.get("high", 0) > 0:
+            risk_score = 4.0
+        elif severity_counts.get("medium", 0) > 0:
+            risk_score = 6.0
+        elif severity_counts.get("low", 0) > 0:
+            risk_score = 8.0
+            
+        # Get top 5 critical/high findings for summary
+        key_findings = sorted(
+            [f for f in report_findings if f.severity in [ReportSeverity.CRITICAL, ReportSeverity.HIGH]],
+            key=lambda x: x.severity.value
+        )[:5]
+
+        exec_summary = ExecutiveSummary(
+            overview=f"Security assessment conducted on {len(assets)} assets. Found {len(findings)} issues.",
+            risk_score=risk_score,
+            key_findings=key_findings,
+            recommendations=[
+                "Remediate critical vulnerabilities immediately.",
+                "Review high severity findings within 48 hours."
+            ]
+        )
+
+        # 4. Build Full Report Model
+        full_report = FullReport(
+            target=assets[0].name if assets else "Unknown Target",
+            executive_summary=exec_summary,
+            assets=asset_reports,
+            all_findings=report_findings
+        )
+        
+        # 5. Render Template
+        template_dir = Path(__file__).parent / "templates"
+        env = Environment(loader=FileSystemLoader(str(template_dir)))
+        template = env.get_template("professional_report.md.j2")
+        
+        return template.render(report=full_report)
 
 
 class ReportingManager:
