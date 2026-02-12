@@ -3,6 +3,7 @@
 .env
 config.yaml
 
+
 # Database files
 *.db
 

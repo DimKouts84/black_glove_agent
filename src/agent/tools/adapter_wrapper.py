@@ -61,6 +61,23 @@ class AdapterToolWrapper:
             except Exception:
                 # Don't fail the tool execution just because reporting failed
                 pass
+            
+            # Add interpretation to the result data
+            try:
+                # Load adapter instance (cached) to access interpret_result
+                adapter_instance = self.plugin_manager.load_adapter(self.name)
+                if hasattr(adapter_instance, 'interpret_result'):
+                    interpretation = adapter_instance.interpret_result(result)
+                    
+                    if isinstance(result.data, dict):
+                        # Inject into the dictionary
+                        result.data['interpretation'] = interpretation
+                    # If it's not a dict, we pass it as is, and the interpretation is lost 
+                    # (unless we change return type, but we want to fail open)
+            except Exception as e:
+                # Log but don't fail execution
+                # self.plugin_manager.logger.warning(f"Failed to interpret result for {self.name}: {e}")
+                pass
 
             return result.data
         else:

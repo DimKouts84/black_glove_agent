@@ -86,6 +86,30 @@ class SQLiScannerAdapter(BaseAdapter):
 			"Mozilla/5.0 (compatible; BlackGloveScanner/1.0; +https://github.com/black-glove)"
 		)
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"SQLi scan failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No SQLi scan data."
+            
+        vulns = data.get("vulnerabilities", [])
+        scanned_count = len(data.get("scanned_params", []))
+        
+        if not vulns:
+            return f"SQLi Scanner checked {scanned_count} parameters and found NO vulnerabilities."
+            
+        summary = f"SQLi Scanner FOUND {len(vulns)} vulnerabilities (checked {scanned_count} params):\n"
+        for v in vulns:
+            url = v.get("url", "")
+            param = v.get("parameter", "")
+            payload = v.get("payload", "")
+            type_ = v.get("type", "unknown")
+            summary += f"  - [CRITICAL] {type_} in parameter '{param}' at {url}\n    Payload: {payload}\n"
+            
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         return {
             "name": self.name,

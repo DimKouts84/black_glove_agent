@@ -254,6 +254,50 @@ class SslCheckAdapter(BaseAdapter):
                 error_message=str(e)
             )
     
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"SSL check failed: {result.error_message}"
+            
+        data = result.data
+        if not data:
+            return "No SSL data retrieved."
+            
+        # Data structure from _get_cert_info:
+        # { "subject": ..., "issuer": ..., "version": ..., "serialNumber": ..., "notBefore": ..., "notAfter": ..., "subjectAltName": ... }
+        # Or error dict.
+        
+        if "error" in data:
+            return f"SSL Check Error: {data['error']}"
+            
+        subject = data.get("subject", {})
+        common_name = subject.get("commonName", "unknown")
+        
+        issuer = data.get("issuer", {})
+        issuer_name = issuer.get("commonName", "unknown")
+        
+        expiry = data.get("not_after", "unknown")
+        # The adapter now adds 'is_expired' and 'is_not_yet_valid'
+        is_expired = data.get("is_expired", False)
+        is_not_yet_valid = data.get("is_not_yet_valid", False)
+        
+        san = data.get("subject_alt_names", [])
+        # SANs are a list of tuples like [('DNS', 'example.com')]
+        san_str = ", ".join([x[1] for x in san if isinstance(x, tuple) and len(x) > 1]) if san else "None"
+        
+        summary = f"SSL Certificate for {common_name}:\n"
+        summary += f"  - Issuer: {issuer_name}\n"
+        summary += f"  - Expires: {expiry}\n"
+        summary += f"  - SANs: {san_str}\n"
+        
+        if is_expired:
+            summary += "  - Status: EXPIRED\n"
+        elif is_not_yet_valid:
+            summary += "  - Status: NOT YET VALID\n"
+        else:
+            summary += "  - Status: Valid\n"
+        
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         """
         Get adapter information.

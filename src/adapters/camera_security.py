@@ -483,6 +483,49 @@ class CameraSecurityAdapter(BaseAdapter):
         
         return findings
     
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Camera security scan failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No Camera security data."
+            
+        target = data.get("target", "unknown")
+        open_ports = data.get("open_ports", [])
+        findings = data.get("findings", [])
+        vuln_detected = data.get("vulnerabilities_detected", False)
+        
+        summary = f"Camera Security Scan for {target}:\n"
+        
+        if open_ports:
+            summary += f"- Open RTSP/Camera Ports: {', '.join(map(str, open_ports))}\n"
+        else:
+            summary += "- No common camera ports open.\n"
+            
+        if findings:
+            summary += f"- Findings ({len(findings)}):\n"
+            for f in findings:
+                # findings are dicts: {'type': '...', 'description': '...', 'severity': '...'}
+                sev = f.get("severity", "INFO").upper()
+                desc = f.get("description", "")
+                summary += f"  - [{sev}] {desc}\n"
+        else:
+            summary += "- No specific vulnerability findings.\n"
+            
+        if vuln_detected:
+            summary += "\n[CRITICAL] Vulnerable camera configuration detected!"
+        else:
+            summary += "\nNo critical camera vulnerabilities detected."
+            
+        return summary
+
+    def cleanup(self) -> None:
+        """
+        Clean up resources after execution.
+        """
+        pass
+    
     def get_info(self) -> Dict[str, Any]:
         """
         Get adapter information.

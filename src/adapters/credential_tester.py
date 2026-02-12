@@ -134,7 +134,34 @@ class CredentialTesterAdapter(BaseAdapter):
             )
             # 200 OK or 401/403 are the indicators
             if resp.status_code < 400:
+                # Check if this was actually an auth success or just a pubic page
+                # If we sent auth headers and got 200, we need to be careful.
+                # Real basic auth usually returns 401 if no creds, and 200 if creds are good.
+                # But a public page returns 200 regardless of creds.
+                # So, we should only consider it a success if we previously confirmed it requires auth 
+                # OR if the response varies based on auth. 
+                # For this simple scanner, we'll assume the user is testing a known auth endpoint.
+                # HOWEVER, to fix the reported bug: we can check if the 401 challenge exists on a dummy request.
+                # But since we are inside the brute loop, we can't easily check that without overhead.
+                
+                # Better approach for this specific bugreport:
+                # If the response is 200, check if it looks like a login page or if we are authenticated.
+                # For HTTP Basic, the browser/client handles the 401 -> 200 flow.
+                # If requests.get() returns 200 with auth=(u,p), it means:
+                # 1. Auth succeeded
+                # 2. OR Auth was ignored (public page)
+                
+                # To distinguish, we should check if a request WITHOUT creds returns 401.
+                # But doing that for every check is slow.
+                # Let's assume the target IS protected. 
+                # The issue was: site returns 200 OK for everything.
+                
+                # Fix: Check for WWW-Authenticate header in 401 response? No, we have a 200 here.
+                # Fix: In the _execute_impl, we should first verify the target actually requires Basic Auth.
+                # But to fix THIS method:
                 return True
+            elif resp.status_code == 401:
+                return False
             return False
         except Exception as e:
             logger.debug(f"HTTP error {url} - {e}")
@@ -179,6 +206,36 @@ class CredentialTesterAdapter(BaseAdapter):
         test_fn = fn_map[protocol]
 
         # Use ThreadPoolExecutor
+        
+        # Pre-check for HTTP Basic
+        if protocol == "http_basic":
+            try:
+                # Construct URL same as in _test_http_basic
+                test_url = target
+                if not test_url.startswith(("http://", "https://")):
+                    scheme = "https" if port == 443 else "http"
+                    test_url = f"{scheme}://{target}:{port}"
+                    
+                logger.info(f"Verifying {test_url} requires authentication...")
+                # Request WITHOUT auth
+                resp = requests.get(test_url, timeout=self._global_timeout, verify=False)
+                if resp.status_code < 400:
+                    logger.warning(f"Target {test_url} returns {resp.status_code} without authentication. Skipping brute force.")
+                    return AdapterResult(
+                        status=AdapterResultStatus.SUCCESS,
+                        data={
+                            "target": target,
+                            "port": port,
+                            "protocol": protocol,
+                            "valid_credentials": [],
+                            "attempts": 0,
+                            "note": "Target does not require authentication (returned successful status code without credentials)."
+                        },
+                        metadata={}
+                    )
+            except Exception as e:
+                logger.warning(f"Pre-check failed for {target}: {e}. Proceeding with brute force anyway.")
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             future_to_cred = {}
             for user, password in combinations:
@@ -212,6 +269,22 @@ class CredentialTesterAdapter(BaseAdapter):
             },
             metadata={}
         )
+
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Credential testing failed: {result.error_message}"
+            
+        data = result.data
+        valid_creds = data.get("valid_credentials", [])
+        protocol = data.get("protocol")
+        target = data.get("target")
+        attempts = data.get("attempts", 0)
+        
+        if not valid_creds:
+            return f"Credential Tester: No valid credentials found for {protocol} on {target} after {attempts} attempts."
+            
+        creds_str = "\n".join([f"  - {cred['username']}:{cred['password']}" for cred in valid_creds])
+        return f"Credential Tester: FOUND VALID CREDENTIALS for {protocol} on {target}:\n{creds_str}"
 
     def get_info(self) -> Dict[str, Any]:
         return {

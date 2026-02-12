@@ -541,6 +541,48 @@ class PassiveReconAdapter(BaseAdapter):
                     
         return found
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Passive Recon failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No Passive Recon data."
+            
+        crt_sh = data.get("crt_sh", [])
+        wayback = data.get("wayback", [])
+        secrets = data.get("potential_secrets", [])
+        
+        summary = f"Passive Reconnaissance Findings:\n"
+        
+        # CRT.sh summary
+        subdomains = set()
+        for item in crt_sh:
+             # crt.sh items are usually dicts with 'name_value'
+             if isinstance(item, dict):
+                 name = item.get("name_value", "")
+                 if name:
+                     for sub in name.split('\n'):
+                         subdomains.add(sub.strip())
+        
+        summary += f"- Found {len(crt_sh)} certificates containing {len(subdomains)} unique subdomains.\n"
+        if len(subdomains) > 0:
+            picked = list(subdomains)[:10]
+            summary += f"  Sample: {', '.join(picked)}\n"
+            
+        # Wayback summary
+        summary += f"- Found {len(wayback)} historical URLs via Wayback Machine.\n"
+        
+        # Secrets summary
+        if secrets:
+            summary += f"- [CRITICAL] Found {len(secrets)} potential secrets in historical data!\n"
+            for s in secrets[:5]:
+                summary += f"  - {s.get('type')}: {s.get('match')[:50]}...\n"
+        else:
+            summary += "- No potential secrets found in public data.\n"
+            
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         base_info = super().get_info()
         base_info.update(

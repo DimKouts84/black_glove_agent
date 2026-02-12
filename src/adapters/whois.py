@@ -145,6 +145,41 @@ class WhoisAdapter(BaseAdapter):
                 error_message=str(e)
             )
     
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Whois lookup failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No Whois data."
+            
+        domain = data.get("domain_name")
+        registrar = data.get("registrar")
+        creation_date = data.get("creation_date")
+        expiration_date = data.get("expiration_date")
+        emails = data.get("emails")
+        
+        # Handle lists for dates/emails (whois sometimes returns lists)
+        if isinstance(domain, list): domain = domain[0]
+        if isinstance(registrar, list): registrar = registrar[0]
+        
+        def fmt_date(d):
+            if isinstance(d, list): return str(d[0])
+            return str(d)
+            
+        summary = f"Whois Registration Info for {domain}:\n"
+        summary += f"- Registrar: {registrar}\n"
+        summary += f"- Created: {fmt_date(creation_date)}\n"
+        summary += f"- Expires: {fmt_date(expiration_date)}\n"
+        
+        if emails:
+            if isinstance(emails, list):
+                summary += f"- Emails: {', '.join(emails[:3])}\n"
+            else:
+                summary += f"- Email: {emails}\n"
+                
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         """
         Get adapter information.

@@ -190,6 +190,46 @@ class DnsLookupAdapter(BaseAdapter):
                 error_message=str(e)
             )
     
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"DNS lookup failed: {result.error_message}"
+        
+        data = result.data
+        if not data or not data.get("records"):
+            return "No DNS data."
+            
+        summary = f"DNS Records for {data.get('domain', 'N/A')}:\n"
+        total_records_found = 0
+        
+        for rtype, rtype_data in data["records"].items():
+            records = rtype_data.get("records", [])
+            count = rtype_data.get("count", 0)
+            error = rtype_data.get("error")
+
+            if records:
+                total_records_found += count
+                summary += f"- {rtype} ({count} records):\n"
+                # Show first few
+                for r in records[:5]:
+                    summary += f"  {r}\n"
+                if count > 5:
+                    summary += f"  ... ({count-5} more)\n"
+            elif error:
+                summary += f"- {rtype}: {error}\n"
+            else:
+                summary += f"- {rtype}: No records found\n"
+        
+        if total_records_found == 0:
+            return f"DNS lookup completed for {data.get('domain', 'N/A')} but found no records."
+            
+        return summary
+
+    def cleanup(self) -> None:
+        """
+        Perform any necessary cleanup after adapter execution.
+        """
+        pass
+
     def get_info(self) -> Dict[str, Any]:
         """
         Get adapter information.

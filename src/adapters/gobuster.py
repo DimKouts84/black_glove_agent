@@ -312,8 +312,47 @@ class GobusterAdapter(BaseAdapter):
                             "data": m2.group("data"),
                         }
                     )
-
         return result
+
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Gobuster scan failed: {result.error_message}"
+            
+        data = result.data
+        if not data or not isinstance(data, dict) or "entries" not in data:
+            return "Gobuster found no results."
+            
+        findings = data.get("entries", [])
+        mode = data.get("mode")
+        
+        if not findings:
+            return "Gobuster completed but found no entries."
+            
+        if mode == "dir":
+            summary = f"Gobuster directory scan found {len(findings)} paths:\n"
+            for f in findings[:20]: # Limit to top 20 to avoid flooding
+                path = f.get("path", "")
+                status = f.get("status", "")
+                summary += f"  - {path} (Status: {status})\n"
+            if len(findings) > 20:
+                summary += f"  ... and {len(findings) - 20} more."
+            return summary
+            
+        elif mode == "dns":
+            summary = f"Gobuster DNS scan found {len(findings)} subdomains:\n"
+            for f in findings[:20]:
+                host = f.get("host", "")
+                # DNS entries can have 'data' (IP) or just 'host'
+                ip_data = f.get("data", "")
+                if ip_data:
+                    summary += f"  - {host} -> {ip_data}\n"
+                else:
+                    summary += f"  - {host}\n"
+            if len(findings) > 20:
+                summary += f"  ... and {len(findings) - 20} more."
+            return summary
+            
+        return f"Gobuster found {len(findings)} items in {mode} mode."
 
     # ---- Info ----
 

@@ -53,6 +53,33 @@ class WebVulnScannerAdapter(BaseAdapter):
         if not parsed.scheme or not parsed.netloc:
             raise ValueError("Invalid target_url format")
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Web Vuln scan failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No Web Vuln scan data."
+            
+        vulns = data.get("vulnerabilities", [])
+        scanned_count = len(data.get("scanned_params", []))
+        
+        if not vulns:
+            return f"Web Vuln Scanner checked {scanned_count} parameters and found NO vulnerabilities."
+            
+        summary = f"Web Vuln Scanner FOUND {len(vulns)} vulnerabilities (checked {scanned_count} params):\n"
+        for v in vulns:
+            type_ = v.get("type", "unknown")
+            url = v.get("url", "")
+            param = v.get("parameter", "")
+            payload = v.get("payload", "")
+            
+            summary += f"  - [{type_}] in parameter '{param}' at {url}\n"
+            if payload:
+                 summary += f"    Payload: {payload}\n"
+            
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         return {
             "name": self.name,

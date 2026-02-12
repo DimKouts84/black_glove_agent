@@ -219,6 +219,22 @@ class BaseAdapter(AdapterInterface):
         
         return str(evidence_path)
     
+    def interpret_result(self, result: AdapterResult) -> str:
+        """
+        Interpret the result data into a human-readable summary.
+        
+        Args:
+            result: The AdapterResult object containing data and status
+            
+        Returns:
+            str: A human-readable summary of the findings
+        """
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Tool execution failed: {result.error_message}"
+            
+        # Default implementation for adapters that haven't overridden this yet
+        return f"Tool execution successful. Data: {str(result.data)[:500]}..."
+
     @property
     def last_execution_time(self) -> Optional[float]:
         """

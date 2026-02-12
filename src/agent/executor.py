@@ -310,6 +310,20 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
 
                 # Add result to history
                 result_str = str(result)
+                
+                # Check for interpretation in the result (added by AdapterToolWrapper)
+                if isinstance(result, dict) and "interpretation" in result:
+                    interpretation = result["interpretation"]
+                    # Format nicely for the LLM
+                    # We remove interpretation from the raw representation to save tokens/avoid duplication
+                    # strict=False allows making a copy or just display logic
+                    
+                    # Create a display copy without interpretation for the "Raw Data" section
+                    display_data = result.copy()
+                    display_data.pop("interpretation", None)
+                    
+                    result_str = f"INTERPRETATION:\n{interpretation}\n\nRAW DATA:\n{str(display_data)}"
+
                 self._emit("tool_result", "Tool execution completed") 
                 
                 # Truncate if too long

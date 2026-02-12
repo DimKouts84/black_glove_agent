@@ -75,6 +75,12 @@ ROOT_AGENT = AgentDefinition(
             - credential_tester: Default credential and common password testing (params: target_url)
             - generate_report: Generate a structured security assessment report from all findings (params: format="markdown")
 
+            TOOL OUTPUT INTERPRETATION:
+            - Tools now provide an "INTERPRETATION" field in their output.
+            - ALWAYS prioritize this interpretation over raw data when summarizing results.
+            - The interpretation is human-readable and trusted.
+            - If "INTERPRETATION" says "No valid credentials found", report that exactly. Do not hallucinate based on raw HTTP codes.
+
             ASSET MANAGEMENT (asset_manager):
             - Valid types: "host", "domain", "vm" (ONLY these three)
             - Required params for add: command="add", name="<name>", type="<host|domain|vm>", value="<ip_or_domain>"

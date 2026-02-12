@@ -96,6 +96,40 @@ class WappalyzerAdapter(BaseAdapter):
                 error_message=str(e)
             )
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Wappalyzer scan failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No Wappalyzer data."
+            
+        techs = data.get("technologies", [])
+        target = data.get("url", "unknown") # Use 'url' from data, not 'target'
+        
+        if not techs:
+            return f"Wappalyzer detected NO technologies on {target}."
+            
+        summary = f"Wappalyzer detected {len(techs)} technologies on {target}:\n"
+        
+        # techs is a list of dictionaries, as formatted in _execute_impl
+        for tech in techs:
+            name = tech.get("name", "Unknown")
+            version = tech.get("version")
+            confidence = tech.get("confidence", 0)
+            categories = tech.get("categories", [])
+            
+            tech_summary = f"  - {name}"
+            if version:
+                tech_summary += f" (v{version})"
+            if categories:
+                tech_summary += f" [{', '.join(categories)}]"
+            if confidence and confidence > 0:
+                tech_summary += f" (Confidence: {confidence}%)"
+            summary += tech_summary + "\n"
+        
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         base_info = super().get_info()
         base_info.update({

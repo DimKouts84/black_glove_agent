@@ -162,6 +162,30 @@ class PublicIpAdapter(BaseAdapter):
         
         return None
     
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Public IP check failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No Public IP data."
+            
+        ipv4 = data.get("ipv4")
+        ipv6 = data.get("ipv6")
+        
+        summary = "Public IP Scan Results:\n"
+        if ipv4:
+            summary += f"- IPv4: {ipv4}\n"
+        else:
+            summary += "- IPv4: Not detected\n"
+            
+        if ipv6:
+            summary += f"- IPv6: {ipv6}\n"
+        else:
+            summary += "- IPv6: Not detected\n"
+            
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         """Get adapter information."""
         base_info = super().get_info()

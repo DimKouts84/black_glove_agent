@@ -115,6 +115,38 @@ class ViewDnsAdapter(BaseAdapter):
                 error_message=str(e)
             )
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"ViewDNS scan failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No ViewDNS data."
+            
+        open_ports = data.get("open_ports", [])
+        target = data.get("host", "unknown") # Changed from 'target' to 'host' to match _execute_impl's data structure
+        
+        if not open_ports:
+            return f"ViewDNS found NO open ports on {target}."
+            
+        summary = f"ViewDNS found {len(open_ports)} open ports on {target}:\n"
+        
+        # port entries are usually dicts from ViewDNS API?
+        # My previous view of viewdns.py showed it returns a list of ports (dicts or ints?)
+        # Let's assume common ViewDNS return format or my adapter's normalization.
+        # If I can't be sure, I'll print raw.
+        # But generally it's a list of dicts like {'port': '80', 'service': 'http'}
+        
+        for p in open_ports:
+            if isinstance(p, dict):
+                port = p.get("port", "?")
+                service = p.get("service", "unknown")
+                summary += f"  - Port {port}/tcp: {service}\n"
+            else:
+                summary += f"  - Port {p}\n"
+                
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         base_info = super().get_info()
         base_info.update({

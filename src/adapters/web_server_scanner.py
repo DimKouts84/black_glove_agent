@@ -413,6 +413,51 @@ class WebServerScannerAdapter(BaseAdapter):
 
     # -- info ---------------------------------------------------------------
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Web Server scan failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No Web Server scan data."
+            
+        target = data.get("target", "unknown")
+        findings = data.get("findings", [])
+        summary_stats = data.get("summary", {})
+        severity_counts = summary_stats.get("severity_counts", {})
+        
+        high = severity_counts.get("HIGH", 0)
+        medium = severity_counts.get("MEDIUM", 0)
+        low = severity_counts.get("LOW", 0)
+        info = severity_counts.get("INFO", 0)
+        
+        header = f"Web Server Scan for {target}:\n"
+        header += f"Risk Summary: {high} High, {medium} Medium, {low} Low, {info} Info\n"
+        
+        if not findings:
+            return header + "No specific findings reported."
+            
+        details = ""
+        # Group by severity
+        findings_by_sev = {"HIGH": [], "MEDIUM": [], "LOW": [], "INFO": []}
+        
+        for f in findings:
+            sev = f.get("severity", "INFO").upper()
+            if sev not in findings_by_sev: sev = "INFO"
+            findings_by_sev[sev].append(f)
+            
+        for sev in ["HIGH", "MEDIUM", "LOW", "INFO"]:
+            items = findings_by_sev[sev]
+            if items:
+                details += f"\n[{sev}] Findings:\n"
+                for item in items:
+                    cat = item.get("category", "")
+                    title = item.get("title", "")
+                    desc = item.get("detail", "")
+                    details += f"  - {title}: {desc}\n"
+                    
+        return header + details
+
     def get_info(self) -> Dict[str, Any]:
         return {
             "name": self.name,

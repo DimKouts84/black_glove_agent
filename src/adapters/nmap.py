@@ -363,6 +363,61 @@ class NmapAdapter(BaseAdapter):
         result["summary"]["open_ports"] = open_ports_total
         return result
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Nmap scan failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "Nmap scan returned no data."
+            
+        hosts_up = 0
+        total_open_ports = 0
+        summary_lines = []
+        
+        # The _parse_xml method returns a dictionary with 'hosts' and 'summary' keys.
+        hosts = data.get("hosts", [])
+        
+        for host in hosts:
+            if not isinstance(host, dict): continue
+            
+            addr = host.get("address", "unknown")
+            # The _parse_xml method does not return 'hostnames' as a list directly in the host dict,
+            # but rather a single 'hostname' string. Let's adapt.
+            hostname = host.get("hostname")
+            hostname_str = f" ({hostname})" if hostname else ""
+            
+            ports = host.get("ports", [])
+            open_ports = [p for p in ports if p.get("state") == "open"]
+            
+            if open_ports:
+                hosts_up += 1
+                total_open_ports += len(open_ports)
+                summary_lines.append(f"Host: {addr}{hostname_str}")
+                for p in open_ports:
+                    port_id = p.get("port") # Changed from 'portid' to 'port' based on _parse_xml output
+                    service = p.get("service", "unknown") # Changed from p.get("service", {}).get("name", "unknown")
+                    # _parse_xml does not extract product/version, so simplify service_desc
+                    
+                    service_desc = f"{service}"
+                    
+                    summary_lines.append(f"  - Port {port_id}/tcp: {service_desc}")
+            else:
+                # Host up but no open ports?
+                if host.get("state") == "up": # Changed from host.get("status") to host.get("state")
+                    hosts_up += 1
+                    summary_lines.append(f"Host: {addr}{hostname_str} is UP but no open ports found.")
+        
+        if not summary_lines:
+             # Check for overall summary from _parse_xml
+             summary = data.get("summary", {})
+             if summary.get("up", 0) > 0 and summary.get("open_ports", 0) == 0:
+                 return f"Nmap completed. {summary['up']} hosts were up, but no open ports were found."
+             return "Nmap completed but found no live hosts or open ports."
+             
+        header = f"Nmap Scan Results: {hosts_up} hosts up, {total_open_ports} open ports."
+        return header + "\n" + "\n".join(summary_lines)
+
     # ---- Info ----
 
     def get_info(self) -> Dict[str, Any]:

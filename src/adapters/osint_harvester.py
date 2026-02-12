@@ -564,6 +564,32 @@ class OSINTHarvesterAdapter(BaseAdapter):
                 return True
         return False
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"OSINT Harvester failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No OSINT data."
+            
+        # Use existing summary if available
+        if "summary" in data:
+            s = data["summary"] # It's a dict according to _execute_impl
+            # { "emails": count, "subdomains": count, "metadata": count }
+            
+            emails_count = s.get("emails", 0)
+            subdomains_count = s.get("subdomains", 0)
+            metadata_count = s.get("metadata", 0)
+            
+            return f"OSINT Harvester: Found {emails_count} emails, {subdomains_count} subdomains, and {metadata_count} metadata items."
+            
+        # Fallback manual counting
+        emails = len(data.get("emails", []))
+        subdomains = len(data.get("subdomains", []))
+        metadata = len(data.get("metadata", []))
+        
+        return f"OSINT Harvester: Found {emails} emails, {subdomains} subdomains, and {metadata} metadata items."
+
     def get_info(self) -> Dict[str, Any]:
         base_info = super().get_info()
         base_info.update(

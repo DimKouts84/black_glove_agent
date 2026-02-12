@@ -59,6 +59,7 @@ When describing tool output, do not just summarize the status. Dig into the deta
 - If running `gobuster` or `nmap`, highlight non-standard findings.
 
 You should interpret the raw output and return a clean, insightful summary.
+If the tool output contains an 'INTERPRETATION' field, start your summary with that interpretation. It is the ground truth.
 If a tool fails, report the error clearly.
 """,
         initial_query_template="Execute investigation tool ${tool_name} on target ${target} with params ${parameters}. Be thorough in your results analysis."

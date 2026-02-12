@@ -281,9 +281,15 @@ class FindingsNormalizer:
                 findings.extend(self._normalize_vulnerability_scan_output(tool_output, asset, evidence_metadata))
             else:
                 # Generic finding for unknown tools
+                description = f"Scan results from {tool_name} on {asset.value}"
+                
+                # Use standard interpretation if available
+                if isinstance(tool_output, dict) and "interpretation" in tool_output:
+                    description = tool_output["interpretation"]
+                    
                 finding = Finding(
                     title=f"{tool_name} scan completed on {asset.name}",
-                    description=f"Scan results from {tool_name} on {asset.value}",
+                    description=description,
                     severity=SeverityLevel.MEDIUM,
                     confidence=0.9,
                     asset_id=asset.id,

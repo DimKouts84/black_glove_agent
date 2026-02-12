@@ -41,6 +41,9 @@ CRITICAL INSTRUCTIONS:
 
 Rate severity accurately (Low, Medium, High, Critical).
 Provide specific, actionable remediation steps (e.g. "Revoke API key immediately", "Remove .env file from public webroot").
+
+DATA INTERPRETATION:
+- Prioritize the 'INTERPRETATION' field in the raw data if present. It provides a verified summary of findings.
 """,
         initial_query_template="Analyze the following security data for vulnerabilities: ${raw_data}\nContext: ${context}. Flag any leaked secrets as CRITICAL."
     )

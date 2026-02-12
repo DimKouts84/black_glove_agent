@@ -121,6 +121,31 @@ class Sublist3rAdapter(BaseAdapter):
                 error_message=str(e)
             )
 
+    def interpret_result(self, result: AdapterResult) -> str:
+        if result.status != AdapterResultStatus.SUCCESS:
+            return f"Sublist3r scan failed: {result.error_message}"
+        
+        data = result.data
+        if not data:
+            return "No Sublist3r data."
+            
+        subdomains = data.get("subdomains", [])
+        domain = data.get("domain", "unknown")
+        
+        if not subdomains:
+            return f"Sublist3r found NO subdomains for {domain}."
+            
+        summary = f"Sublist3r found {len(subdomains)} subdomains for {domain}:\n"
+        
+        # Limit output
+        for sub in subdomains[:20]:
+            summary += f"  - {sub}\n"
+            
+        if len(subdomains) > 20:
+            summary += f"  ... and {len(subdomains)-20} more.\n"
+            
+        return summary
+
     def get_info(self) -> Dict[str, Any]:
         base_info = super().get_info()
         base_info.update({
