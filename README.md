@@ -21,6 +21,13 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
 </p>
 
+<br>
+
+<p align="center">
+   <img src="assets/V0_1_demo_gif_mvp.gif" alt="Black Glove Demo" width="1200" style="max-width:100%;height:auto;" />
+</p>
+
+
 > **⚠️ Legal Notice**: 
 > <br>This tool is designed exclusively for authorized security testing of systems you own or have explicit written permission to test.
 > <br>Unauthorized scanning or penetration testing is illegal and unethical.
@@ -181,10 +188,6 @@ flowchart TD
    }
 
 ## 🎮 Basic Usage
-
-<p align="center">
-   <img src="assets/V0_1_demo_gif_mvp.gif" alt="Black Glove Demo" width="1200" style="max-width:100%;height:auto;" />
-</p>
 
 ### 1. Initialize the Agent
 ```bash
