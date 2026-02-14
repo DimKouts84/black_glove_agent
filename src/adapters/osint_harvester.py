@@ -52,7 +52,7 @@ class OSINTHarvesterAdapter(BaseAdapter):
         self.version = "1.0.0"
 
         self._defaults = {
-            "timeout": 15,
+            "timeout": 30,
             "max_pages": 10,
             "max_workers": 5,
             "user_agent": "BlackGloveOSINT/1.0 (+https://example.invalid)",
@@ -147,41 +147,72 @@ class OSINTHarvesterAdapter(BaseAdapter):
         errors = {}
         timings = {}
 
-        # --- Module: Subdomains via crt.sh ---
-        if "subdomains" in modules:
+        # Sub-functions for parallel execution
+        def run_subdomains():
             try:
                 t0 = time.time()
-                subdomains = self._harvest_subdomains_crtsh(domain, timeout)
-                timings["subdomains_time"] = round(time.time() - t0, 3)
-                results["subdomains"] = subdomains
-                self.logger.info(f"Found {len(subdomains)} subdomains via crt.sh")
-            except Exception as e:
-                errors["subdomains"] = str(e)
-                self.logger.warning(f"Subdomain harvesting failed: {e}")
+                # Run crt.sh and hackertarget in parallel for speed if needed, 
+                # but sequential is fine within this thread for now.
+                subdomains_set = set()
+                
+                # HackerTarget (Fast & Reliable)
+                try:
+                    ht_subs = self._harvest_subdomains_hackertarget(domain, timeout)
+                    subdomains_set.update(ht_subs)
+                    self.logger.info(f"Found {len(ht_subs)} subdomains via HackerTarget")
+                except Exception as e:
+                    self.logger.debug(f"HackerTarget failed: {e}")
 
-        # --- Module: Emails from web pages ---
-        if "emails" in modules:
+                # crt.sh (Slow but Comprehensive)
+                try:
+                    crt_subs = self._harvest_subdomains_crtsh(domain, timeout)
+                    subdomains_set.update(crt_subs)
+                    self.logger.info(f"Found {len(crt_subs)} subdomains via crt.sh")
+                except Exception as e:
+                    errors["subdomains"] = f"crt.sh error: {e}"
+                    self.logger.warning(f"crt.sh subdomain harvesting failed for {domain}: {e}")
+
+                results["subdomains"] = sorted(list(subdomains_set))
+                timings["subdomains_time"] = round(time.time() - t0, 3)
+            except Exception as e:
+                if "subdomains" not in errors:
+                    errors["subdomains"] = str(e)
+                self.logger.warning(f"Subdomain module failed for {domain}: {e}")
+
+        def run_emails():
             try:
                 t0 = time.time()
                 emails = self._harvest_emails(domain, timeout)
-                timings["emails_time"] = round(time.time() - t0, 3)
                 results["emails"] = emails
-                self.logger.info(f"Found {len(emails)} email addresses")
+                timings["emails_time"] = round(time.time() - t0, 3)
+                self.logger.info(f"Found {len(emails)} emails for {domain}")
             except Exception as e:
                 errors["emails"] = str(e)
-                self.logger.warning(f"Email harvesting failed: {e}")
+                self.logger.warning(f"Email harvesting failed for {domain}: {e}")
 
-        # --- Module: Metadata from web pages ---
-        if "metadata" in modules:
+        def run_metadata():
             try:
                 t0 = time.time()
                 metadata = self._harvest_metadata(domain, timeout)
-                timings["metadata_time"] = round(time.time() - t0, 3)
                 results["metadata"] = metadata
-                self.logger.info(f"Extracted metadata: {list(metadata.keys())}")
+                timings["metadata_time"] = round(time.time() - t0, 3)
+                self.logger.info(f"Extracted metadata for {domain}")
             except Exception as e:
                 errors["metadata"] = str(e)
-                self.logger.warning(f"Metadata extraction failed: {e}")
+                self.logger.warning(f"Metadata extraction failed for {domain}: {e}")
+
+        # Map modules to functions
+        module_map = {
+            "subdomains": run_subdomains,
+            "emails": run_emails,
+            "metadata": run_metadata
+        }
+
+        # Execute selected modules in parallel
+        with ThreadPoolExecutor(max_workers=min(len(modules), 3)) as executor:
+            futures = [executor.submit(module_map[m]) for m in modules if m in module_map]
+            for future in as_completed(futures):
+                future.result() # Propagate exceptions if any (though wrapped in try/except)
 
         # Add errors and timings to results
         results["errors"] = errors
@@ -200,6 +231,12 @@ class OSINTHarvesterAdapter(BaseAdapter):
             status = AdapterResultStatus.FAILURE
         else:
             status = AdapterResultStatus.SUCCESS
+
+        error_msg = None
+        if errors:
+            error_msg = f"Partial errors: {', '.join(errors.keys())}"
+            if not has_data:
+                error_msg = f"OSINT Harvest failed: {errors}"
 
         # Build human-readable summary for the LLM
         summary_lines = [f"OSINT Harvester Results for {domain}:"]
@@ -258,6 +295,7 @@ class OSINTHarvesterAdapter(BaseAdapter):
                 "timestamp": time.time(),
             },
             evidence_path=evidence_path,
+            error_message=error_msg,
         )
 
     # ---- Harvesting methods ----
@@ -309,6 +347,35 @@ class OSINTHarvesterAdapter(BaseAdapter):
             self.logger.warning("Failed to parse crt.sh JSON response")
 
         return sorted(subdomains)
+
+    def _harvest_subdomains_hackertarget(self, domain: str, timeout: float) -> List[str]:
+        """
+        Query HackerTarget API for subdomains.
+        Free tier allows limited queries per day.
+        """
+        url = "https://api.hackertarget.com/hostsearch/"
+        params = {"q": domain}
+        headers = {
+            "User-Agent": self.config.get(
+                "user_agent", self._defaults["user_agent"]
+            )
+        }
+
+        subdomains = set()
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=timeout)
+            if response.status_code == 200 and response.text:
+                # Format is: host,ip\n
+                lines = response.text.strip().splitlines()
+                for line in lines:
+                    if "," in line:
+                        host = line.split(",")[0].strip().lower()
+                        if host.endswith(f".{domain}") or host == domain:
+                            subdomains.add(host)
+        except Exception as e:
+            self.logger.debug(f"HackerTarget request failed: {e}")
+
+        return sorted(list(subdomains))
 
     def _harvest_emails(self, domain: str, timeout: float) -> List[str]:
         """
@@ -565,30 +632,47 @@ class OSINTHarvesterAdapter(BaseAdapter):
         return False
 
     def interpret_result(self, result: AdapterResult) -> str:
-        if result.status != AdapterResultStatus.SUCCESS:
-            return f"OSINT Harvester failed: {result.error_message}"
+        data = result.data or {}
+        emails = data.get("emails", [])
+        subdomains = data.get("subdomains", [])
+        metadata = data.get("metadata", {})
+        errors = data.get("errors", {})
         
-        data = result.data
-        if not data:
-            return "No OSINT data."
-            
-        # Use existing summary if available
-        if "summary" in data:
-            s = data["summary"] # It's a dict according to _execute_impl
-            # { "emails": count, "subdomains": count, "metadata": count }
-            
-            emails_count = s.get("emails", 0)
-            subdomains_count = s.get("subdomains", 0)
-            metadata_count = s.get("metadata", 0)
-            
-            return f"OSINT Harvester: Found {emails_count} emails, {subdomains_count} subdomains, and {metadata_count} metadata items."
-            
-        # Fallback manual counting
-        emails = len(data.get("emails", []))
-        subdomains = len(data.get("subdomains", []))
-        metadata = len(data.get("metadata", []))
+        target = data.get("domain", "unknown target")
         
-        return f"OSINT Harvester: Found {emails} emails, {subdomains} subdomains, and {metadata} metadata items."
+        # Build status lines
+        lines = []
+        if result.status == AdapterResultStatus.SUCCESS:
+            lines.append(f"OSINT Harvester successfully scanned {target}:")
+        elif result.status == AdapterResultStatus.PARTIAL:
+            lines.append(f"OSINT Harvester partially scanned {target}:")
+        else:
+            lines.append(f"OSINT Harvester failed to scan {target}:")
+
+        # Emails
+        if "emails" in errors:
+            lines.append(f"- Emails: Error ({errors['emails']})")
+        else:
+            lines.append(f"- Emails: Found {len(emails)}")
+
+        # Subdomains
+        if "subdomains" in errors:
+            lines.append(f"- Subdomains: Error ({errors['subdomains']})")
+            if subdomains:
+                lines.append(f"  (Note: Partial results found {len(subdomains)} subdomains despite error)")
+        else:
+            lines.append(f"- Subdomains: Found {len(subdomains)}")
+
+        # Metadata
+        if "metadata" in errors:
+            lines.append(f"- Metadata: Error ({errors['metadata']})")
+        else:
+            lines.append(f"- Metadata: {'Extracted' if metadata else 'None found'}")
+
+        if result.error_message and result.status == AdapterResultStatus.FAILURE:
+            lines.append(f"\nCritical Warning: {result.error_message}")
+            
+        return "\n".join(lines)
 
     def get_info(self) -> Dict[str, Any]:
         base_info = super().get_info()

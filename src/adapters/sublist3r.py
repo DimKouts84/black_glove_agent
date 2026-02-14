@@ -18,6 +18,17 @@ def suppress_output():
 try:
     with suppress_output():
         import sublist3r
+        
+        # Monkey-patch sublist3r to fix "expected string or bytes-like object, got 'int'" error
+        # which happens when an engine times out and returns 0 instead of a string.
+        if hasattr(sublist3r, 'enumratorBase'):
+            original_get_response = sublist3r.enumratorBase.get_response
+            def patched_get_response(self, response):
+                res = original_get_response(self, response)
+                if res == 0:
+                    return ""
+                return res
+            sublist3r.enumratorBase.get_response = patched_get_response
 except ImportError:
     # Fallback if sublist3r is not installed or fails to import
     sublist3r = None
@@ -54,13 +65,13 @@ class Sublist3rAdapter(BaseAdapter):
             # Sublist3r signature: main(domain, threads, savefile, silent, verbose, enable_bruteforce, engines, names)
             result = sublist3r.main(
                 domain,
-                40,  # threads
-                savefile=None,
-                silent=True,
-                verbose=False,
-                enable_bruteforce=False,
-                engines=None,
-                names=None,  # Optional subbrute wordlist
+                40,             # threads
+                None,           # savefile
+                True,           # silent
+                False,          # verbose
+                False,          # enable_bruteforce
+                None,           # engines
+                None            # names
             )
             
             # Sublist3r returns either:
