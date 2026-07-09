@@ -100,9 +100,11 @@ flowchart TD
 
 ### 🔒 Safety First
 - **Mandatory Legal Notice**: First-run acknowledgment of responsible use
-- **Human-in-the-Loop**: Typed approval required for all active scans
+- **Human-in-the-Loop**: Approval required by default (`require_approval: true`); fail-closed without callback
+- **Policy Engine**: Mandatory on chat/web/recon paths; fail-closed target allowlists
+- **Work Graph Kernel**: Deterministic scan execution with phase gating and checkpointing
 - **Rate Limiting**: Configurable traffic throttling to prevent accidental DoS
-- **Lab Mode**: Special restrictions for exploit tools
+- **Lab Mode**: Gating for exploit/credential adapters (`enable_exploit_adapters`, `require_lab_mode_for_exploits`)
 
 ### 🧠 LLM-Powered Analysis
 - **Local LLM Support**: Works with LMStudio, Ollama, OpenAI, and Anthropic

@@ -19,14 +19,19 @@ from agent.agent_library.researcher import RESEARCHER_AGENT
 from agent.agent_library.root import ROOT_AGENT
 from agent.config_service import ConfigService, get_config_service
 from agent.db import get_db_connection, init_db
+from agent.engagement_store import EngagementStore
 from agent.executor import AgentExecutor
 from agent.llm_client import LLMClient, LLMMessage, create_llm_client
 from agent.models import ConfigModel
 from agent.plugin_manager import PluginManager, create_plugin_manager
+from agent.policy_engine import PolicyEngine, create_policy_engine
 from agent.subagent_tool import SubagentTool
+from agent.target_scope import build_policy_target_config
 from agent.tools.adapter_wrapper import AdapterToolWrapper
 from agent.tools.registry import ToolRegistry
 from agent.tools.report_tool import ReportTool
+from agent.work_graph import Engagement, EngagementStatus
+from agent.work_graph_executor import WorkGraphExecutor
 
 logger = logging.getLogger("black_glove.runtime")
 
@@ -45,8 +50,6 @@ class AgentRuntime:
         "whois",
         "asset_manager",
         "generate_report",
-        "planner_agent",
-        "analyst_agent",
     }
 
     def __init__(
@@ -57,11 +60,22 @@ class AgentRuntime:
         self.config_service = config_service or get_config_service()
         self._config = config or self.config_service.load()
         self._plugin_manager: Optional[PluginManager] = None
+        self._policy_engine: Optional[PolicyEngine] = None
         self._llm_client: Optional[LLMClient] = None
         self._tool_registry: Optional[ToolRegistry] = None
         self._root_executor: Optional[AgentExecutor] = None
+        self._work_graph_executor: Optional[WorkGraphExecutor] = None
+        self._engagement_store: Optional[EngagementStore] = None
         self._active_sessions: set = set()
         self._build()
+
+    def _build_policy_engine(self, cfg: Dict[str, Any]) -> PolicyEngine:
+        policy_cfg = build_policy_target_config(cfg)
+        policy_cfg.setdefault("rate_limiting", {})
+        policy_cfg["rate_limiting"].setdefault(
+            "max_requests", cfg.get("default_rate_limit", 50)
+        )
+        return create_policy_engine(policy_cfg)
 
     @property
     def config(self) -> ConfigModel:
@@ -74,7 +88,11 @@ class AgentRuntime:
         """Build plugin manager, LLM client, tool registry, and root executor."""
         init_db()
         cfg = self._config_dict()
-        self._plugin_manager = create_plugin_manager(config=cfg)
+        self._policy_engine = self._build_policy_engine(cfg)
+        self._plugin_manager = create_plugin_manager(
+            config=cfg, policy_engine=self._policy_engine
+        )
+        self._engagement_store = EngagementStore()
         self._llm_client = create_llm_client(self._config)
         self._tool_registry = ToolRegistry()
 
@@ -88,7 +106,13 @@ class AgentRuntime:
             (RESEARCHER_AGENT, "researcher_agent"),
             (ANALYST_AGENT, "analyst_agent"),
         ]:
-            sub = SubagentTool(agent_def, self._llm_client, self._tool_registry)
+            sub = SubagentTool(
+                agent_def,
+                self._llm_client,
+                self._tool_registry,
+                require_approval=self._config.require_approval,
+                safe_tools=self.SAFE_TOOLS,
+            )
             self._tool_registry.register(sub)
 
         self._tool_registry.register(ReportTool())
@@ -101,11 +125,94 @@ class AgentRuntime:
             safe_tools=self.SAFE_TOOLS,
         )
 
+        self._work_graph_executor = WorkGraphExecutor(
+            plugin_manager=self._plugin_manager,
+            policy_engine=self._policy_engine,
+            store=self._engagement_store,
+            require_approval=self._config.require_approval,
+            safe_tools=self.SAFE_TOOLS,
+            enable_exploit_adapters=self._config.enable_exploit_adapters,
+            require_lab_mode_for_exploits=self._config.require_lab_mode_for_exploits,
+        )
+
     def reload_config(self) -> ConfigModel:
         """Reload config from disk and rebuild runtime components."""
         self._config = self.config_service.reload()
         self._build()
         return self._config
+
+    @property
+    def policy_engine(self) -> PolicyEngine:
+        assert self._policy_engine is not None
+        return self._policy_engine
+
+    @property
+    def work_graph_executor(self) -> WorkGraphExecutor:
+        assert self._work_graph_executor is not None
+        return self._work_graph_executor
+
+    @property
+    def engagement_store(self) -> EngagementStore:
+        assert self._engagement_store is not None
+        return self._engagement_store
+
+    def _enrich_history(
+        self, session_id: str, history: Optional[List[LLMMessage]]
+    ) -> List[LLMMessage]:
+        enriched: List[LLMMessage] = []
+        summary = self.engagement_store.format_summaries_for_context(session_id)
+        if summary:
+            enriched.append(LLMMessage(role="system", content=summary))
+        if history:
+            enriched.extend(history)
+        return enriched
+
+    async def execute_scan_plan(
+        self,
+        scan_plan: Dict[str, Any],
+        *,
+        session_id: str,
+        run_id: Optional[str] = None,
+        targets: Optional[List[str]] = None,
+        lab_mode: bool = False,
+        on_activity: Optional[ActivityCallback] = None,
+        approval_callback: Optional[ApprovalCallback] = None,
+    ) -> Dict[str, Any]:
+        """Execute a planner-produced scan plan through the work-graph kernel."""
+        engagement = Engagement(
+            name=scan_plan.get("goal", "scan"),
+            targets=targets or [
+                s.get("target") for s in scan_plan.get("steps", []) if s.get("target")
+            ],
+            session_id=session_id,
+            lab_mode=lab_mode,
+            status=EngagementStatus.PENDING,
+        )
+        self.engagement_store.save_engagement(engagement)
+        graph = WorkGraphExecutor.from_scan_plan(
+            scan_plan,
+            engagement.id,
+            session_id=session_id,
+            run_id=run_id,
+        )
+        if on_activity:
+            self.work_graph_executor.on_activity = on_activity
+        if approval_callback:
+            self.work_graph_executor.approval_callback = approval_callback
+        completed = await self.work_graph_executor.run_graph(
+            graph,
+            engagement,
+            run_id=run_id,
+            session_id=session_id,
+        )
+        return {
+            "engagement_id": engagement.id,
+            "graph_id": completed.id,
+            "status": completed.status.value,
+            "completed_steps": len(completed.completed_step_ids),
+            "total_steps": len(completed.steps),
+            "steps": [s.model_dump() for s in completed.steps],
+        }
 
     @property
     def plugin_manager(self) -> PluginManager:
@@ -186,10 +293,21 @@ class AgentRuntime:
 
             self.root_executor.on_activity = combined_activity
             self.root_executor.approval_callback = approval_callback
+            self.work_graph_executor.on_activity = combined_activity
+            self.work_graph_executor.approval_callback = approval_callback
+
+            for tool_name in ("planner_agent", "researcher_agent", "analyst_agent"):
+                tool = self._tool_registry.get_tool(tool_name)
+                if hasattr(tool, "approval_callback"):
+                    tool.approval_callback = approval_callback
+                if hasattr(tool, "on_activity"):
+                    tool.on_activity = combined_activity
+
+            enriched_history = self._enrich_history(session_id, history)
 
             result = await self.root_executor.run(
                 {"user_query": user_query},
-                conversation_history=history or [],
+                conversation_history=enriched_history,
             )
 
             final_answer = json.dumps(result, default=str)

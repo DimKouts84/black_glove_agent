@@ -206,6 +206,10 @@ class Finding:
     asset_name: str = ""
     evidence_path: Optional[str] = None
     evidence_hash: Optional[str] = None
+    source_tool: str = ""
+    verification_state: str = "indicator"
+    fingerprint: Optional[str] = None
+    observation_count: int = 1
     recommended_fix: str = ""
     references: List[str] = None
     cvss_score: Optional[float] = None
@@ -322,7 +326,11 @@ class FindingsNormalizer:
                 findings.append(finding)
             
             self.logger.debug(f"Normalized {len(findings)} findings from {tool_name}")
-            
+
+            for finding in findings:
+                if not finding.source_tool:
+                    finding.source_tool = tool_name
+
         except Exception as e:
             self.logger.error(f"Error normalizing {tool_name} output: {e}")
             # Create error finding
@@ -333,10 +341,11 @@ class FindingsNormalizer:
                 confidence=0.9,
                 asset_id=asset.id,
                 asset_name=asset.name,
-                recommended_fix="Check tool execution and output format"
+                recommended_fix="Check tool execution and output format",
+                source_tool=tool_name,
             )
             findings.append(error_finding)
-        
+
         return findings
     
     def _normalize_port_scan_output(self, output: Any, asset: AssetModel, 
@@ -1475,8 +1484,9 @@ class ReportingManager:
             with self._connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT id, title, severity, confidence, asset_id, evidence_path, 
-                           recommended_fix, created_at
+                    SELECT id, title, severity, confidence, asset_id, evidence_path,
+                           recommended_fix, created_at, description, evidence_hash,
+                           source_tool, verification_state, fingerprint, observation_count
                     FROM findings
                     ORDER BY severity, created_at DESC
                 """)
@@ -1491,7 +1501,13 @@ class ReportingManager:
                         asset_id=row[4],
                         evidence_path=row[5],
                         recommended_fix=row[6] or "",
-                        created_at=row[7]
+                        created_at=row[7],
+                        description=row[8] or "",
+                        evidence_hash=row[9],
+                        source_tool=row[10] or "",
+                        verification_state=row[11] or "indicator",
+                        fingerprint=row[12],
+                        observation_count=row[13] or 1,
                     )
                     findings.append(finding)
                 
@@ -1534,36 +1550,78 @@ class ReportingManager:
     
     def save_findings_to_database(self, findings: List[Finding]) -> None:
         """
-        Save findings to database.
-        
-        Args:
-            findings: List of findings to save
+        Save findings to database with deduplication by fingerprint.
         """
         try:
             with self._connection() as conn:
                 cursor = conn.cursor()
-                
+
                 for finding in findings:
-                    cursor.execute("""
-                        INSERT INTO findings 
-                        (asset_id, title, severity, confidence, evidence_path, recommended_fix)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (
-                        finding.asset_id,
-                        finding.title,
-                        severity_for_db(finding.severity),
-                        finding.confidence,
-                        finding.evidence_path,
-                        finding.recommended_fix
-                    ))
-                
+                    fingerprint = finding.fingerprint or self._finding_fingerprint(finding)
+                    finding.fingerprint = fingerprint
+
+                    cursor.execute(
+                        "SELECT id, observation_count FROM findings WHERE fingerprint = ?",
+                        (fingerprint,),
+                    )
+                    existing = cursor.fetchone()
+                    if existing:
+                        new_count = existing[1] + 1
+                        cursor.execute(
+                            "SELECT confidence FROM findings WHERE id = ?",
+                            (existing[0],),
+                        )
+                        prev_conf = cursor.fetchone()[0] or 0.0
+                        new_conf = max(prev_conf, finding.confidence)
+                        cursor.execute(
+                            """
+                            UPDATE findings
+                            SET observation_count = ?, confidence = ?
+                            WHERE id = ?
+                            """,
+                            (new_count, new_conf, existing[0]),
+                        )
+                        continue
+
+                    cursor.execute(
+                        """
+                        INSERT INTO findings
+                        (asset_id, title, severity, confidence, evidence_path,
+                         recommended_fix, description, evidence_hash, source_tool,
+                         verification_state, fingerprint, observation_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            finding.asset_id,
+                            finding.title,
+                            severity_for_db(finding.severity),
+                            finding.confidence,
+                            finding.evidence_path,
+                            finding.recommended_fix,
+                            finding.description,
+                            finding.evidence_hash,
+                            finding.source_tool,
+                            finding.verification_state,
+                            fingerprint,
+                            finding.observation_count,
+                        ),
+                    )
+
                 conn.commit()
                 self.logger.info(f"Saved {len(findings)} findings to database")
-            
+
         except Exception as e:
             self.logger.error(f"Error saving findings to database: {e}")
             if self._injected_connection is not None:
                 self._injected_connection.rollback()
+
+    @staticmethod
+    def _finding_fingerprint(finding: Finding) -> str:
+        raw = (
+            f"{finding.asset_id}|{finding.source_tool}|"
+            f"{finding.title.strip().lower()}|{finding.evidence_path or ''}"
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
     
     def generate_assessment_report(self, format_type: ReportFormat = ReportFormat.JSON,
                                  include_evidence: bool = True) -> str:

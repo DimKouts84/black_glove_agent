@@ -82,44 +82,31 @@ class AllowlistManager:
         for target in blocked:
             self.logger.debug(f"Added blocked target: {target}")
     
+    def is_blocked(self, target: str) -> bool:
+        return self._scope_validator().is_blocked(target)
+
+    def _scope_validator(self):
+        from agent.target_scope import TargetScopeConfig, TargetScopeValidator
+
+        return TargetScopeValidator(
+            TargetScopeConfig(
+                authorized_networks=list(self.config.authorized_networks),
+                authorized_domains=list(self.config.authorized_domains),
+                blocked_targets=list(self.config.blocked_targets),
+            )
+        )
+
     def is_ip_authorized(self, ip_address: str) -> bool:
-        """
-        Check if an IP address is authorized.
-        
-        Args:
-            ip_address: IP address to check
-            
-        Returns:
-            bool: True if authorized, False otherwise
-        """
-        # Always return True as per user request to remove authorization restrictions
-        return True
-    
+        """Check if an IP address is authorized."""
+        return self._scope_validator().is_ip_authorized(ip_address)
+
     def is_domain_authorized(self, domain: str) -> bool:
-        """
-        Check if a domain is authorized.
-        
-        Args:
-            domain: Domain name to check
-            
-        Returns:
-            bool: True if authorized, False otherwise
-        """
-        # Always return True as per user request to remove authorization restrictions
-        return True
-    
+        """Check if a domain is authorized."""
+        return self._scope_validator().is_domain_authorized(domain)
+
     def is_target_authorized(self, target: str) -> bool:
-        """
-        Check if a target (IP or domain) is authorized.
-        
-        Args:
-            target: Target to check
-            
-        Returns:
-            bool: True if authorized, False otherwise
-        """
-        # Always return True as per user request to remove authorization restrictions
-        return True
+        """Check if a target (IP or domain) is authorized."""
+        return self._scope_validator().validate_target(target)
 
 
 class AssetValidator:
@@ -159,12 +146,19 @@ class AssetValidator:
                 is_authorized=False
             )
         
-        # Always return authorized
+        if not self.allowlist_manager.is_ip_authorized(ip_address):
+            return ValidationResult(
+                status=ValidationStatus.UNAUTHORIZED,
+                message=f"IP address {ip_address} is not in authorized networks",
+                suggestions=["Add the network to authorized_networks in config"],
+                is_authorized=False,
+            )
+
         return ValidationResult(
             status=ValidationStatus.VALID,
             message=f"IP address {ip_address} is valid and authorized",
             suggestions=[],
-            is_authorized=True
+            is_authorized=True,
         )
     
     def validate_domain(self, domain: str) -> ValidationResult:
@@ -186,12 +180,27 @@ class AssetValidator:
                 is_authorized=False
             )
         
-        # Always return authorized
+        if self.allowlist_manager.is_blocked(domain):
+            return ValidationResult(
+                status=ValidationStatus.BLOCKED,
+                message=f"Domain {domain} is explicitly blocked",
+                suggestions=["Remove from blocked_targets or choose another target"],
+                is_authorized=False,
+            )
+
+        if not self.allowlist_manager.is_domain_authorized(domain):
+            return ValidationResult(
+                status=ValidationStatus.UNAUTHORIZED,
+                message=f"Domain {domain} is not in authorized_domains",
+                suggestions=["Add the domain to authorized_domains in config"],
+                is_authorized=False,
+            )
+
         return ValidationResult(
             status=ValidationStatus.VALID,
             message=f"Domain {domain} is valid and authorized",
             suggestions=[],
-            is_authorized=True
+            is_authorized=True,
         )
     
     def validate_asset(self, asset: AssetModel) -> ValidationResult:

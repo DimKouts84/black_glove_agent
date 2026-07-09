@@ -36,6 +36,8 @@ def init_db() -> None:
             # Create agent orchestration trace tables
             create_agent_runs_table(conn)
             create_agent_events_table(conn)
+            create_engagement_tables(conn)
+            _migrate_findings_columns(conn)
     finally:
         conn.close()
 
@@ -63,16 +65,6 @@ def create_assets_table(conn: sqlite3.Connection) -> None:
 def create_findings_table(conn: sqlite3.Connection) -> None:
     """
     Create the findings table with schema from section 10 of requirements.
-    
-    Schema:
-    - id: INTEGER PRIMARY KEY AUTOINCREMENT
-    - asset_id: INTEGER NOT NULL (foreign key to assets.id)
-    - title: TEXT NOT NULL
-    - severity: TEXT CHECK(severity IN ('low','medium','high','critical'))
-    - confidence: REAL
-    - evidence_path: TEXT
-    - recommended_fix: TEXT
-    - created_at: TEXT DEFAULT CURRENT_TIMESTAMP
     """
     conn.execute("""
         CREATE TABLE IF NOT EXISTS findings (
@@ -87,6 +79,81 @@ def create_findings_table(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(asset_id) REFERENCES assets(id)
         )
     """)
+    _migrate_findings_columns(conn)
+
+
+def _migrate_findings_columns(conn: sqlite3.Connection) -> None:
+    """Add extended finding columns for provenance and deduplication."""
+    cursor = conn.execute("PRAGMA table_info(findings)")
+    existing = {row[1] for row in cursor.fetchall()}
+    migrations = {
+        "description": "TEXT DEFAULT ''",
+        "evidence_hash": "TEXT",
+        "source_tool": "TEXT",
+        "verification_state": "TEXT DEFAULT 'indicator'",
+        "fingerprint": "TEXT",
+        "observation_count": "INTEGER DEFAULT 1",
+        "run_id": "TEXT",
+        "step_id": "TEXT",
+    }
+    for column, definition in migrations.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE findings ADD COLUMN {column} {definition}")
+
+
+def create_engagement_tables(conn: sqlite3.Connection) -> None:
+    """Create engagement and work-graph persistence tables."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS engagements (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            targets_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            session_id TEXT,
+            lab_mode INTEGER NOT NULL DEFAULT 0,
+            budget_json TEXT,
+            metadata_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS work_graphs (
+            id TEXT PRIMARY KEY,
+            engagement_id TEXT NOT NULL,
+            session_id TEXT,
+            run_id TEXT,
+            goal TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_phase TEXT NOT NULL,
+            steps_json TEXT NOT NULL,
+            completed_step_ids_json TEXT,
+            revision INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(engagement_id) REFERENCES engagements(id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS run_step_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            run_id TEXT,
+            tool_name TEXT NOT NULL,
+            target TEXT,
+            status TEXT,
+            summary TEXT,
+            evidence_paths_json TEXT,
+            finding_ids_json TEXT,
+            ts TEXT NOT NULL
+        )
+        """
+    )
 
 def create_audit_log_table(conn: sqlite3.Connection) -> None:
     """
@@ -244,6 +311,8 @@ def run_migrations() -> None:
             create_chat_messages_table(conn)
             create_agent_runs_table(conn)
             create_agent_events_table(conn)
+            create_engagement_tables(conn)
+            _migrate_findings_columns(conn)
     finally:
         conn.close()
 

@@ -41,7 +41,33 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Handle user input and output
   - Coordinate with the orchestrator
 
-### 2. Agent Executor (`src/agent/executor.py`)
+### 2. Agent Runtime (`src/agent/runtime.py`)
+- **Purpose**: Shared assembly layer for CLI and Web UI
+- **Responsibilities**:
+  - Wire `PolicyEngine` into `PluginManager` on every path
+  - Build `ToolRegistry`, sub-agents, and root `AgentExecutor`
+  - Expose `WorkGraphExecutor` for governed multi-step scans
+  - Persist run traces (`agent_runs` / `agent_events`) and step summaries
+- **Key APIs**:
+  - `run_turn()`: interactive ReAct chat turn
+  - `execute_scan_plan()`: deterministic execution of planner output
+
+### 3. Work Graph Kernel (`src/agent/work_graph_executor.py`)
+- **Purpose**: Deterministic execution engine for pentest steps
+- **Responsibilities**:
+  - Enforce phase gating (`passive → active → credential/exploit`)
+  - Apply policy, exploit gates, and approval before adapter calls
+  - Checkpoint graphs to SQLite (`engagements`, `work_graphs`)
+  - Write append-only audit events and cross-turn step summaries
+- **Related modules**:
+  - `work_graph.py`: Pydantic models (`Engagement`, `WorkGraph`, `WorkStep`)
+  - `engagement_store.py`: persistence and history reload
+  - `tool_risk.py`: risk classification and phase rules
+  - `target_scope.py`: fail-closed target authorization
+  - `audit.py`: `audit_log` writer
+  - `tool_result.py`: structured `ToolResultEnvelope` for agent context
+
+### 4. Agent Executor (`src/agent/executor.py`)
 - **Purpose**: Core engine that runs the ReAct (Reasoning + Acting) loop
 - **Responsibilities**:
   - Manage the conversation state and history
@@ -170,21 +196,25 @@ User → CLI → Orchestrator → Database → Confirmation
 
 ### 2. Agentic Chat Workflow
 ```
-User → CLI → Root Executor → LLM (Reasoning) → 
-Json Parser → Tool Registry → Adapter Execution → 
-Tool Output → History Update → Loop Continue
+User → CLI/Web → AgentRuntime → Root Executor → LLM →
+Tool Registry → PolicyEngine → Adapter → Findings DB
 ```
 
-### 3. Subagent Delegation
+### 3. Governed Scan Workflow
 ```
-Root Agent → Planner Agent (Subtool Call) → 
-Planner Loop (Think/Act) → Planner Final Answer → 
-Root Agent Context (Observation)
+Planner → ScanPlan → WorkGraphExecutor → Policy/Approval →
+Adapter → Evidence/Findings → audit_log
 ```
 
-### 4. Audit Logging
+### 4. Subagent Delegation
 ```
-Every Action → Audit Logger → JSON Entry → Audit Log Table
+Root Agent → SubagentTool (inherits approval) → Nested Executor →
+Structured ToolResultEnvelope → Root context
+```
+
+### 5. Audit Logging
+```
+Policy/Tool/Approval events → audit.write_audit() → audit_log table
 ```
 
 ## Safety Controls
@@ -195,23 +225,14 @@ Every Action → Audit Logger → JSON Entry → Audit Log Table
 - **Implementation**: `show_legal_notice()` in CLI
 
 ### Human-in-the-Loop
-- **When**: All active scans and exploit tools
-- **What**: Typed approval required
-- **Implementation**: `approve` command with confirmation
-
-### Rate Limiting
-Built-in rate limiting prevents accidental denial-of-service:
-- **Default**: 50 packets/requests per second
-- **Configurable**: User-defined limits in configuration
-- **Enforcement**: Policy engine blocks excessive rates
-- **Per-Tool**: Different limits for different tools
+- **When**: Active, credential, exploit tools, and sub-agent delegation
+- **Default**: `require_approval: true` in config
+- **Fail-closed**: Missing approval callback denies execution
+- **Propagation**: Sub-agents inherit parent approval settings
+- **Implementation**: `AgentExecutor.approval_callback` and WebSocket approval flow
 
 ### Process Isolation
-All security tools run in isolated Docker containers:
-- **Network Isolation**: Controlled network access
-- **File System**: Read-only root filesystem where possible
-- **Resource Limits**: CPU and memory constraints
-- **Timeouts**: Automatic termination of long-running processes
+Adapters execute as local subprocesses via `ProcessRunner` (`shell=False`, argument sanitization, timeouts). Docker is optional metadata only; containers are not required for the default execution path.
 
 ### Lab Mode
 - **When**: Exploit tools and high-risk operations

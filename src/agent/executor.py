@@ -9,6 +9,8 @@ import inspect
 from agent.definitions import AgentDefinition, AgentInput
 from agent.llm_client import LLMClient, LLMMessage
 from agent.tools.registry import ToolRegistry
+from agent.tool_result import ToolResultEnvelope
+from pydantic import ValidationError
 
 ApprovalCallback = Callable[[str, Dict[str, Any]], Awaitable[bool]]
 
@@ -292,8 +294,20 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                          conversation_history.append(LLMMessage(role="user", content=f"Error: complete_task missing required parameter '{output_name}'."))
                          continue
                     
-                    # In a real implementation we would validate using Pydantic here
-                    # self.definition.output_config.schema_model(**tool_params[output_name])
+                    try:
+                        validated = self.definition.output_config.schema_model.model_validate(
+                            tool_params[output_name]
+                        )
+                        tool_params[output_name] = validated.model_dump()
+                    except ValidationError as exc:
+                        conversation_history.append(
+                            LLMMessage(
+                                role="user",
+                                content=f"Error: complete_task output failed validation: {exc}",
+                            )
+                        )
+                        continue
+
                     self.logger.info(f"complete_task returning: {tool_params}")
                     self._emit("answer", "Task Completed")
                     return tool_params
@@ -315,9 +329,14 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                         tool=tool_name,
                         params=tool_params,
                     )
-                    approved = True
+                    approved = False
                     if self.approval_callback:
                         approved = await self.approval_callback(tool_name, tool_params)
+                    else:
+                        self.logger.warning(
+                            "Approval required for %s but no callback configured; denying.",
+                            tool_name,
+                        )
                     self._emit(
                         "approval_resolved",
                         "approved" if approved else "rejected",
@@ -351,34 +370,17 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                      conversation_history.append(LLMMessage(role="user", content=f"Error: Tool '{tool_name}' not found."))
                      continue
 
-                # Add result to history
-                result_str = str(result)
-                
-                # Check for interpretation in the result (added by AdapterToolWrapper)
-                if isinstance(result, dict) and "interpretation" in result:
-                    interpretation = result["interpretation"]
-                    # Format nicely for the LLM
-                    # We remove interpretation from the raw representation to save tokens/avoid duplication
-                    # strict=False allows making a copy or just display logic
-                    
-                    # Create a display copy without interpretation for the "Raw Data" section
-                    display_data = result.copy()
-                    display_data.pop("interpretation", None)
-                    
-                    result_str = f"INTERPRETATION:\n{interpretation}\n\nRAW DATA:\n{str(display_data)}"
+                envelope = ToolResultEnvelope.from_raw(tool_name, result)
+                result_str = envelope.to_llm_context(max_len=8000)
 
-                self._emit("tool_result", "Tool execution completed")
-
-                web_scan_tools = {
-                    "web_vuln_scanner", "sqli_scanner", "web_server_scanner", "gobuster"
-                }
-                large_output_tools = web_scan_tools | {"passive_recon", "osint_harvester"}
-                max_len = 8000 if tool_name in large_output_tools else 2000
-                if isinstance(result, dict) and "interpretation" in result:
-                    max_len = 8000
-
-                if len(result_str) > max_len:
-                    result_str = result_str[:max_len] + "...[truncated]"
+                self._emit(
+                    "tool_result",
+                    envelope.summary[:500] or "Tool execution completed",
+                    tool=tool_name,
+                    status=envelope.status,
+                    evidence_paths=envelope.evidence_paths,
+                    result_digest=envelope.raw_digest,
+                )
                 
                 conversation_history.append(LLMMessage(role="user", content=f"Tool Result ({tool_name}): {result_str}"))
 

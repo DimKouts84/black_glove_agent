@@ -95,7 +95,10 @@ class AdapterToolWrapper:
             except Exception as exc:
                 self.logger.debug("Finding normalization/persistence failed for %s: %s", self.name, exc)
 
-            return result.data
+            payload = dict(result.data) if isinstance(result.data, dict) else {"value": result.data}
+            if result.evidence_path:
+                payload["evidence_path"] = result.evidence_path
+            return payload
         else:
             return f"Error: {result.error_message}"
 

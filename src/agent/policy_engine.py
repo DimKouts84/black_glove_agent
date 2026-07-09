@@ -247,48 +247,43 @@ class TargetValidator:
             self.logger.debug(f"Added blocked target: {target}")
     
     def validate_ip_target(self, ip_address: str) -> bool:
-        """
-        Validate an IP address target.
-        
-        Args:
-            ip_address: IP address to validate
-            
-        Returns:
-            bool: True if target is authorized, False otherwise
-        """
-        # Always return True as per user request to remove authorization restrictions
-        return True
-    
+        """Validate an IP address target against authorized networks."""
+        from agent.target_scope import TargetScopeConfig, TargetScopeValidator
+
+        scope = TargetScopeConfig(
+            authorized_networks=[
+                str(n) for n in self._authorized_networks
+            ],
+            authorized_domains=list(self._authorized_domains),
+            blocked_targets=list(self._blocked_targets),
+        )
+        return TargetScopeValidator(scope).is_ip_authorized(ip_address)
+
     def validate_domain_target(self, domain: str) -> bool:
-        """
-        Validate a domain target.
-        
-        Args:
-            domain: Domain name to validate
-            
-        Returns:
-            bool: True if target is authorized, False otherwise
-        """
-        # Always return True as per user request to remove authorization restrictions
-        return True
-    
+        """Validate a domain target against authorized domains."""
+        from agent.target_scope import TargetScopeConfig, TargetScopeValidator
+
+        scope = TargetScopeConfig(
+            authorized_networks=[
+                str(n) for n in self._authorized_networks
+            ],
+            authorized_domains=list(self._authorized_domains),
+            blocked_targets=list(self._blocked_targets),
+        )
+        return TargetScopeValidator(scope).is_domain_authorized(domain)
+
     def validate_target(self, target: str) -> bool:
-        """
-        Validate a target (IP or domain).
-        
-        Args:
-            target: Target to validate
-            
-        Returns:
-            bool: True if target is authorized, False otherwise
-        """
-        # Try to parse as IP first
-        try:
-            ipaddress.ip_address(target)
-            return self.validate_ip_target(target)
-        except ValueError:
-            # Not an IP, treat as domain
-            return self.validate_domain_target(target)
+        """Validate a target (IP or domain)."""
+        from agent.target_scope import TargetScopeConfig, TargetScopeValidator
+
+        scope = TargetScopeConfig(
+            authorized_networks=[
+                str(n) for n in self._authorized_networks
+            ],
+            authorized_domains=list(self._authorized_domains),
+            blocked_targets=list(self._blocked_targets),
+        )
+        return TargetScopeValidator(scope).validate_target(target)
 
 
 class PolicyEngine:

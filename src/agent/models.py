@@ -82,7 +82,7 @@ class ConfigModel(BaseModel):
     require_lab_mode_for_exploits: bool = Field(default=True, description="Require lab mode for exploit tools")
     enable_exploit_adapters: bool = Field(default=False, description="Enable exploit adapters (disabled by default)")
     require_approval: bool = Field(
-        default=False,
+        default=True,
         description="Require human approval before running non-safe tools"
     )
     

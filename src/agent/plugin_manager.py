@@ -332,7 +332,32 @@ class PluginManager:
         
         # Normalize parameters for common aliases (Issue A fix)
         params = self._normalize_params(adapter_name, params)
-        
+
+        from agent.tool_risk import check_exploit_gate
+
+        exploit_err = check_exploit_gate(
+            adapter_name,
+            enable_exploit_adapters=bool(self.config.get("enable_exploit_adapters", False)),
+            require_lab_mode_for_exploits=bool(
+                self.config.get("require_lab_mode_for_exploits", True)
+            ),
+            lab_mode=bool(params.get("lab_mode", False)),
+        )
+        if exploit_err:
+            from adapters.interface import AdapterResultStatus
+            from agent.audit import write_audit
+
+            write_audit(
+                "policy_block",
+                {"adapter": adapter_name, "reason": exploit_err, "params": params},
+            )
+            return AdapterResult(
+                status=AdapterResultStatus.ERROR,
+                data=None,
+                metadata={"error": "exploit_gate"},
+                error_message=f"BLOCKED: {exploit_err}",
+            )
+
         # CENTRALIZED POLICY ENFORCEMENT
         if self.policy_engine:
             # 1. Extract target from parameters (try multiple common keys)
@@ -347,10 +372,20 @@ class PluginManager:
             # 2. Validate target if present
             if target:
                 from .models import Asset
+                from agent.audit import write_audit
+
                 asset = Asset(target=target, tool_name=adapter_name, parameters=params)
                 
                 if not self.policy_engine.validate_asset(asset):
                     self.logger.warning(f"BLOCKED: Policy violation for target {target}")
+                    write_audit(
+                        "policy_block",
+                        {
+                            "adapter": adapter_name,
+                            "target": target,
+                            "reason": "unauthorized_target",
+                        },
+                    )
                     from adapters.interface import AdapterResultStatus
                     return AdapterResult(
                         status=AdapterResultStatus.ERROR,
@@ -362,6 +397,15 @@ class PluginManager:
             # 3. Check rate limits
             if not self.policy_engine.enforce_rate_limits(adapter_name):
                 self.logger.warning(f"BLOCKED: Rate limit exceeded for {adapter_name}")
+                from agent.audit import write_audit
+
+                write_audit(
+                    "policy_block",
+                    {
+                        "adapter": adapter_name,
+                        "reason": "rate_limit_exceeded",
+                    },
+                )
                 from adapters.interface import AdapterResultStatus
                 return AdapterResult(
                     status=AdapterResultStatus.ERROR,
@@ -381,14 +425,13 @@ class PluginManager:
             adapter.validate_params(params)
         except Exception as e:
             raise ValueError(f"Invalid parameters for adapter {adapter_name}: {e}")
+
+        if self.policy_engine:
+            self.policy_engine.rate_limiter.record_request(adapter_name)
         
         # Execute adapter
         try:
             result = adapter.execute(params)
-            
-            # Record rate limit usage after successful execution
-            if self.policy_engine:
-                self.policy_engine.rate_limiter.record_request(adapter_name)
             
             self.logger.info(f"Adapter {adapter_name} executed with status: {result.status.value}")
             return result

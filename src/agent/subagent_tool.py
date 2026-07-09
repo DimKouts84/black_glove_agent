@@ -1,6 +1,6 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Set, Callable, Awaitable
 from agent.definitions import AgentDefinition
-from agent.executor import AgentExecutor
+from agent.executor import AgentExecutor, ApprovalCallback
 from agent.llm_client import LLMClient
 from agent.tools.registry import ToolRegistry, Tool
 
@@ -9,11 +9,18 @@ class SubagentTool:
         self, 
         agent_definition: AgentDefinition, 
         llm_client: LLMClient, 
-        parent_tool_registry: ToolRegistry
+        parent_tool_registry: ToolRegistry,
+        *,
+        require_approval: bool = False,
+        safe_tools: Optional[Set[str]] = None,
+        approval_callback: Optional[ApprovalCallback] = None,
     ):
         self.definition = agent_definition
         self.llm = llm_client
         self.parent_tool_registry = parent_tool_registry
+        self.require_approval = require_approval
+        self.safe_tools = safe_tools
+        self.approval_callback = approval_callback
         
         self.name = agent_definition.name
         self.description = agent_definition.description
@@ -47,14 +54,19 @@ class SubagentTool:
     async def execute(self, params: Dict[str, Any]) -> Any:
         # Create a scoped registry for this subagent
         subagent_registry = ToolRegistry()
+        missing_tools = []
         
         # Populate it with allowed tools from parent registry
         for tool_name in self.definition.tool_config.tools:
             if self.parent_tool_registry.has_tool(tool_name):
                 subagent_registry.register(self.parent_tool_registry.get_tool(tool_name))
             else:
-                 # Warn or fail? For now, we just skip incomplete tools which might fail execution
-                 pass
+                missing_tools.append(tool_name)
+
+        if missing_tools:
+            raise ValueError(
+                f"Subagent {self.name} missing required tools: {', '.join(missing_tools)}"
+            )
         
         # Special handling for Planner Agent: Inject available tools from PARENT registry
         # The planner needs to know what the ROOT agent can do, not what the planner can do (which is nothing)
@@ -90,12 +102,15 @@ class SubagentTool:
                 except Exception as e:
                     params["raw_data"] = f"Error reading evidence file: {e}"
 
-        # Create executor
+        # Create executor with inherited approval context
         executor = AgentExecutor(
             agent_definition=self.definition,
             llm_client=self.llm,
             tool_registry=subagent_registry,
             on_activity=self.on_activity,
+            require_approval=self.require_approval,
+            safe_tools=self.safe_tools,
+            approval_callback=self.approval_callback,
         )
         
         # Run it

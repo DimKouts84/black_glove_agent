@@ -19,6 +19,18 @@ All skills leverage the `AdapterInterface` to ensure uniform execution, error ha
     *   `get_info()`: Returns metadata about the skill's capabilities.
     *   **Result**: Always returns a standardized `AdapterResult` object containing `status`, `data`, and `metadata`.
 
+### Governance Layer (All Adapter Calls)
+
+Every adapter invocation passes through:
+
+1. **`tool_risk.py`** — classifies tools (passive/active/credential/exploit) and enforces phase rules
+2. **`target_scope.py`** — fail-closed IP/domain authorization against config allowlists
+3. **`policy_engine.py`** — rate limits and centralized blocking via `PluginManager.run_adapter()`
+4. **`audit.py`** — append-only `audit_log` entries for attempts, blocks, approvals, and results
+5. **`work_graph_executor.py`** — deterministic multi-step execution for planner/recon workflows
+
+Interactive chat still uses the ReAct loop (`AgentExecutor`), but adapter calls share the same policy and audit path. Full scans can be executed via `AgentRuntime.execute_scan_plan()`.
+
 ---
 
 ## Skill Catalog

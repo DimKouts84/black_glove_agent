@@ -19,6 +19,8 @@ from enum import Enum
 from .models import Asset, ScanResult, WorkflowStep, OrchestrationContext
 from .policy_engine import PolicyEngine, create_policy_engine
 from .plugin_manager import PluginManager, create_plugin_manager
+from .work_graph import Engagement, WorkPhase, WorkStep
+from .work_graph_executor import WorkGraphExecutor
 from .llm_client import LLMClient, create_llm_client, LLMMessage, LLMConfig, LLMProvider
 from adapters.interface import AdapterResult, AdapterResultStatus
     
@@ -117,6 +119,16 @@ class Orchestrator:
         self.assets: List[Asset] = []
         self.scan_results: List[ScanResult] = []
         self.completed_steps: Set[str] = set()
+
+        self.work_graph_executor = WorkGraphExecutor(
+            plugin_manager=self.plugin_manager,
+            policy_engine=self.policy_engine,
+            require_approval=bool(config.get("require_approval", True)),
+            enable_exploit_adapters=bool(config.get("enable_exploit_adapters", False)),
+            require_lab_mode_for_exploits=bool(
+                config.get("require_lab_mode_for_exploits", True)
+            ),
+        )
         
         self.logger.info("Orchestrator initialized")
     
@@ -271,67 +283,106 @@ class Orchestrator:
             # Fallback to default scanning plan
             return self._get_default_scan_plan(scan_mode)
     
-    def execute_scan_step(self, step: WorkflowStep, approval_required: bool = True) -> Optional[ScanResult]:
-        """
-        Run individual scan steps with approval.
-        
-        Args:
-            step: Workflow step to execute
-            approval_required: Whether user approval is required
-            
-        Returns:
-            ScanResult from step execution, or None if cancelled
-        """
+    async def execute_scan_step_async(
+        self, step: WorkflowStep, approval_required: bool = True
+    ) -> Optional[ScanResult]:
+        """Async execution via the shared work-graph kernel."""
         self.logger.info(f"Executing scan step: {step.name}")
-        
-        # Check if step requires approval
+
         if approval_required and not self._get_user_approval(step):
             self.logger.info(f"Scan step cancelled by user: {step.name}")
             return None
-        
-        # Validate target through policy engine
+
+        engagement = Engagement(
+            name=step.name,
+            targets=[step.target],
+            lab_mode=self.config.get("scan_mode", "passive") == "lab",
+        )
+        work_step = WorkStep(
+            name=step.name,
+            tool=step.tool,
+            target=step.target,
+            parameters=step.parameters,
+            phase=WorkPhase.ACTIVE,
+        )
+        envelope = await self.work_graph_executor.execute_step(work_step, engagement)
+        if envelope.status in {"blocked", "error"}:
+            self.logger.warning("Step %s blocked/failed: %s", step.name, envelope.error)
+            return None
+
         asset = Asset(
             target=step.target,
             tool_name=step.tool,
-            parameters=step.parameters
+            parameters=step.parameters,
         )
-        
+        from adapters.interface import AdapterResult, AdapterResultStatus
+
+        adapter_result = AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data=envelope.data or {},
+            metadata={},
+        )
+        scan_result = self._process_tool_output(adapter_result, asset, step.tool)
+        if scan_result:
+            self.scan_results.append(scan_result)
+            self.completed_steps.add(step.name)
+        return scan_result
+
+    def execute_scan_step(self, step: WorkflowStep, approval_required: bool = True) -> Optional[ScanResult]:
+        """
+        Run individual scan steps with approval.
+
+        Delegates to the shared WorkGraphExecutor when possible.
+        """
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                return self._execute_scan_step_sync(step, approval_required)
+            return loop.run_until_complete(
+                self.execute_scan_step_async(step, approval_required)
+            )
+        except RuntimeError:
+            return asyncio.run(
+                self.execute_scan_step_async(step, approval_required)
+            )
+
+    def _execute_scan_step_sync(
+        self, step: WorkflowStep, approval_required: bool = True
+    ) -> Optional[ScanResult]:
+        """Synchronous fallback used when an event loop is already running."""
+        self.logger.info(f"Executing scan step (sync): {step.name}")
+
+        if approval_required and not self._get_user_approval(step):
+            self.logger.info(f"Scan step cancelled by user: {step.name}")
+            return None
+
+        asset = Asset(
+            target=step.target,
+            tool_name=step.tool,
+            parameters=step.parameters,
+        )
+
         if not self.policy_engine.validate_asset(asset):
             self.logger.warning(f"Step rejected by policy: {step.name}")
             return None
-        
-        # Check rate limits
+
         if not self.policy_engine.enforce_rate_limits(step.tool):
             self.logger.warning(f"Rate limit exceeded for {step.tool}")
             return None
-        
+
         try:
-            # Execute the tool through plugin manager
             adapter_result = self.plugin_manager.run_adapter(step.tool, step.parameters)
-            
-            # Record rate limit usage
-            self.policy_engine.rate_limiter.record_request(step.tool)
-            
-            # Process and store result
             scan_result = self._process_tool_output(adapter_result, asset, step.tool)
             if scan_result:
                 self.scan_results.append(scan_result)
                 self.completed_steps.add(step.name)
-            
-            self.logger.info(f"Scan step completed: {step.name}")
             return scan_result
-            
         except Exception as e:
             self.logger.error(f"Scan step failed: {step.name} - {e}")
-            
-            # Log policy violation if it was a safety issue
-            if "rate limit" in str(e).lower() or "policy" in str(e).lower():
-                self.policy_engine.log_violation(
-                    self.policy_engine.violations[-1] if self.policy_engine.violations else None
-                )
-            
             return None
-    
+
     def _process_tool_output(self, adapter_result: AdapterResult, asset: Asset, tool_name: str) -> Optional[ScanResult]:
         """
         Process and normalize adapter results.
@@ -828,16 +879,17 @@ class Orchestrator:
         scan_mode = self.config.get("scan_mode", "passive")
         
         if scan_mode == "lab":
-            return True  # Auto-approve in lab mode
-        
-        # Check if tool is considered dangerous
-        dangerous_tools = ["metasploit", "sqlmap", "hydra"]
-        if step.tool in dangerous_tools:
-            # In real implementation, this would prompt user
-            self.logger.info(f"Auto-approving dangerous tool {step.tool} (would prompt user in real implementation)")
             return True
-        
-        return True  # Auto-approve by default
+
+        dangerous_tools = {"credential_tester", "sqli_scanner", "web_vuln_scanner", "nmap", "gobuster"}
+        if step.tool in dangerous_tools:
+            self.logger.warning(
+                "Dangerous tool %s requires approval; denying by default.",
+                step.tool,
+            )
+            return False
+
+        return False
     
     def _count_findings_by_severity(self, findings: List[Dict[str, Any]]) -> Dict[str, int]:
         """
