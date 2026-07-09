@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from agent.plugin_manager import PluginManager
 from agent.policy_engine import create_policy_engine
 from datetime import datetime
-import importlib
 
 TEST_DOMAIN = os.environ.get('TEST_DOMAIN', 'ikarou3.casa')
 TEST_NMAP_TARGET = os.environ.get('TEST_NMAP_TARGET', 'scanme.nmap.org')
@@ -103,17 +102,10 @@ def main():
             try:
                 # For command-check: Check param validation only first
                 try:
-                    # Special-case 'asset_manager' which exposes a run() function instead of a class-based Adapter
-                    if adapter == 'asset_manager':
-                        # Import the module and call run directly
-                        asset_mod = importlib.import_module(f'adapters.{adapter}')
-                        # No pm.load_adapter call
+                    if adapter in FAKE_RUNNERS:
+                        pm.load_adapter(adapter, config={'_runner': FAKE_RUNNERS[adapter]})
                     else:
-                        # If we need to inject fake runner config, do it here
-                        if adapter in FAKE_RUNNERS:
-                            pm.load_adapter(adapter, config={'_runner': FAKE_RUNNERS[adapter]})
-                        else:
-                            pm.load_adapter(adapter)
+                        pm.load_adapter(adapter)
                 except Exception as e:
                     print(f"Failed to load adapter {adapter}: {e}")
                     adapter_results.append((desc, 'LOAD_FAILED', str(e)))
@@ -121,11 +113,7 @@ def main():
 
                 # Try validate_params only
                 try:
-                    if adapter == 'asset_manager':
-                        # The asset_manager.validate_params path doesn't exist; we just assume run will validate
-                        pass
-                    else:
-                        pm.adapter_manager._loaded_adapters[adapter].validate_params(params)
+                    pm.adapter_manager._loaded_adapters[adapter].validate_params(params)
                 except Exception as val_err:
                     print(f"Parameter validation failed for {adapter}: {val_err}")
                     adapter_results.append((desc, 'PARAM_VALIDATION_FAILED', str(val_err)))
@@ -133,11 +121,7 @@ def main():
 
                 # Now attempt to execute via run_adapter (enforces policy)
                 try:
-                    if adapter == 'asset_manager':
-                        # Call the functional interface directly
-                        res = asset_mod.run(params)
-                    else:
-                        res = pm.run_adapter(adapter, params)
+                    res = pm.run_adapter(adapter, params)
                     # Summarize
                     if res.status.name == 'SUCCESS':
                         print(f"SUCCESS: {adapter} -> {res.metadata if res.metadata else res.data}")

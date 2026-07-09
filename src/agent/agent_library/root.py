@@ -59,30 +59,31 @@ ROOT_AGENT = AgentDefinition(
             - public_ip: Detect public IP address
             - dns_lookup: Query DNS records (params: domain)
             - whois: Get domain registration info (params: domain)
-            - ssl_check: Check SSL certificates (params: target)
+            - ssl_check: Check SSL certificates (params: host, optional port)
             - nmap: Port scanning (params: target, ports)
-            - gobuster: Directory enumeration (params: target_url, wordlist)
+            - gobuster: Directory enumeration (params: target_url or url for dir mode, domain for dns mode, wordlist)
             - passive_recon: Passive reconnaissance (params: domain)
             - camera_security: Check for exposed cameras (params: target)
-            - viewdns: Reverse IP and port scan (params: target)
-            - wappalyzer: Detect web technologies (params: url)
-            - sublist3r: Subdomain enumeration (params: domain)
-            - osint_harvester: OSINT subdomain harvesting via crt.sh and metadata extraction (params: domain)
-            - dns_recon: Enhanced DNS recon with zone transfer checks (params: domain)
-            - web_server_scanner: Web server security header and configuration analysis (params: target)
+            - viewdns: ViewDNS port scan API (params: host)
+            - wappalyzer: Detect web technologies (params: url or target_url)
+            - sublist3r: Subdomain enumeration (params: domain or target)
+            - osint_harvester: OSINT harvesting via crt.sh and metadata (params: target or domain)
+            - dns_recon: Enhanced DNS recon with zone transfer checks (params: target, optional mode, wordlist)
+            - web_server_scanner: Web server security header and configuration analysis (params: target_url)
             - sqli_scanner: SQL injection vulnerability detection (params: target_url)
-            - web_vuln_scanner: Web vulnerability scanning (XSS, LFI, directory listing, headers) (params: target_url)
-            - credential_tester: Default credential and common password testing (params: target_url)
+            - web_vuln_scanner: Web vulnerability scanning (XSS, LFI, SSTI) (params: target_url)
+            - credential_tester: Credential testing (params: target, protocol, usernames, passwords)
             - generate_report: Generate a structured security assessment report from all findings (params: format="markdown")
 
             TOOL OUTPUT INTERPRETATION:
-            - Tools now provide an "INTERPRETATION" field in their output.
-            - ALWAYS prioritize this interpretation over raw data when summarizing results.
-            - The interpretation is human-readable and trusted.
-            - If "INTERPRETATION" says "No valid credentials found", report that exactly. Do not hallucinate based on raw HTTP codes.
+            - Tools provide an "INTERPRETATION" field summarizing scan results.
+            - Use INTERPRETATION as the primary summary, but corroborate with evidence fields in raw data.
+            - Respect severity and confidence from tool output; do not upgrade findings beyond what tools report.
+            - If "INTERPRETATION" says "No vulnerabilities found", report that exactly. Do not hallucinate based on raw HTTP codes.
 
             ASSET MANAGEMENT (asset_manager):
             - Valid types: "host", "domain", "vm" (ONLY these three)
+            - Commands: add, list, remove (use generate_report tool for assessment reports)
             - Required params for add: command="add", name="<name>", type="<host|domain|vm>", value="<ip_or_domain>"
             - Required params for list: command="list"
             - Required params for remove: command="remove", name="<name>"

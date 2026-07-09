@@ -15,6 +15,8 @@ from pathlib import Path
 
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
+from .url_params import resolve_target_url
+from .domain_params import resolve_domain
 from utils.process_runner import ProcessRunner
 
 _SAFE_FLAG_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9\-]*$")
@@ -96,16 +98,12 @@ class GobusterAdapter(BaseAdapter):
         if mode not in ("dir", "dns"):
             raise ValueError("mode must be 'dir' or 'dns'")
 
-        # Smart mapping for target -> url/domain
-        if "target" in params:
-            if mode == "dir" and "url" not in params:
-                target = params["target"]
-                if not target.startswith(("http://", "https://")):
-                    params["url"] = f"http://{target}"
-                else:
-                    params["url"] = target
-            elif mode == "dns" and "domain" not in params:
-                params["domain"] = params["target"]
+        if mode == "dir":
+            if "url" not in params:
+                params["url"] = resolve_target_url(params)
+        elif mode == "dns":
+            if "domain" not in params:
+                params["domain"] = resolve_domain(params)
 
         wordlist = params.get("wordlist") or self.config.get("wordlist") or self._defaults["wordlist"]
         if not isinstance(wordlist, str) or not wordlist.strip():
@@ -200,6 +198,8 @@ class GobusterAdapter(BaseAdapter):
 
         stdout = run_result.get("stdout", "") or ""
         parsed = self._parse_output(stdout, mode)
+        self._filter_entries(parsed, params, mode)
+        self._annotate_entries(parsed.get("entries", []), mode)
 
         # Evidence
         safe_id = None
@@ -313,6 +313,38 @@ class GobusterAdapter(BaseAdapter):
                         }
                     )
         return result
+
+    def _filter_entries(self, parsed: Dict[str, Any], params: Dict[str, Any], mode: str) -> None:
+        if mode != "dir":
+            return
+        status_codes = params.get("status_codes")
+        if not status_codes:
+            return
+        allowed = {int(c) for c in status_codes}
+        parsed["entries"] = [
+            e for e in parsed.get("entries", [])
+            if e.get("status") in allowed
+        ]
+
+    def _annotate_entries(self, entries: List[Dict[str, Any]], mode: str) -> None:
+        """Add severity hints based on path and HTTP status."""
+        critical_paths = ["/.env", "/.git", "/config", "/backup"]
+        for entry in entries:
+            if mode != "dir":
+                entry["severity"] = "info"
+                continue
+            path = (entry.get("path") or "").lower()
+            status = entry.get("status")
+            if status == 200 and any(c in path for c in critical_paths):
+                entry["severity"] = "critical"
+            elif status == 200:
+                entry["severity"] = "high"
+            elif status in (401, 403):
+                entry["severity"] = "medium"
+            elif status in (301, 302, 307):
+                entry["severity"] = "low"
+            else:
+                entry["severity"] = "medium"
 
     def interpret_result(self, result: AdapterResult) -> str:
         if result.status != AdapterResultStatus.SUCCESS:

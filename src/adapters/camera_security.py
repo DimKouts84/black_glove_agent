@@ -208,7 +208,7 @@ class CameraSecurityAdapter(BaseAdapter):
                     findings.append(f"⚠️ RTSP VULNERABILITY: {rtsp_result}")
             
             # Step 3: HTTP authentication check
-            http_ports = [p for p in open_ports if p in [80, 443, 8080, 8443, 8000, 8200, 9000, 50000]]
+            http_ports = [p for p in open_ports if p in [80, 443, 8080, 8443, 8000, 8200, 50000]]
             for port in http_ports:
                 self.logger.info(f"Checking HTTP authentication on port {port}...")
                 auth_result = self._test_http_auth(target, port)
@@ -222,7 +222,10 @@ class CameraSecurityAdapter(BaseAdapter):
                 findings.extend(cred_results)
             
             # Determine overall status
-            has_vulnerabilities = any("VULNERABILITY" in f or "WEAK" in f for f in findings)
+            has_vulnerabilities = any(
+                any(tag in f for tag in ("VULNERABILITY", "WEAK", "RISK", "CRITICAL"))
+                for f in findings
+            )
             
             return AdapterResult(
                 status=AdapterResultStatus.SUCCESS,
@@ -386,8 +389,7 @@ class CameraSecurityAdapter(BaseAdapter):
                 
                 if any(keyword in response_lower for keyword in camera_keywords) or vendor:
                     return f"⚠️ HTTP VULNERABILITY: Camera web interface{vendor_str} on port {port} accessible without authentication"
-                else:
-                    return f"HTTP interface on port {port} is accessible (authentication unclear)"
+                return None
             
             elif "401 Unauthorized" in response or "403 Forbidden" in response:
                 return f"✓ HTTP interface{vendor_str} on port {port} requires authentication"
@@ -454,22 +456,42 @@ class CameraSecurityAdapter(BaseAdapter):
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(self.timeout)
                     sock.connect((target, port))
-                    
-                    # Create Basic Auth header
+
+                    unauth_request = f"GET / HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n"
+                    sock.send(unauth_request.encode())
+                    unauth_response = sock.recv(4096).decode('utf-8', errors='ignore')
+                    sock.close()
+
+                    if "401 Unauthorized" not in unauth_response and "403 Forbidden" not in unauth_response:
+                        continue
+
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(self.timeout)
+                    sock.connect((target, port))
+
                     credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
-                    request = f"GET / HTTP/1.1\r\nHost: {target}\r\nAuthorization: Basic {credentials}\r\nConnection: close\r\n\r\n"
+                    request = (
+                        f"GET / HTTP/1.1\r\nHost: {target}\r\n"
+                        f"Authorization: Basic {credentials}\r\nConnection: close\r\n\r\n"
+                    )
                     sock.send(request.encode())
-                    
+
                     response = sock.recv(4096).decode('utf-8', errors='ignore')
                     sock.close()
-                    
+
                     tested_count += 1
-                    
-                    # Check for successful authentication
-                    if "HTTP/1.1 200 OK" in response or "HTTP/1.0 200 OK" in response:
-                        findings.append(f"🔴 CRITICAL VULNERABILITY: Default credentials work! {username}:{password} on port {port}")
-                        self.logger.warning(f"Default credentials found: {username}:{password} on port {port}")
-                        break  # Stop testing this port if we found valid creds
+
+                    if ("HTTP/1.1 200 OK" in response or "HTTP/1.0 200 OK" in response) and (
+                        "401 Unauthorized" in unauth_response
+                    ):
+                        findings.append(
+                            f"🔴 CRITICAL VULNERABILITY: Default credentials work! "
+                            f"{username}:{password} on port {port}"
+                        )
+                        self.logger.warning(
+                            f"Default credentials found: {username}:{password} on port {port}"
+                        )
+                        break
                     
                     # Small delay to avoid triggering rate limits/lockouts
                     time.sleep(0.5)
@@ -486,38 +508,46 @@ class CameraSecurityAdapter(BaseAdapter):
     def interpret_result(self, result: AdapterResult) -> str:
         if result.status != AdapterResultStatus.SUCCESS:
             return f"Camera security scan failed: {result.error_message}"
-        
+
         data = result.data
         if not data:
             return "No Camera security data."
-            
+
         target = data.get("target", "unknown")
         open_ports = data.get("open_ports", [])
         findings = data.get("findings", [])
         vuln_detected = data.get("vulnerabilities_detected", False)
-        
+
         summary = f"Camera Security Scan for {target}:\n"
-        
+
         if open_ports:
-            summary += f"- Open RTSP/Camera Ports: {', '.join(map(str, open_ports))}\n"
+            port_strs = []
+            for entry in open_ports:
+                if isinstance(entry, dict):
+                    port_strs.append(f"{entry.get('port')}/{entry.get('service', 'unknown')}")
+                else:
+                    port_strs.append(str(entry))
+            summary += f"- Open camera-related ports: {', '.join(port_strs)}\n"
         else:
             summary += "- No common camera ports open.\n"
-            
+
         if findings:
             summary += f"- Findings ({len(findings)}):\n"
-            for f in findings:
-                # findings are dicts: {'type': '...', 'description': '...', 'severity': '...'}
-                sev = f.get("severity", "INFO").upper()
-                desc = f.get("description", "")
-                summary += f"  - [{sev}] {desc}\n"
+            for finding in findings:
+                if isinstance(finding, dict):
+                    sev = finding.get("severity", "INFO").upper()
+                    desc = finding.get("description", finding.get("title", ""))
+                    summary += f"  - [{sev}] {desc}\n"
+                else:
+                    summary += f"  - {finding}\n"
         else:
             summary += "- No specific vulnerability findings.\n"
-            
+
         if vuln_detected:
             summary += "\n[CRITICAL] Vulnerable camera configuration detected!"
         else:
             summary += "\nNo critical camera vulnerabilities detected."
-            
+
         return summary
 
     def cleanup(self) -> None:
@@ -539,6 +569,7 @@ class CameraSecurityAdapter(BaseAdapter):
             "version": self.version,
             "description": "Comprehensive security testing for IP cameras and surveillance devices with vendor identification",
             "category": "security_assessment",
+            "required_params": self._required_params,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -573,3 +604,7 @@ class CameraSecurityAdapter(BaseAdapter):
             "safety_notes": "Only use on authorized assets. Unauthorized testing may violate laws."
         })
         return base_info
+
+
+def create_camera_security_adapter(config: Dict[str, Any] = None) -> CameraSecurityAdapter:
+    return CameraSecurityAdapter(config)

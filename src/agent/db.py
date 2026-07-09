@@ -33,6 +33,9 @@ def init_db() -> None:
             create_sessions_table(conn)
             # Create chat_messages table
             create_chat_messages_table(conn)
+            # Create agent orchestration trace tables
+            create_agent_runs_table(conn)
+            create_agent_events_table(conn)
     finally:
         conn.close()
 
@@ -149,6 +152,38 @@ def create_chat_messages_table(conn: sqlite3.Connection) -> None:
         )
     """)
 
+
+def create_agent_runs_table(conn: sqlite3.Connection) -> None:
+    """Create agent_runs table for orchestration trace."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            query TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            final_answer TEXT,
+            FOREIGN KEY(session_id) REFERENCES sessions(id)
+        )
+    """)
+
+
+def create_agent_events_table(conn: sqlite3.Connection) -> None:
+    """Create agent_events table for per-run activity trace."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent TEXT NOT NULL,
+            type TEXT NOT NULL,
+            content TEXT,
+            params_json TEXT,
+            ts TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES agent_runs(id)
+        )
+    """)
+
 def get_db_connection() -> sqlite3.Connection:
     """
     Get a database connection.
@@ -196,10 +231,21 @@ def archive_asset(conn: sqlite3.Connection, asset_id: int) -> bool:
 def run_migrations() -> None:
     """
     Handle schema migrations for future updates.
-    Currently a placeholder for future use.
+    Creates any missing tables idempotently.
     """
-    # TODO: Implement migration system when schema changes are needed
-    pass
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        with conn:
+            create_assets_table(conn)
+            create_findings_table(conn)
+            create_audit_log_table(conn)
+            create_sessions_table(conn)
+            create_chat_messages_table(conn)
+            create_agent_runs_table(conn)
+            create_agent_events_table(conn)
+    finally:
+        conn.close()
 
 # Example usage:
 # if __name__ == "__main__":

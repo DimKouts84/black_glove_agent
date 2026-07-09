@@ -100,7 +100,8 @@ class Orchestrator:
         self.policy_engine = create_policy_engine(config.get("policy", {}))
         self.plugin_manager = create_plugin_manager(
             config.get("adapters_path"),
-            policy_engine=self.policy_engine
+            config=config,
+            policy_engine=self.policy_engine,
         )
         
         if llm_client:
@@ -964,10 +965,8 @@ class Orchestrator:
                 params["domain"] = asset.target
                 params["record_types"] = ["A", "MX", "NS", "TXT", "CNAME"]
             else:
-                # For IP addresses, we might want reverse DNS lookup
-                # For now, treat as domain for testing
                 params["domain"] = asset.target
-                params["record_types"] = ["A", "PTR"]  # Reverse lookup for IPs
+                params["record_types"] = ["A"]
                 
         elif tool_name == "ssl_check":
             # SSL check works with both domains and IPs

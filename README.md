@@ -115,6 +115,16 @@ flowchart TD
 - **Retrieval-Augmented Generation**: Enhances responses with security knowledge base using ChromaDB
 - **Reasoning Model Support**: Compatible with thinking/reasoning models (e.g., Qwen-Thinking)
 
+### 🌐 Web Application (Local-First)
+
+- **React UI**: Terminal-themed web interface matching CLI aesthetics
+- **Single Command**: `black-glove serve` runs API + UI on `http://127.0.0.1:8787`
+- **Full Config Editor**: Change LLM provider, model, API keys, approval toggle from UI
+- **Session History**: View all chat sessions, sub-agent traces, and tool findings
+- **Live Orchestration**: WebSocket streaming of agent thinking, tool calls, and approvals
+
+See [docs/webapp.md](docs/webapp.md) for architecture and API reference.
+
 ### 🛠️ Modular Architecture
 - **Tool Adapters**: Standardized interface for security tools (Nmap, Gobuster, ZAP, etc.)
 - **Plugin System**: Easy to extend with new tools and capabilities
@@ -160,6 +170,19 @@ flowchart TD
    ```bash
    pip install -e .
    ```
+
+4. **Build web UI (optional):**
+   ```bash
+   cd frontend && npm install && npm run build
+   ```
+
+5. **Start web UI:**
+   ```bash
+   black-glove serve
+   # Open http://127.0.0.1:8787
+   ```
+
+   **Windows one-click:** double-click `scripts/launch-web.bat` — on first run uses `uv sync` (when `uv` is installed) to bootstrap `.venv` and dependencies, builds the frontend, then starts the server and opens the browser. Without `uv`, falls back to `pip install -e .`. Equivalent from CLI: `black-glove launch-web`.
 
 
 
@@ -313,6 +336,13 @@ enable_exploit_adapters: false  # Enable exploit adapters (disabled by default f
 # Evidence Storage
 # Configure where evidence files are stored
 evidence_storage_path: "~/.homepentest/evidence"
+
+# Per-adapter settings (merged by PluginManager before load)
+adapters:
+  sublist3r:
+    threads: 20
+  nmap:
+    timeout: 300
 
 # Asset Management Settings
 blocked_targets:

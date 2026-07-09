@@ -51,7 +51,9 @@ class TestGobusterValidation:
             create_gobuster_adapter({"wordlist": 123}).validate_config()
 
     def test_validate_params_dir_and_dns(self):
-        adapter = create_gobuster_adapter()
+        adapter = create_gobuster_adapter({"wordlist": None})
+        adapter._default_wordlist = None
+        adapter._defaults["wordlist"] = None
 
         # Missing wordlist
         with pytest.raises(ValueError):
@@ -107,7 +109,7 @@ class TestGobusterBuildersParsers:
             mode="dir",
         )
         # base
-        assert cmd[:2] == ["gobuster", "dir"]
+        assert cmd[1] == "dir"
         # wordlist
         assert "-w" in cmd and "/path/to/wordlist.txt" in cmd
         # url
@@ -128,7 +130,7 @@ class TestGobusterBuildersParsers:
             wordlist="/path/to/subs.txt",
             mode="dns",
         )
-        assert cmd[:2] == ["gobuster", "dns"]
+        assert cmd[1] == "dns"
         assert "-w" in cmd and "/path/to/subs.txt" in cmd
         assert "-d" in cmd and "example.com" in cmd
 
@@ -147,6 +149,35 @@ class TestGobusterBuildersParsers:
         hosts = [e.get("host") for e in parsed["entries"] if "host" in e]
         assert "admin.example.com" in hosts
         assert any(e.get("record_type") == "A" and e.get("host") == "dev.example.com" for e in parsed["entries"])
+
+    def test_annotate_entries_severity(self):
+        adapter = create_gobuster_adapter()
+        entries = [{"path": "/.env", "status": 200}, {"path": "/x", "status": 301}]
+        adapter._annotate_entries(entries, "dir")  # type: ignore[attr-defined]
+        assert entries[0]["severity"] == "critical"
+        assert entries[1]["severity"] == "low"
+
+    def test_filter_entries_status_codes(self):
+        adapter = create_gobuster_adapter()
+        parsed = adapter._parse_output(DIR_STDOUT, "dir")  # type: ignore[attr-defined]
+        adapter._filter_entries(parsed, {"status_codes": [200]}, "dir")  # type: ignore[attr-defined]
+        statuses = {e["status"] for e in parsed["entries"]}
+        assert statuses == {200}
+
+    def test_interpret_dir_includes_status(self):
+        from src.adapters.interface import AdapterResult, AdapterResultStatus
+        adapter = create_gobuster_adapter()
+        result = AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data={
+                "mode": "dir",
+                "entries": [{"path": "/admin", "status": 301}],
+            },
+            metadata={},
+        )
+        text = adapter.interpret_result(result)
+        assert "/admin" in text
+        assert "301" in text
 
 class TestGobusterExecution:
     def test_execute_dir_success_and_evidence(self, tmp_path: Path):
@@ -167,7 +198,7 @@ class TestGobusterExecution:
             # Check ProcessRunner spec
             spec = runner.last_spec
             assert spec is not None
-            assert spec["command"] == "gobuster"
+            assert Path(spec["command"]).name in ("gobuster", "gobuster.exe")
             assert "dir" in spec["args"]
             assert "-u" in spec["args"]
             assert "http://example.com" in spec["args"]
@@ -195,7 +226,7 @@ class TestPluginManagerIntegration:
             pm = PluginManager()
             adapter = pm.load_adapter("gobuster", {"_runner": runner})
             # Use duck typing (adapter.name) instead of isinstance to avoid module path issues
-            assert hasattr(adapter, "name") and adapter.name == "GobusterAdapter"
+            assert hasattr(adapter, "name") and adapter.name == "gobuster"
 
             res = pm.run_adapter("gobuster", {"mode": "dir", "url": "http://example.com", "wordlist": "/wl.txt"})
             assert res.status.name == "SUCCESS"
@@ -211,7 +242,7 @@ class TestPluginManagerIntegration:
             pm = PluginManager()
             adapter = pm.load_adapter("gobuster", {"_runner": runner})
             # Use duck typing (adapter.name) instead of isinstance to avoid module path issues
-            assert hasattr(adapter, "name") and adapter.name == "GobusterAdapter"
+            assert hasattr(adapter, "name") and adapter.name == "gobuster"
 
             res = pm.run_adapter("gobuster", {"mode": "dns", "domain": "example.com", "wordlist": "/subs.txt"})
             assert res.status.name == "SUCCESS"

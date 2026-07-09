@@ -121,11 +121,9 @@ class PassiveReconAdapter(BaseAdapter):
         return True
 
     def validate_params(self, params: Dict[str, Any]) -> bool:
-        super().validate_params(params)
+        from .domain_params import resolve_domain
 
-        domain = params.get("domain")
-        if not isinstance(domain, str) or not domain.strip():
-            raise ValueError("domain must be a non-empty string")
+        domain = resolve_domain(params)
         if not self._is_valid_domain(domain):
             raise ValueError(f"Invalid domain: {domain}")
 
@@ -138,7 +136,9 @@ class PassiveReconAdapter(BaseAdapter):
     # ---- Core execution ----
 
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
-        domain: str = params["domain"].strip()
+        from .domain_params import resolve_domain
+
+        domain: str = resolve_domain(params)
 
         # Resolve effective settings
         def _get(path: List[str], default: Any):
@@ -470,117 +470,147 @@ class PassiveReconAdapter(BaseAdapter):
         return bool(pattern.match(domain))
 
     def _scan_for_secrets(self, snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Scan URLs in snapshots for potential secrets (API keys, files).
-        """
+        """Scan Wayback URLs for potential secret indicators (URL patterns only)."""
         found = []
-        
-        # 1. File extensions of interest
-        sensitive_exts = {
+
+        high_risk_exts = {
             ".env", ".env.local", ".env.development", ".env.production",
             ".config", ".conf", ".ini",
             ".bak", ".backup", ".old", ".tmp",
             ".sql", ".dump", ".db", ".sqlite",
+            ".pem", ".key", ".cer", ".p12",
+            "wp-config.php",
+        }
+        medium_risk_exts = {
             ".git", ".git/config", ".gitignore",
-            ".pem", ".crt", ".key", ".cer", ".p12",
-            ".json", ".xml", ".yaml", ".yml",  # Config files often JSON/YAML
-            ".log",
-            "wp-config.php"
+            ".yaml", ".yml",
         }
 
-        # 2. Keywords in query parameters or path
         sensitive_keywords = [
-            "key=", "api_key=", "apikey=", "access_token=", "token=",
-            "secret=", "client_secret=", "auth=", "password=", "passwd=",
-            "pwd=", "private_key=", "aws_access_key_id=", "aws_secret_access_key="
+            "api_key=", "apikey=", "access_token=", "client_secret=",
+            "aws_access_key_id=", "aws_secret_access_key=",
+            "private_key=",
+        ]
+        lower_confidence_keywords = [
+            "key=", "token=", "secret=", "auth=", "password=", "passwd=", "pwd=",
         ]
 
-        # 3. High-entropy matching (simplified via keywords for now to avoid false positives on hashes)
-        
         seen_urls = set()
 
         for snap in snapshots:
             url = snap.get("url", "")
             if not url or url in seen_urls:
                 continue
-            
+
             seen_urls.add(url)
             lower_url = url.lower()
-            
-            # Check extensions
             parsed = parse.urlparse(url)
             path = parsed.path
-            
-            # Simple extension check: does it end with one of them?
-            # Or is it exactly one of them (e.g. /.env)?
-            ext_match = False
-            for ext in sensitive_exts:
-                if path.endswith(ext):
+
+            for ext in high_risk_exts:
+                if path.endswith(ext) or path == ext.lstrip("/"):
                     found.append({
                         "type": "sensitive_extension",
                         "match": ext,
                         "url": url,
-                        "timestamp": snap.get("timestamp")
+                        "timestamp": snap.get("timestamp"),
+                        "severity": "high",
+                        "confidence": 0.75,
                     })
-                    ext_match = True
                     break
-            
-            if ext_match:
-                continue
+            else:
+                for ext in medium_risk_exts:
+                    if path.endswith(ext) or path == ext.lstrip("/"):
+                        found.append({
+                            "type": "sensitive_extension",
+                            "match": ext,
+                            "url": url,
+                            "timestamp": snap.get("timestamp"),
+                            "severity": "medium",
+                            "confidence": 0.55,
+                        })
+                        break
+                else:
+                    for kw in sensitive_keywords:
+                        if kw in lower_url:
+                            found.append({
+                                "type": "sensitive_keyword",
+                                "match": kw,
+                                "url": url,
+                                "timestamp": snap.get("timestamp"),
+                                "severity": "high",
+                                "confidence": 0.7,
+                            })
+                            break
+                    else:
+                        for kw in lower_confidence_keywords:
+                            if kw in lower_url:
+                                found.append({
+                                    "type": "sensitive_keyword",
+                                    "match": kw,
+                                    "url": url,
+                                    "timestamp": snap.get("timestamp"),
+                                    "severity": "low",
+                                    "confidence": 0.45,
+                                })
+                                break
 
-            # Check keywords
-            for kw in sensitive_keywords:
-                if kw in lower_url:
-                    found.append({
-                        "type": "sensitive_keyword",
-                        "match": kw,
-                        "url": url,
-                        "timestamp": snap.get("timestamp")
-                    })
-                    break
-                    
         return found
 
+    def _extract_subdomains(self, crt_data: Dict[str, Any]) -> set:
+        subdomains = set()
+        for cert in crt_data.get("certificates", []):
+            if not isinstance(cert, dict):
+                continue
+            names = cert.get("name_value", [])
+            if isinstance(names, str):
+                names = names.splitlines()
+            for name in names:
+                if isinstance(name, str) and name.strip():
+                    subdomains.add(name.strip())
+        return subdomains
+
     def interpret_result(self, result: AdapterResult) -> str:
-        if result.status != AdapterResultStatus.SUCCESS:
+        if result.status == AdapterResultStatus.FAILURE:
+            return f"Passive Recon failed: {result.error_message or 'no data'}"
+
+        if result.status not in (AdapterResultStatus.SUCCESS, AdapterResultStatus.PARTIAL):
             return f"Passive Recon failed: {result.error_message}"
-        
+
         data = result.data
         if not data:
             return "No Passive Recon data."
-            
-        crt_sh = data.get("crt_sh", [])
-        wayback = data.get("wayback", [])
+
+        crt_data = data.get("crt_sh", {})
+        wayback_data = data.get("wayback", {})
         secrets = data.get("potential_secrets", [])
-        
-        summary = f"Passive Reconnaissance Findings:\n"
-        
-        # CRT.sh summary
-        subdomains = set()
-        for item in crt_sh:
-             # crt.sh items are usually dicts with 'name_value'
-             if isinstance(item, dict):
-                 name = item.get("name_value", "")
-                 if name:
-                     for sub in name.split('\n'):
-                         subdomains.add(sub.strip())
-        
-        summary += f"- Found {len(crt_sh)} certificates containing {len(subdomains)} unique subdomains.\n"
-        if len(subdomains) > 0:
-            picked = list(subdomains)[:10]
-            summary += f"  Sample: {', '.join(picked)}\n"
-            
-        # Wayback summary
-        summary += f"- Found {len(wayback)} historical URLs via Wayback Machine.\n"
-        
-        # Secrets summary
+        errors = data.get("errors", {})
+
+        cert_count = crt_data.get("count", 0) if isinstance(crt_data, dict) else 0
+        snap_count = wayback_data.get("count", 0) if isinstance(wayback_data, dict) else 0
+        subdomains = self._extract_subdomains(crt_data) if isinstance(crt_data, dict) else set()
+
+        status_label = "completed" if result.status == AdapterResultStatus.SUCCESS else "partially completed"
+        summary = f"Passive Reconnaissance {status_label} for {data.get('domain', 'unknown')}:\n"
+        summary += f"- crt.sh: {cert_count} certificates, {len(subdomains)} unique names.\n"
+        if subdomains:
+            summary += f"  Sample: {', '.join(list(subdomains)[:10])}\n"
+        summary += f"- Wayback: {snap_count} archived URLs.\n"
+
+        if errors:
+            summary += f"- Errors: {errors}\n"
+
         if secrets:
-            summary += f"- [CRITICAL] Found {len(secrets)} potential secrets in historical data!\n"
+            high_conf = [s for s in secrets if s.get("confidence", 0) >= 0.7]
+            summary += f"- Potential secret indicators: {len(secrets)} total ({len(high_conf)} higher confidence).\n"
             for s in secrets[:5]:
-                summary += f"  - {s.get('type')}: {s.get('match')[:50]}...\n"
+                sev = s.get("severity", "low").upper()
+                match = s.get("match", "")[:50]
+                summary += f"  - [{sev}] {s.get('type')}: {match} at {s.get('url', '')}\n"
+            summary += "  Note: URL-pattern matches are indicators only; content was not verified.\n"
         else:
-            summary += "- No potential secrets found in public data.\n"
-            
+            summary += "- No potential secret indicators in archived URLs.\n"
+
         return summary
 
     def get_info(self) -> Dict[str, Any]:

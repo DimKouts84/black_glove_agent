@@ -72,15 +72,8 @@ def main():
         for params, desc in TEST_CASES[adapter]:
             print(f"Action: {desc} | Params: {params}")
             try:
-                # Special-case functional adapters
-                if adapter == 'asset_manager':
-                    asset_mod = importlib.import_module(f'adapters.{adapter}')
-                    res = asset_mod.run(params)
-                else:
-                    # Load adapter
-                    pm.load_adapter(adapter)
-                    # Execute
-                    res = pm.run_adapter(adapter, params)
+                pm.load_adapter(adapter)
+                res = pm.run_adapter(adapter, params)
                 
                 if res.status.name == 'SUCCESS':
                     print(f"SUCCESS: Result data keys: {list(res.data.keys()) if isinstance(res.data, dict) else 'non-dict'}")

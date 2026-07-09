@@ -1,4 +1,5 @@
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable, Awaitable, Set
+import asyncio
 import json
 import logging
 import re
@@ -9,6 +10,8 @@ from agent.definitions import AgentDefinition, AgentInput
 from agent.llm_client import LLMClient, LLMMessage
 from agent.tools.registry import ToolRegistry
 
+ApprovalCallback = Callable[[str, Dict[str, Any]], Awaitable[bool]]
+
 class AgentExecutor:
     def __init__(
         self, 
@@ -16,13 +19,19 @@ class AgentExecutor:
         llm_client: LLMClient, 
         tool_registry: ToolRegistry,
         max_turns: int = 30,
-        on_activity: Optional[Any] = None
+        on_activity: Optional[Any] = None,
+        require_approval: bool = False,
+        safe_tools: Optional[Set[str]] = None,
+        approval_callback: Optional[ApprovalCallback] = None,
     ):
         self.definition = agent_definition
         self.llm = llm_client
         self.tool_registry = tool_registry
         self.max_turns = max_turns
         self.on_activity = on_activity
+        self.require_approval = require_approval
+        self.safe_tools = safe_tools or {"complete_task"}
+        self.approval_callback = approval_callback
         self.logger = logging.getLogger(f"black_glove.executor.{agent_definition.name}")
         
         # Inject the mandatory complete_task tool
@@ -191,8 +200,10 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
             self.logger.info(f"Turn {turn+1}/{self.max_turns}")
             # self._emit("thinking", f"Reasoning (Turn {turn+1})")
             
-            # Generate response
-            response = self.llm.generate(conversation_history, add_to_memory=False)
+            # Generate response (thread pool keeps asyncio event loop free for WS activity)
+            response = await asyncio.to_thread(
+                self.llm.generate, conversation_history, add_to_memory=False
+            )
             content = response.content
             
             # Parse response
@@ -292,13 +303,45 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
 
             # Handle other tools
             try:
+                # Approval gating for non-safe tools
+                if (
+                    self.require_approval
+                    and tool_name not in self.safe_tools
+                    and tool_name != "complete_task"
+                ):
+                    self._emit(
+                        "approval_request",
+                        f"Approve execution of {tool_name}?",
+                        tool=tool_name,
+                        params=tool_params,
+                    )
+                    approved = True
+                    if self.approval_callback:
+                        approved = await self.approval_callback(tool_name, tool_params)
+                    self._emit(
+                        "approval_resolved",
+                        "approved" if approved else "rejected",
+                        tool=tool_name,
+                        approved=approved,
+                    )
+                    if not approved:
+                        conversation_history.append(
+                            LLMMessage(
+                                role="user",
+                                content=f"Tool '{tool_name}' was rejected by user. Choose another approach.",
+                            )
+                        )
+                        continue
+
                 self._emit("tool_call", tool_name, params=tool_params)
                 
                 # Check if it's a subagent tool or simple tool
                 if self.tool_registry.has_tool(tool_name):
                     # It's a subagent or wrapped tool
                     tool_instance = self.tool_registry.get_tool(tool_name)
-                    # We assume tool_instance has an execute method. 
+                    if hasattr(tool_instance, "on_activity"):
+                        tool_instance.on_activity = self.on_activity
+                    # We assume tool_instance has an execute method.
                     if inspect.iscoroutinefunction(tool_instance.execute):
                         result = await tool_instance.execute(tool_params)
                     else:
@@ -324,11 +367,18 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                     
                     result_str = f"INTERPRETATION:\n{interpretation}\n\nRAW DATA:\n{str(display_data)}"
 
-                self._emit("tool_result", "Tool execution completed") 
-                
-                # Truncate if too long
-                if len(result_str) > 2000:
-                    result_str = result_str[:2000] + "...[truncated]"
+                self._emit("tool_result", "Tool execution completed")
+
+                web_scan_tools = {
+                    "web_vuln_scanner", "sqli_scanner", "web_server_scanner", "gobuster"
+                }
+                large_output_tools = web_scan_tools | {"passive_recon", "osint_harvester"}
+                max_len = 8000 if tool_name in large_output_tools else 2000
+                if isinstance(result, dict) and "interpretation" in result:
+                    max_len = 8000
+
+                if len(result_str) > max_len:
+                    result_str = result_str[:max_len] + "...[truncated]"
                 
                 conversation_history.append(LLMMessage(role="user", content=f"Tool Result ({tool_name}): {result_str}"))
 

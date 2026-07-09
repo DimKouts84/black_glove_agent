@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0a0a0a;
+  --primary: #06b6d4;
+  --secondary: #3b82f6;
+  --accent: #d946ef;
+  --glove: #ff3b3b;
+  --dim: #6b7280;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: #e5e7eb;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  min-height: 100vh;
+}
+
+/* CRT scanline overlay */
+body::after {
+  content: '';
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.08) 0px,
+    rgba(0, 0, 0, 0.08) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  z-index: 9999;
+}
+
+/* Grid background */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(6, 182, 212, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(6, 182, 212, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.neon-border {
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.15);
+}
+
+.neon-border:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.35);
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.caret-blink::after {
+  content: '▌';
+  animation: blink 1s step-end infinite;
+  color: var(--primary);
+}
+
+@keyframes boot-fade {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.boot-animate {
+  animation: boot-fade 0.4s ease-out forwards;
+}
+
+.severity-critical { color: #ef4444; border-color: #ef4444; }
+.severity-high { color: #f97316; border-color: #f97316; }
+.severity-medium { color: #eab308; border-color: #eab308; }
+.severity-low { color: #22c55e; border-color: #22c55e; }
+.severity-info { color: #06b6d4; border-color: #06b6d4; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #111; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }

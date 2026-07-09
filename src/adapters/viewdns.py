@@ -2,6 +2,7 @@ import requests
 from typing import Any, Dict
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
+from .domain_params import resolve_host
 import time
 import os
 
@@ -16,6 +17,17 @@ class ViewDnsAdapter(BaseAdapter):
         super().__init__(config)
         self._required_params = ["host"]
         self.api_key = config.get("viewdns_api_key") or os.getenv("VIEWDNS_API_KEY")
+
+    def validate_params(self, params: Dict[str, Any]) -> bool:
+        if "host" not in params:
+            try:
+                params["host"] = resolve_host(params)
+            except ValueError:
+                pass
+        super().validate_params(params)
+        if not params.get("host") or not str(params["host"]).strip():
+            raise ValueError("host must be a non-empty string")
+        return True
 
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
         """
@@ -55,6 +67,9 @@ class ViewDnsAdapter(BaseAdapter):
             response.raise_for_status()
             
             data = response.json()
+            api_errors = []
+            if "response" not in data:
+                api_errors.append(data.get("error", "Unexpected API response"))
             
             # Parse response
             ports = []
@@ -69,18 +84,23 @@ class ViewDnsAdapter(BaseAdapter):
             
             # Store evidence
             evidence_filename = f"viewdns_{host.replace('.', '_')}_{int(time.time())}.txt"
-            evidence_data = f"ViewDNS Port Scan Results for {host}\\n\\n"
-            evidence_data += f"Open Ports ({len(ports)}): \\n"
+            evidence_data = f"ViewDNS Port Scan Results for {host}\n\n"
+            evidence_data += f"Open Ports ({len(ports)}):\n"
             for port in ports:
-                evidence_data += f"  Port {port['port']}: {port['service']} ({port['protocol']})\\n"
+                evidence_data += f"  Port {port['port']}: {port['service']} ({port['protocol']})\n"
             evidence_path = self._store_evidence(evidence_data, evidence_filename)
-            
+
+            status = AdapterResultStatus.SUCCESS
+            if api_errors and not ports:
+                status = AdapterResultStatus.PARTIAL
+
             return AdapterResult(
-                status=AdapterResultStatus.SUCCESS,
+                status=status,
                 data={
                     "host": host,
                     "open_ports": ports, 
-                    "count": len(ports)
+                    "count": len(ports),
+                    "errors": api_errors or None,
                 },
                 metadata={
                     "adapter": self.name,
@@ -116,12 +136,16 @@ class ViewDnsAdapter(BaseAdapter):
             )
 
     def interpret_result(self, result: AdapterResult) -> str:
-        if result.status != AdapterResultStatus.SUCCESS:
+        if result.status not in (AdapterResultStatus.SUCCESS, AdapterResultStatus.PARTIAL):
             return f"ViewDNS scan failed: {result.error_message}"
         
         data = result.data
         if not data:
             return "No ViewDNS data."
+        
+        errors = data.get("errors") or []
+        if errors and result.status == AdapterResultStatus.PARTIAL:
+            return f"ViewDNS scan partial: {'; '.join(errors)}"
             
         open_ports = data.get("open_ports", [])
         target = data.get("host", "unknown") # Changed from 'target' to 'host' to match _execute_impl's data structure
@@ -152,7 +176,7 @@ class ViewDnsAdapter(BaseAdapter):
         base_info.update({
             "name": "ViewDnsAdapter",
             "version": "1.0.0",
-            "description": "Active port scanning using ViewDNS.info API. Use for IP addresses or hostnames.",
+            "description": "Active port scanning using ViewDNS.info API (port scan only). Use for IP addresses or hostnames.",
             "capabilities": base_info["capabilities"] + ["active_scan", "port_scan"],
             "requirements": ["requests", "viewdns_api_key"],
             "parameters": {

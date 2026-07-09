@@ -17,6 +17,7 @@ class SubagentTool:
         
         self.name = agent_definition.name
         self.description = agent_definition.description
+        self.on_activity = None
 
     def _generate_params_schema(self) -> Dict[str, Any]:
         """Generates JSON schema for tool parameters from input definition."""
@@ -93,7 +94,8 @@ class SubagentTool:
         executor = AgentExecutor(
             agent_definition=self.definition,
             llm_client=self.llm,
-            tool_registry=subagent_registry
+            tool_registry=subagent_registry,
+            on_activity=self.on_activity,
         )
         
         # Run it

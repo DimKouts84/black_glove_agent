@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
+from .domain_params import resolve_domain
 
 
 class DnsLookupAdapter(BaseAdapter):
@@ -68,10 +69,14 @@ class DnsLookupAdapter(BaseAdapter):
         Returns:
             bool: True if parameters are valid
         """
+        if "domain" not in params:
+            try:
+                params["domain"] = resolve_domain(params)
+            except ValueError:
+                pass
+
         # Call parent validation
         super().validate_params(params)
-        
-        # DNS-specific parameter validation
         if "domain" in params:
             if not isinstance(params["domain"], str) or not params["domain"].strip():
                 raise ValueError("Domain must be a non-empty string")
@@ -105,6 +110,7 @@ class DnsLookupAdapter(BaseAdapter):
         self.logger.info(f"Performing DNS lookup for domain: {domain}")
         
         try:
+            start_total = time.time()
             # Set resolver timeout
             resolver = dns.resolver.Resolver()
             resolver.timeout = timeout
@@ -174,7 +180,7 @@ class DnsLookupAdapter(BaseAdapter):
                     "record_types": record_types,
                     "timestamp": time.time()
                 },
-                execution_time=time.time() - time.time(),  # Will be updated by base class
+                execution_time=time.time() - start_total,
                 evidence_path=evidence_path
             )
             

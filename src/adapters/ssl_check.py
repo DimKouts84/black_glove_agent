@@ -9,10 +9,12 @@ import time
 import ssl
 import socket
 import datetime
+from datetime import timezone
 from typing import Any, Dict
 
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
+from .domain_params import resolve_host
 
 
 class SslCheckAdapter(BaseAdapter):
@@ -67,10 +69,17 @@ class SslCheckAdapter(BaseAdapter):
         Returns:
             bool: True if parameters are valid
         """
+        if not isinstance(params, dict):
+            raise ValueError("Parameters must be a dictionary")
+
+        if "host" not in params:
+            try:
+                params["host"] = resolve_host(params)
+            except ValueError:
+                pass
+
         # Call parent validation
         super().validate_params(params)
-        
-        # SSL-specific parameter validation
         if "host" in params:
             if not isinstance(params["host"], str) or not params["host"].strip():
                 raise ValueError("Host must be a non-empty string")
@@ -174,13 +183,20 @@ class SslCheckAdapter(BaseAdapter):
             not_before = cert_info["not_before"]
             
             if not_after:
-                expiry_date = datetime.datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
-                cert_info["expires_in_days"] = (expiry_date - datetime.datetime.utcnow()).days
-                cert_info["is_expired"] = expiry_date < datetime.datetime.utcnow()
+                expiry_date = datetime.datetime.strptime(
+                    not_after, "%b %d %H:%M:%S %Y %Z"
+                ).replace(tzinfo=timezone.utc)
+                now = datetime.datetime.now(timezone.utc)
+                cert_info["expires_in_days"] = (expiry_date - now).days
+                cert_info["is_expired"] = expiry_date < now
             
             if not_before:
-                start_date = datetime.datetime.strptime(not_before, "%b %d %H:%M:%S %Y %Z")
-                cert_info["is_not_yet_valid"] = start_date > datetime.datetime.utcnow()
+                start_date = datetime.datetime.strptime(
+                    not_before, "%b %d %H:%M:%S %Y %Z"
+                ).replace(tzinfo=timezone.utc)
+                cert_info["is_not_yet_valid"] = start_date > datetime.datetime.now(timezone.utc)
+            
+            cert_info["trust_validated"] = False
             
             # Store raw evidence
             evidence_filename = f"ssl_{host.replace('.', '_')}_{port}_{int(time.time())}.txt"
@@ -290,11 +306,15 @@ class SslCheckAdapter(BaseAdapter):
         summary += f"  - SANs: {san_str}\n"
         
         if is_expired:
-            summary += "  - Status: EXPIRED\n"
+            summary += "  - Status: EXPIRED (metadata only; trust not validated)\n"
         elif is_not_yet_valid:
-            summary += "  - Status: NOT YET VALID\n"
+            summary += "  - Status: NOT YET VALID (metadata only)\n"
         else:
-            summary += "  - Status: Valid\n"
+            days = data.get("expires_in_days")
+            if days is not None:
+                summary += f"  - Status: Certificate metadata retrieved (expires in {days} days; trust not validated)\n"
+            else:
+                summary += "  - Status: Certificate metadata retrieved (trust not validated)\n"
         
         return summary
 
@@ -311,7 +331,7 @@ class SslCheckAdapter(BaseAdapter):
             "version": self.version,
             "description": "SSL check adapter for SSL/TLS certificate validation. Use for hostnames or IP addresses.",
             "capabilities": base_info["capabilities"] + ["ssl_validation", "certificate_info"],
-            "requirements": ["ssl", "socket"],
+            "requirements": ["ssl", "socket", "cryptography (optional, for binary cert parsing)"],
             "default_port": self.default_port,
             "parameters": {
                 "type": "object",

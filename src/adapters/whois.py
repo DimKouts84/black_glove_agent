@@ -11,6 +11,7 @@ from typing import Any, Dict
 
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
+from .domain_params import resolve_domain
 
 
 class WhoisAdapter(BaseAdapter):
@@ -44,11 +45,7 @@ class WhoisAdapter(BaseAdapter):
         # Call parent validation
         super().validate_config()
         
-        # WHOIS-specific validation
-        if "timeout" in self.config:
-            if not isinstance(self.config["timeout"], (int, float)) or self.config["timeout"] <= 0:
-                raise ValueError("Timeout must be a positive number")
-        
+        # WHOIS-specific validation (timeout in config is reserved for future use)
         return True
     
     def validate_params(self, params: Dict[str, Any]) -> bool:
@@ -61,32 +58,34 @@ class WhoisAdapter(BaseAdapter):
         Returns:
             bool: True if parameters are valid
         """
+        if not isinstance(params, dict):
+            raise ValueError("Parameters must be a dictionary")
+
+        if "domain" not in params:
+            try:
+                params["domain"] = resolve_domain(params)
+            except ValueError:
+                pass
+
         # Call parent validation
         super().validate_params(params)
-        
-        # WHOIS-specific parameter validation
         if "domain" in params:
             if not isinstance(params["domain"], str) or not params["domain"].strip():
                 raise ValueError("Domain must be a non-empty string")
         
-        if "timeout" in params:
-            if not isinstance(params["timeout"], (int, float)) or params["timeout"] <= 0:
-                raise ValueError("Timeout must be a positive number")
-        
         return True
-    
+
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
         """
         Execute the WHOIS lookup.
         
         Args:
-            params: Execution parameters containing 'domain' and optional 'timeout'
+            params: Execution parameters containing 'domain'
             
         Returns:
             AdapterResult: Standardized result structure
         """
         domain = params["domain"]
-        timeout = params.get("timeout", self.config.get("timeout", 30))
         
         self.logger.info(f"Performing WHOIS lookup for domain: {domain}")
         
@@ -100,13 +99,27 @@ class WhoisAdapter(BaseAdapter):
             evidence_filename = f"whois_{domain.replace('.', '_')}_{int(time.time())}.txt"
             evidence_path = self._store_evidence(str(whois_info), evidence_filename)
             
+            # Normalize list fields for consistent output
+            def _first(val):
+                if isinstance(val, list) and val:
+                    return val[0]
+                return val
+
+            creation = _first(getattr(whois_info, 'creation_date', None))
+            expiration = _first(getattr(whois_info, 'expiration_date', None))
+            expires_in_days = None
+            if expiration and hasattr(expiration, "timestamp"):
+                import datetime
+                expires_in_days = (expiration - datetime.datetime.utcnow()).days
+
             return AdapterResult(
                 status=AdapterResultStatus.SUCCESS,
                 data={
                     "domain": domain,
-                    "registrar": getattr(whois_info, 'registrar', None),
-                    "creation_date": getattr(whois_info, 'creation_date', None),
-                    "expiration_date": getattr(whois_info, 'expiration_date', None),
+                    "registrar": _first(getattr(whois_info, 'registrar', None)),
+                    "creation_date": creation,
+                    "expiration_date": expiration,
+                    "expires_in_days": expires_in_days,
                     "name_servers": getattr(whois_info, 'name_servers', None),
                     "emails": getattr(whois_info, 'emails', None),
                     "org": getattr(whois_info, 'org', None),
@@ -122,7 +135,7 @@ class WhoisAdapter(BaseAdapter):
                 evidence_path=evidence_path
             )
             
-        except whois.parser.PywhoisError as e:
+        except whois.WhoisError as e:
             return AdapterResult(
                 status=AdapterResultStatus.FAILURE,
                 data=None,
@@ -153,7 +166,7 @@ class WhoisAdapter(BaseAdapter):
         if not data:
             return "No Whois data."
             
-        domain = data.get("domain_name")
+        domain = data.get("domain")
         registrar = data.get("registrar")
         creation_date = data.get("creation_date")
         expiration_date = data.get("expiration_date")
@@ -205,8 +218,7 @@ class WhoisAdapter(BaseAdapter):
                 "required": ["domain"]
             },
             "example_usage": {
-                "domain": "example.com",
-                "timeout": 30
+                "domain": "example.com"
             }
         })
         return base_info

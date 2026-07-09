@@ -7,7 +7,8 @@ Fallback: icanhazip.com
 """
 
 import requests
-from typing import Any, Dict, Optional
+import ipaddress
+from typing import Any, Dict, Optional, Tuple
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
 import time
@@ -53,23 +54,34 @@ class PublicIpAdapter(BaseAdapter):
         ipv4 = None
         ipv6 = None
         errors = []
+        services_used = []
         
         # Try to get IPv4
         try:
             ipv4 = self._get_ip_from_service(self.IPV4_PRIMARY)
+            services_used.append("api.ipify.org")
             self.logger.info(f"Detected IPv4: {ipv4}")
         except Exception as e:
             self.logger.warning(f"Primary IPv4 service failed: {e}")
             errors.append(f"IPv4 primary: {str(e)}")
             
             # Try fallback services
-            ipv4 = self._try_fallback_services()
+            ipv4, fallback_svc = self._try_fallback_services()
             if ipv4:
+                services_used.append(fallback_svc or "fallback")
                 self.logger.info(f"Detected IPv4 via fallback: {ipv4}")
         
         # Try to get IPv6
         try:
-            ipv6 = self._get_ip_from_service(self.IPV6_PRIMARY)
+            raw_ip = self._get_ip_from_service(self.IPV6_PRIMARY)
+            if raw_ip:
+                classified = self._classify_ip(raw_ip)
+                if classified == "ipv6":
+                    ipv6 = raw_ip
+                elif classified == "ipv4" and not ipv4:
+                    ipv4 = raw_ip
+                if "api64.ipify.org" not in services_used:
+                    services_used.append("api64.ipify.org")
             self.logger.info(f"Detected IPv6: {ipv6}")
         except Exception as e:
             self.logger.debug(f"IPv6 detection failed (may not be available): {e}")
@@ -94,8 +106,7 @@ class PublicIpAdapter(BaseAdapter):
             result_data["ipv4"] = ipv4
         if ipv6:
             result_data["ipv6"] = ipv6
-        
-        # Store evidence
+        result_data["services_used"] = services_used or ["ipify.org"]
         evidence_text = "Public IP Detection Results\n"
         evidence_text += f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         if ipv4:
@@ -116,7 +127,7 @@ class PublicIpAdapter(BaseAdapter):
             metadata={
                 "adapter": self.name,
                 "timestamp": time.time(),
-                "services_used": ["ipify.org"],
+                "services_used": services_used or ["ipify.org"],
                 "errors": errors if errors else None
             },
             evidence_path=evidence_path
@@ -143,24 +154,31 @@ class PublicIpAdapter(BaseAdapter):
         # Handle plain text responses
         return response.text.strip()
     
-    def _try_fallback_services(self) -> Optional[str]:
+    def _try_fallback_services(self):
         """
         Try fallback services if primary fails.
         
         Returns:
-            IP address or None if all failed
+            Tuple of (IP address or None, service name or None)
         """
         for service_url in self.FALLBACK_SERVICES:
             try:
                 ip = self._get_ip_from_service(service_url)
                 if ip:
                     self.logger.info(f"Got IP from fallback service: {service_url}")
-                    return ip
+                    return ip, service_url
             except Exception as e:
                 self.logger.debug(f"Fallback service {service_url} failed: {e}")
                 continue
         
-        return None
+        return None, None
+
+    def _classify_ip(self, ip_str: str) -> Optional[str]:
+        try:
+            version = ipaddress.ip_address(ip_str.strip()).version
+            return "ipv4" if version == 4 else "ipv6"
+        except ValueError:
+            return None
     
     def interpret_result(self, result: AdapterResult) -> str:
         if result.status != AdapterResultStatus.SUCCESS:

@@ -16,6 +16,13 @@ from pathlib import Path
 from adapters.interface import AdapterInterface, AdapterResult
 from adapters.base import BaseAdapter
 
+DISCOVERY_SKIP_MODULES = frozenset({
+    "interface",
+    "base",
+    "domain_params",
+    "url_params",
+})
+
 
 class AdapterManager:
     """
@@ -276,9 +283,8 @@ class PluginManager:
         try:
             for item in self.adapters_path.iterdir():
                 if item.is_file() and item.suffix == '.py' and item.name != '__init__.py':
-                    # Remove .py extension and get adapter name
                     adapter_name = item.stem
-                    if adapter_name != 'interface' and adapter_name != 'base':
+                    if adapter_name not in DISCOVERY_SKIP_MODULES:
                         discovered.add(adapter_name)
                         self.logger.debug(f"Discovered adapter: {adapter_name}")
                 
@@ -366,7 +372,7 @@ class PluginManager:
         
         # Load adapter if not already loaded
         if adapter_name not in self.adapter_manager.list_loaded_adapters():
-            self.load_adapter(adapter_name)
+            self.load_adapter(adapter_name, self._get_adapter_config(adapter_name))
         
         adapter = self.adapter_manager._loaded_adapters[adapter_name]
         
@@ -399,30 +405,125 @@ class PluginManager:
             return {}
             
         normalized = dict(params)
-        
-        # Mapping for adapters that strictly require target_url
-        url_adapters = {"web_vuln_scanner", "sqli_scanner", "web_server_scanner"}
-        
-        if adapter_name in url_adapters and "target_url" not in normalized:
-            # Try to find target from common keys
+
+        def _strip_host(value: str) -> str:
+            value = str(value).strip()
+            if "://" in value:
+                from urllib.parse import urlparse
+                parsed = urlparse(value)
+                value = parsed.netloc or value
+            if ":" in value and not value.startswith("["):
+                host_part, _, port_part = value.rpartition(":")
+                if port_part.isdigit():
+                    value = host_part
+            return value.strip("/")
+
+        def _strip_domain(value: str) -> str:
+            return _strip_host(value)
+
+        url_adapters = {
+            "web_vuln_scanner", "sqli_scanner", "web_server_scanner", "wappalyzer",
+        }
+
+        if adapter_name in url_adapters:
             target = (
-                normalized.get("target") or 
-                normalized.get("domain") or 
-                normalized.get("host") or 
-                normalized.get("url")
+                normalized.get("target_url")
+                or normalized.get("target")
+                or normalized.get("url")
+                or normalized.get("domain")
+                or normalized.get("host")
             )
-            
+
             if target:
-                # Ensure it has a scheme
-                if not target.startswith(("http://", "https://")):
+                if not str(target).startswith(("http://", "https://")):
                     target_url = f"https://{target}"
                 else:
-                    target_url = target
-                
+                    target_url = str(target)
+
                 normalized["target_url"] = target_url
-                self.logger.debug(f"Normalized '{target}' to target_url: '{target_url}' for {adapter_name}")
+                normalized["target"] = target_url
+                if adapter_name == "wappalyzer":
+                    normalized["url"] = target_url
+                self.logger.debug(
+                    f"Normalized URL params for {adapter_name}: target_url='{target_url}'"
+                )
+
+        domain_adapters = {
+            "passive_recon", "osint_harvester", "dns_lookup", "whois", "sublist3r",
+        }
+        if adapter_name in domain_adapters:
+            domain = normalized.get("domain") or normalized.get("target")
+            if domain:
+                domain = _strip_domain(domain)
+                normalized["domain"] = domain
+                normalized["target"] = domain
+                self.logger.debug(
+                    f"Normalized domain params for {adapter_name}: domain='{domain}'"
+                )
+
+        if adapter_name == "dns_recon":
+            target = normalized.get("target") or normalized.get("domain")
+            if target:
+                target = _strip_domain(target)
+                normalized["target"] = target
+                normalized["domain"] = target
+
+        host_adapters = {"ssl_check", "viewdns"}
+        if adapter_name in host_adapters:
+            host = (
+                normalized.get("host")
+                or normalized.get("target")
+                or normalized.get("domain")
+                or normalized.get("target_url")
+                or normalized.get("url")
+            )
+            if host:
+                host = _strip_host(host)
+                normalized["host"] = host
+
+        if adapter_name == "nmap":
+            target = (
+                normalized.get("target")
+                or normalized.get("domain")
+                or normalized.get("host")
+            )
+            if target:
+                normalized["target"] = _strip_host(target)
+
+        if adapter_name == "gobuster":
+            mode = normalized.get("mode") or "dir"
+            if mode == "dir":
+                url = (
+                    normalized.get("url")
+                    or normalized.get("target_url")
+                    or normalized.get("target")
+                )
+                if url:
+                    if not str(url).startswith(("http://", "https://")):
+                        url = f"https://{url}"
+                    normalized["url"] = url
+            else:
+                domain = normalized.get("domain") or normalized.get("target")
+                if domain:
+                    normalized["domain"] = _strip_domain(domain)
+
+        if adapter_name == "credential_tester":
+            target = normalized.get("target") or normalized.get("target_url")
+            if target and "target" not in normalized:
+                normalized["target"] = target
+            if target:
+                normalized["target_url"] = target
 
         return normalized
+
+    def _get_adapter_config(self, adapter_name: str) -> Dict[str, Any]:
+        """Merge per-adapter settings from plugin manager config."""
+        adapter_cfg = dict(self.config.get("adapters", {}).get(adapter_name, {}))
+        if adapter_name == "nmap" and "timeout" not in adapter_cfg:
+            scan_timeout = self.config.get("scan_timeout")
+            if scan_timeout is not None:
+                adapter_cfg["timeout"] = scan_timeout
+        return adapter_cfg
 
     def validate_adapter(self, adapter_name: str) -> bool:
         """

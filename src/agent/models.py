@@ -24,6 +24,14 @@ class SeverityLevel(str, Enum):
     CRITICAL = "critical"
     INFO = "info"
 
+
+def severity_for_db(level: SeverityLevel) -> str:
+    """Map in-memory severity to a value allowed by the findings table CHECK constraint."""
+    if level == SeverityLevel.INFO:
+        return SeverityLevel.LOW.value
+    return level.value
+
+
 class EventType(str, Enum):
     """Enumeration of audit log event types."""
     APPROVAL = "approval"
@@ -73,6 +81,23 @@ class ConfigModel(BaseModel):
     # Safety settings
     require_lab_mode_for_exploits: bool = Field(default=True, description="Require lab mode for exploit tools")
     enable_exploit_adapters: bool = Field(default=False, description="Enable exploit adapters (disabled by default)")
+    require_approval: bool = Field(
+        default=False,
+        description="Require human approval before running non-safe tools"
+    )
+    
+    # Web server settings
+    web_host: str = Field(default="127.0.0.1", description="Web UI bind host")
+    web_port: int = Field(default=8787, ge=1, le=65535, description="Web UI bind port")
+    web_api_token: Optional[str] = Field(
+        default=None, description="Optional API token for web/WS auth"
+    )
+    
+    # Per-adapter settings
+    adapters: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Per-adapter configuration passed to PluginManager"
+    )
     
     # Evidence storage
     evidence_storage_path: str = Field(default="~/.homepentest/evidence", description="Path to store evidence files")
@@ -340,41 +365,5 @@ def load_config_from_file() -> ConfigModel:
     Returns:
         ConfigModel: Loaded configuration
     """
-    import logging
-    from dotenv import load_dotenv
-    
-    # Load environment variables from .env file
-    load_dotenv()
-    
-    logger = logging.getLogger("black_glove.config")
-    
-    # Check current directory first, then home directory
-    config_path = Path.cwd() / "config.yaml"
-    if not config_path.exists():
-        config_path = Path.home() / ".homepentest" / "config.yaml"
-    
-    if not config_path.exists():
-        logger.warning(f"Configuration file not found at {config_path}, using defaults")
-        return ConfigModel()
-    
-    try:
-        with open(config_path, 'r') as f:
-            config_data = yaml.safe_load(f)
-        
-        if not isinstance(config_data, dict):
-            logger.warning("Invalid configuration file format, using defaults")
-            return ConfigModel()
-        
-        # Create ConfigModel instance with loaded data
-        # Environment variables will override file config if set (pydantic behavior if using BaseSettings, 
-        # but here we are using BaseModel, so we might need manual handling if we want env vars to take precedence.
-        # For now, we'll assume config file is primary, but we can populate missing keys from env if needed.)
-        
-        config = ConfigModel(**config_data)
-        logger.info("Configuration loaded successfully from file")
-        return config
-        
-    except Exception as e:
-        logger.error(f"Failed to load configuration from {config_path}: {e}")
-        logger.info("Using default configuration")
-        return ConfigModel()
+    from .config_service import get_config_service
+    return get_config_service().load()

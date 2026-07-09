@@ -221,12 +221,13 @@ All security tools run in isolated Docker containers:
 ## Configuration Management
 
 ### File Location
-- **Path**: `~/.homepentest/config.yaml`
+- **Canonical path**: `~/.homepentest/config.yaml` (load and save once it exists)
+- **Bootstrap fallback**: `./config.yaml` in cwd when home config does not exist yet (e.g. first run from project repo)
 - **Template**: `config/default_config.yaml`
 
 ### Configuration Hierarchy
 1. Default values (hardcoded)
-2. Configuration file
+2. Configuration file (`~/.homepentest/config.yaml`, or cwd `config.yaml` until first save)
 3. Environment variables
 4. Command-line arguments
 

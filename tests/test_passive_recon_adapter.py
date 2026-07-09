@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.adapters.passive_recon import PassiveReconAdapter, create_passive_recon_adapter
+import adapters.passive_recon as passive_recon_plugin
 from src.agent.plugin_manager import PluginManager
 
 
@@ -57,6 +58,12 @@ def _wayback_json_many() -> str:
     ]"""
 
 
+def _patch_passive_http_get(monkeypatch: pytest.MonkeyPatch, fake_http_get):
+    monkeypatch.setattr(PassiveReconAdapter, "_http_get", fake_http_get)
+    monkeypatch.setattr(passive_recon_plugin.PassiveReconAdapter, "_http_get", fake_http_get)
+
+
+
 def test_passive_recon_validate_params_invalid_domain():
     adapter = create_passive_recon_adapter()
     with pytest.raises(ValueError):
@@ -73,7 +80,7 @@ def test_passive_recon_success_both_sources(monkeypatch: pytest.MonkeyPatch):
             return _wayback_json_many()
         return "[]"
 
-    monkeypatch.setattr(PassiveReconAdapter, "_http_get", fake_http_get)
+    _patch_passive_http_get(monkeypatch, fake_http_get)
 
     result = adapter.execute({"domain": "example.com", "max_results": 2})
 
@@ -94,7 +101,7 @@ def test_passive_recon_partial_when_one_fails(monkeypatch: pytest.MonkeyPatch):
             raise Exception("Wayback error")
         return "[]"
 
-    monkeypatch.setattr(PassiveReconAdapter, "_http_get", fake_http_get)
+    _patch_passive_http_get(monkeypatch, fake_http_get)
 
     result = adapter.execute({"domain": "example.com", "max_results": 5})
 
@@ -110,7 +117,7 @@ def test_passive_recon_failure_when_both_fail(monkeypatch: pytest.MonkeyPatch):
     def fake_http_get(self, url: str, timeout: float) -> str:
         raise Exception("Network down")
 
-    monkeypatch.setattr(PassiveReconAdapter, "_http_get", fake_http_get)
+    _patch_passive_http_get(monkeypatch, fake_http_get)
 
     result = adapter.execute({"domain": "example.com"})
 
@@ -137,7 +144,7 @@ def test_plugin_manager_integration_with_passive_recon(monkeypatch: pytest.Monke
             return _wayback_json_many()
         return "[]"
 
-    monkeypatch.setattr(PassiveReconAdapter, "_http_get", fake_http_get)
+    _patch_passive_http_get(monkeypatch, fake_http_get)
 
     pm = PluginManager()
     pm.discover_adapters()

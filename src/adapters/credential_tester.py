@@ -7,6 +7,8 @@ Includes "Lab Mode" safeguards to prevent accidental scanning of unauthorized ta
 
 import logging
 import time
+import hashlib
+import re
 import ftplib
 import concurrent.futures
 from typing import Any, Dict, List, Optional, Tuple, Protocol
@@ -48,8 +50,9 @@ class CredentialTesterAdapter(BaseAdapter):
     # -- validation ---------------------------------------------------------
 
     def validate_params(self, params: Dict[str, Any]) -> None:
-        if "target" not in params or not params["target"]:
-            raise ValueError("Target host/URL is required")
+        target = params.get("target") or params.get("target_url")
+        if not target:
+            raise ValueError("Target host/URL is required (target or target_url)")
         
         protocol = params.get("protocol")
         if not protocol or protocol not in ["ssh", "ftp", "http_basic"]:
@@ -117,60 +120,68 @@ class CredentialTesterAdapter(BaseAdapter):
             except:
                 pass
 
-    def _test_http_basic(self, target: str, port: int, user: str, password: str) -> bool:
-        """Attempt HTTP Basic Auth."""
-        # Target should be a base URL usually, but if provided as hostname:
-        url = target
-        if not url.startswith(("http://", "https://")):
-            scheme = "https" if port == 443 else "http"
-            url = f"{scheme}://{target}:{port}"
-        
+    @staticmethod
+    def _build_http_url(target: str, port: int) -> str:
+        if target.startswith(("http://", "https://")):
+            return target
+        scheme = "https" if port == 443 else "http"
+        if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+            return f"{scheme}://{target}"
+        return f"{scheme}://{target}:{port}"
+
+    @staticmethod
+    def _response_fingerprint(resp: requests.Response) -> str:
+        normalized = re.sub(r"\s+", " ", resp.text.strip())
+        return hashlib.sha256(f"{resp.status_code}:{normalized}".encode()).hexdigest()
+
+    def _http_requires_basic_auth(self, url: str) -> tuple:
+        """Return (requires_auth, note). requires_auth True when 401 + WWW-Authenticate Basic."""
         try:
-            resp = requests.get(
-                url, 
-                auth=(user, password), 
-                timeout=self._global_timeout,
-                verify=False
+            resp = requests.get(url, timeout=self._global_timeout, verify=False)
+        except Exception as e:
+            return False, f"Pre-check failed: {e}"
+
+        if resp.status_code < 400:
+            return False, (
+                "Target does not require HTTP Basic authentication "
+                f"(returned {resp.status_code} without credentials)."
             )
-            # 200 OK or 401/403 are the indicators
-            if resp.status_code < 400:
-                # Check if this was actually an auth success or just a pubic page
-                # If we sent auth headers and got 200, we need to be careful.
-                # Real basic auth usually returns 401 if no creds, and 200 if creds are good.
-                # But a public page returns 200 regardless of creds.
-                # So, we should only consider it a success if we previously confirmed it requires auth 
-                # OR if the response varies based on auth. 
-                # For this simple scanner, we'll assume the user is testing a known auth endpoint.
-                # HOWEVER, to fix the reported bug: we can check if the 401 challenge exists on a dummy request.
-                # But since we are inside the brute loop, we can't easily check that without overhead.
-                
-                # Better approach for this specific bugreport:
-                # If the response is 200, check if it looks like a login page or if we are authenticated.
-                # For HTTP Basic, the browser/client handles the 401 -> 200 flow.
-                # If requests.get() returns 200 with auth=(u,p), it means:
-                # 1. Auth succeeded
-                # 2. OR Auth was ignored (public page)
-                
-                # To distinguish, we should check if a request WITHOUT creds returns 401.
-                # But doing that for every check is slow.
-                # Let's assume the target IS protected. 
-                # The issue was: site returns 200 OK for everything.
-                
-                # Fix: Check for WWW-Authenticate header in 401 response? No, we have a 200 here.
-                # Fix: In the _execute_impl, we should first verify the target actually requires Basic Auth.
-                # But to fix THIS method:
-                return True
-            elif resp.status_code == 401:
-                return False
-            return False
+
+        auth_header = resp.headers.get("WWW-Authenticate", "")
+        if resp.status_code == 401 and "basic" in auth_header.lower():
+            return True, None
+
+        return False, (
+            f"Target returned {resp.status_code} but did not present HTTP Basic auth challenge."
+        )
+
+    def _test_http_basic(self, target: str, port: int, user: str, password: str) -> bool:
+        url = self._build_http_url(target, port)
+
+        try:
+            unauth = requests.get(url, timeout=self._global_timeout, verify=False)
+            auth = requests.get(
+                url,
+                auth=(user, password),
+                timeout=self._global_timeout,
+                verify=False,
+            )
         except Exception as e:
             logger.debug(f"HTTP error {url} - {e}")
             return False
 
+        if unauth.status_code != 401:
+            return False
+
+        if auth.status_code >= 400:
+            return False
+
+        return self._response_fingerprint(auth) != self._response_fingerprint(unauth)
+
     # -- execution ----------------------------------------------------------
 
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
-        target = params["target"]
+        target = params.get("target") or params.get("target_url")
         protocol = params["protocol"]
         usernames = params["usernames"]
         passwords = params["passwords"]
@@ -207,34 +218,24 @@ class CredentialTesterAdapter(BaseAdapter):
 
         # Use ThreadPoolExecutor
         
-        # Pre-check for HTTP Basic
         if protocol == "http_basic":
-            try:
-                # Construct URL same as in _test_http_basic
-                test_url = target
-                if not test_url.startswith(("http://", "https://")):
-                    scheme = "https" if port == 443 else "http"
-                    test_url = f"{scheme}://{target}:{port}"
-                    
-                logger.info(f"Verifying {test_url} requires authentication...")
-                # Request WITHOUT auth
-                resp = requests.get(test_url, timeout=self._global_timeout, verify=False)
-                if resp.status_code < 400:
-                    logger.warning(f"Target {test_url} returns {resp.status_code} without authentication. Skipping brute force.")
-                    return AdapterResult(
-                        status=AdapterResultStatus.SUCCESS,
-                        data={
-                            "target": target,
-                            "port": port,
-                            "protocol": protocol,
-                            "valid_credentials": [],
-                            "attempts": 0,
-                            "note": "Target does not require authentication (returned successful status code without credentials)."
-                        },
-                        metadata={}
-                    )
-            except Exception as e:
-                logger.warning(f"Pre-check failed for {target}: {e}. Proceeding with brute force anyway.")
+            test_url = self._build_http_url(target, port)
+            logger.info(f"Verifying {test_url} requires HTTP Basic authentication...")
+            requires_auth, note = self._http_requires_basic_auth(test_url)
+            if not requires_auth:
+                logger.warning(f"Skipping HTTP Basic brute force: {note}")
+                return AdapterResult(
+                    status=AdapterResultStatus.SUCCESS,
+                    data={
+                        "target": target,
+                        "port": port,
+                        "protocol": protocol,
+                        "valid_credentials": [],
+                        "attempts": 0,
+                        "note": note,
+                    },
+                    metadata={},
+                )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             future_to_cred = {}
@@ -279,12 +280,19 @@ class CredentialTesterAdapter(BaseAdapter):
         protocol = data.get("protocol")
         target = data.get("target")
         attempts = data.get("attempts", 0)
-        
+        note = data.get("note")
+
+        if note:
+            return f"Credential Tester: {note}"
+
         if not valid_creds:
             return f"Credential Tester: No valid credentials found for {protocol} on {target} after {attempts} attempts."
-            
+
         creds_str = "\n".join([f"  - {cred['username']}:{cred['password']}" for cred in valid_creds])
-        return f"Credential Tester: FOUND VALID CREDENTIALS for {protocol} on {target}:\n{creds_str}"
+        return (
+            f"Credential Tester: FOUND VALID CREDENTIALS for {protocol} on {target}:\n"
+            f"{creds_str}"
+        )
 
     def get_info(self) -> Dict[str, Any]:
         return {
@@ -296,7 +304,8 @@ class CredentialTesterAdapter(BaseAdapter):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target": {"type": "string", "description": "Target hostname or IP"},
+                    "target": {"type": "string", "description": "Target hostname, IP, or URL (alias: target_url)"},
+                    "target_url": {"type": "string", "description": "Alias for target"},
                     "protocol": {"type": "string", "enum": ["ssh", "ftp", "http_basic"]},
                     "usernames": {"type": "array", "items": {"type": "string"}},
                     "passwords": {"type": "array", "items": {"type": "string"}},

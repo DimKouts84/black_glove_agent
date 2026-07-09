@@ -32,8 +32,10 @@ All skills leverage the `AdapterInterface` to ensure uniform execution, error ha
 | **dns_lookup** | DNS Enumeration | `src/adapters/dns_lookup.py` | Retrieves A, AAAA, MX, NS, and TXT records for a domain. |
 | **dns_recon** | Advanced DNS Recon | `src/adapters/dns_recon.py` | Zone transfers, subdomain brute-forcing, and thorough DNS discovery. |
 | **whois** | Registration Info | `src/adapters/whois.py` | Queries registrar data to identify domain ownership details. |
-| **ssl_check** | Certificate Analysis | `src/adapters/ssl_check.py` | Analyzes SSL/TLS certificates for validity, issuer, and expiration. |
-| **viewdns** | Reverse Intelligence | `src/adapters/viewdns.py` | Performs Reverse IP lookups and port scanning via ViewDNS API. |
+| **ssl_check** | Certificate Analysis | `src/adapters/ssl_check.py` | Retrieves SSL/TLS certificate metadata (issuer, expiry, SANs). Trust chain is not validated (`CERT_NONE`). Optional `cryptography` for binary cert parsing. |
+| **viewdns** | ViewDNS Port Scan | `src/adapters/viewdns.py` | Active port scanning via ViewDNS.info API (requires API key). |
+
+**Network recon parameters:** `dns_lookup`/`whois`/`sublist3r` use `domain` (alias `target`). `dns_recon` uses `target` (alias `domain`). `ssl_check`/`viewdns` use `host` (aliases `target`, `domain`). `nmap` uses `target`. See [`docs/network_infra_audit.md`](docs/network_infra_audit.md).
 
 ### 2. Web Application Intelligence
 
@@ -43,8 +45,10 @@ All skills leverage the `AdapterInterface` to ensure uniform execution, error ha
 | **wappalyzer** | Tech Stack Detection | `src/adapters/wappalyzer.py` | Identifies technologies used on a website (CMS, Frameworks, Analytics). |
 | **sublist3r** | Subdomain Enum | `src/adapters/sublist3r.py` | Aggregates subdomains from many public sources (Google, Yahoo, Bing, etc.). |
 | **web_server_scanner**| Server Analysis | `src/adapters/web_server_scanner.py` | Nikto-like checks for headers, dangerous files, methods, and versions. |
-| **sqli_scanner** | SQLi Detection | `src/adapters/sqli_scanner.py` | Detects SQL injection vulnerabilities using multiple techniques. |
-| **web_vuln_scanner**| Web Vulnerability | `src/adapters/web_vuln_scanner.py` | Active scanning for XSS, Path Traversal, SSTI, and more. |
+| **sqli_scanner** | SQLi Detection | `src/adapters/sqli_scanner.py` | Heuristic SQL injection detection (error, boolean, time). Not a sqlmap replacement. |
+| **web_vuln_scanner**| Web Vulnerability | `src/adapters/web_vuln_scanner.py` | Active scanning for XSS, Path Traversal, and SSTI (query params only). |
+
+**Web scanner parameters:** Custom scanners accept `target_url` (canonical) or `target`. Wrappers: `gobuster` (`url`/`target_url` for dir, `domain` for dns), `wappalyzer` (`url`/`target_url`), `sublist3r` (`domain`/`target`). See [`docs/web_tools_audit.md`](docs/web_tools_audit.md).
 
 ### 3. Specialized Intelligence
 
@@ -55,11 +59,24 @@ All skills leverage the `AdapterInterface` to ensure uniform execution, error ha
 | **credential_tester**| Brute-force | `src/adapters/credential_tester.py` | Lab-safe credential testing for SSH, FTP, and HTTP Basic. |
 | **camera_security**| IoT Exposure | `src/adapters/camera_security.py` | Checks for known vulnerabilities or exposures in IP cameras. |
 
+**Specialized intelligence parameters:** See [docs/specialized_intel_audit.md](docs/specialized_intel_audit.md) for the audit matrix. Canonical inputs: passive_recon uses domain (alias 	arget); osint_harvester uses 	arget (alias domain); credential_tester uses 	arget (alias 	arget_url); camera_security uses 	arget. Domain resolution strips URLs via src/adapters/domain_params.py.
+
+**Known limitations:**
+- **passive_recon**: Domain names only (not raw IPs). potential_secrets are Wayback URL/pattern indicators; archived page content is not fetched or verified.
+- **osint_harvester**: Email harvesting filters addresses that do not contain the target domain string.
+- **credential_tester**: HTTP Basic runs only after a pre-check sees 401 with WWW-Authenticate: Basic; public pages are skipped. A credential counts as valid only when the authenticated response differs from the unauthenticated fingerprint.
+- **camera_security**: Heuristic TCP/HTTP checks; string-tagged findings in output. Confirm exposures manually.
+
 ### 4. Operational Skills
 
 | Skill Name | Description | Responsible File | Key Capabilities |
 |------------|-------------|------------------|------------------|
-| **asset_manager** | Target Management | `src/adapters/asset_manager.py` | CRUD operations for managing the scope of engagement (adding/removing targets). |
+| **asset_manager** | Target Management | `src/adapters/asset_manager.py` | CRUD for engagement scope: `add`, `list`, `remove` only. Uses shared SQLite DB via `init_db`. Assessment reports use the `generate_report` tool, not asset_manager. |
+| **generate_report** | Report Generation | `src/agent/tools/report_tool.py` | DB-backed assessment reports (markdown/json/html/csv). |
+
+**Session-level findings:** `public_ip` has no target parameter; `AdapterToolWrapper` persists findings against a session asset (`local-agent`). `services_used` is included in normalized finding descriptions.
+
+**Per-adapter config:** `config.yaml` `adapters:` block is merged by `PluginManager._get_adapter_config` (e.g. `sublist3r.threads`, `nmap.timeout`). See [`docs/operational_audit.md`](docs/operational_audit.md).
 
 ---
 

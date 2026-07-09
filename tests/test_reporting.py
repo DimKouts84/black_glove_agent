@@ -401,11 +401,12 @@ class TestReportGenerator:
         
         report_content = generator.generate_report(findings, assets, metadata, ReportFormat.MARKDOWN)
         
-        # Check basic Markdown structure
-        assert "# Black Glove Security Assessment Report" in report_content
+        # Check Jinja2 template markdown structure
+        assert "# Pentest Report" in report_content
         assert "Test Finding" in report_content
         assert "test_asset" in report_content
-        assert "High Severity Findings" in report_content
+        assert "Executive Summary" in report_content
+        assert "Detailed Findings" in report_content
     
     def test_generate_html_report(self):
         """Test generating HTML report."""
@@ -567,6 +568,31 @@ class TestReportingManager:
         
         # Check that execute was called with correct parameters
         mock_cursor.execute.assert_called()
+        mock_conn.commit.assert_called()
+
+    def test_save_findings_to_database_maps_info_severity_to_low(self):
+        """INFO severity is mapped to low for SQLite CHECK constraint compatibility."""
+        mock_conn = Mock()
+        mock_cursor = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        manager = ReportingManager(mock_conn)
+        findings = [
+            Finding(
+                title="Informational finding",
+                description="DNS A records discovered",
+                severity=SeverityLevel.INFO,
+                confidence=0.9,
+                asset_id=1,
+                asset_name="example.com",
+            )
+        ]
+
+        manager.save_findings_to_database(findings)
+
+        mock_cursor.execute.assert_called_once()
+        insert_args = mock_cursor.execute.call_args[0][1]
+        assert insert_args[2] == "low"
         mock_conn.commit.assert_called()
     
     def test_save_findings_to_database_error(self):
@@ -733,7 +759,7 @@ class TestReportingIntegration:
                 # Should be valid JSON
                 json.loads(report_content)
             elif format_type == ReportFormat.MARKDOWN:
-                assert "# Black Glove Security Assessment Report" in report_content
+                assert "# Pentest Report" in report_content
             elif format_type == ReportFormat.HTML:
                 assert "<!DOCTYPE html>" in report_content
             elif format_type == ReportFormat.CSV:

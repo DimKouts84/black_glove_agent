@@ -59,6 +59,19 @@ This section adheres to the **Agentic AI Foundation (AAIF)** standards for defin
     *   **Logic**: Identifies non-obvious vulnerabilities.
     *   **Priority**: Flags leaked credentials as **CRITICAL**.
 
+## Web Application & Shared Runtime
+
+Black Glove now supports both **CLI** (`black-glove chat`) and **Web UI** (`black-glove serve`) via a shared core:
+
+| Component | File | Role |
+|-----------|------|------|
+| **AgentRuntime** | `src/agent/runtime.py` | Assembles ToolRegistry, sub-agents, root executor; used by CLI and web |
+| **ConfigService** | `src/agent/config_service.py` | Single source of truth for `config.yaml` (CLI + web settings) |
+| **Web API** | `src/webapp/` | FastAPI REST + WebSocket; never imports adapters directly |
+| **React UI** | `frontend/` | Terminal-themed SPA; tools loaded dynamically from `/api/tools` |
+
+**Approval gating**: `require_approval` in config toggles human-in-the-loop via `AgentExecutor.approval_callback`.
+
 ---
 
 # SECTION 2: DEVELOPMENT GUIDELINES (For the Coding Assistant)

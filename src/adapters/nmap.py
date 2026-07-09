@@ -92,11 +92,9 @@ class NmapAdapter(BaseAdapter):
             if not isinstance(cfg["rate_limit_rpm"], int) or cfg["rate_limit_rpm"] <= 0:
                 raise ValueError("rate_limit_rpm must be a positive integer or None")
 
-        # Check if nmap is available
-        if not shutil.which("nmap"):
-             # We don't raise here to allow instantiation, but execution will fail. 
-             # Or we could warn. For now, we'll let execution fail if not found.
-             pass
+        # Check if nmap is available (system PATH or bundled binary)
+        if not shutil.which("nmap") and not Path(self._nmap_path).exists():
+            pass
 
         return True
 
@@ -172,15 +170,15 @@ class NmapAdapter(BaseAdapter):
 
         # Validate and resolve target
         target = params["target"].strip()
-        resolved_target = resolve_host(target)
-        if not resolved_target and not re.match(r'^\d+\.\d+\.\d+\.\d+', target):  # Not an IP address
-            # Try to resolve the target - if it fails, let nmap handle it (might be a valid nmap target format)
-            pass  # Let nmap deal with it directly
+        scan_target = target
+        if not re.match(r"^\d+\.\d+\.\d+\.\d+", target) and "/" not in target:
+            resolved = resolve_host(target)
+            if resolved:
+                scan_target = resolved
 
-        # Build command
         cmd = self._build_command(
             params={
-                "target": target,
+                "target": scan_target,
                 "ports": params.get("ports"),
                 "scripts": params.get("scripts"),
                 "extra_flags": params.get("extra_flags"),

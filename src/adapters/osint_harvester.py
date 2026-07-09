@@ -105,13 +105,9 @@ class OSINTHarvesterAdapter(BaseAdapter):
         return True
 
     def validate_params(self, params: Dict[str, Any]) -> bool:
-        super().validate_params(params)
+        from .domain_params import resolve_domain
 
-        target = params.get("target")
-        if not isinstance(target, str) or not target.strip():
-            raise ValueError("target must be a non-empty string (domain name)")
-
-        domain = target.strip().lower()
+        domain = resolve_domain(params).lower()
         if not self._is_valid_domain(domain):
             raise ValueError(f"Invalid domain: {domain}")
 
@@ -132,7 +128,9 @@ class OSINTHarvesterAdapter(BaseAdapter):
     # ---- Core execution ----
 
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
-        domain = params["target"].strip().lower()
+        from .domain_params import resolve_domain
+
+        domain = resolve_domain(params).lower()
         modules = params.get("modules", ["emails", "subdomains", "metadata"])
         timeout = self.config.get("timeout", self._defaults["timeout"])
 
@@ -453,8 +451,7 @@ class OSINTHarvesterAdapter(BaseAdapter):
         raw_matches = email_pattern.findall(content)
         for email in raw_matches:
             email = email.lower().strip()
-            # Only keep emails belonging to the target domain
-            if email.endswith(f"@{domain}") or domain in email:
+            if email.endswith(f"@{domain}"):
                 emails.add(email)
 
         # Also check mailto: links
@@ -464,9 +461,8 @@ class OSINTHarvesterAdapter(BaseAdapter):
                 href = link["href"]
                 if href.startswith("mailto:"):
                     email = href.replace("mailto:", "").split("?")[0].strip().lower()
-                    if email_pattern.match(email):
-                        if email.endswith(f"@{domain}") or domain in email:
-                            emails.add(email)
+                    if email_pattern.match(email) and email.endswith(f"@{domain}"):
+                        emails.add(email)
         except Exception:
             pass
 
@@ -654,14 +650,17 @@ class OSINTHarvesterAdapter(BaseAdapter):
             lines.append(f"- Emails: Error ({errors['emails']})")
         else:
             lines.append(f"- Emails: Found {len(emails)}")
+            if emails:
+                lines.append(f"  Sample: {', '.join(emails[:5])}")
 
-        # Subdomains
         if "subdomains" in errors:
             lines.append(f"- Subdomains: Error ({errors['subdomains']})")
             if subdomains:
                 lines.append(f"  (Note: Partial results found {len(subdomains)} subdomains despite error)")
         else:
             lines.append(f"- Subdomains: Found {len(subdomains)}")
+            if subdomains:
+                lines.append(f"  Sample: {', '.join(subdomains[:5])}")
 
         # Metadata
         if "metadata" in errors:

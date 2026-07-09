@@ -177,22 +177,22 @@ def handle_generate_report(db_conn: sqlite3.Connection, parsed: ParsedCommand) -
         
         # Generate report
         report = f"# Security Report: {name}\n\n"
-        report += f"**Target**: {asset_type.upper()} - {value}\\n"
-        report += f"**Generated**: {findings[0][5] if findings else 'N/A'}\\n\\n"
+        report += f"**Target**: {asset_type.upper()} - {value}\n"
+        report += f"**Generated**: {findings[0][5] if findings else 'N/A'}\n\n"
         
         if findings:
-            report += f"## Findings ({len(findings)})\\n\\n"
+            report += f"## Findings ({len(findings)})\n\n"
             for title, severity, confidence, evidence, fix, created in findings:
-                report += f"### {title}\\n"
-                report += f"- **Severity**: {severity.upper()}\\n"
-                report += f"- **Confidence**: {confidence * 100:.0f}%\\n"
+                report += f"### {title}\n"
+                report += f"- **Severity**: {severity.upper()}\n"
+                report += f"- **Confidence**: {confidence * 100:.0f}%\n"
                 if evidence:
-                    report += f"- **Evidence**: `{evidence}`\\n"
+                    report += f"- **Evidence**: `{evidence}`\n"
                 if fix:
-                    report += f"- **Recommended Fix**: {fix}\\n"
-                report += "\\n"
+                    report += f"- **Recommended Fix**: {fix}\n"
+                report += "\n"
         else:
-            report += "## Findings\\n\\nNo findings recorded for this asset.\\n"
+            report += "## Findings\n\nNo findings recorded for this asset.\n"
         
         return report
         

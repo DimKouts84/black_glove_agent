@@ -92,7 +92,9 @@ class TestDNSReconExecution:
         # Mock resolve method
         def side_effect(domain, rtype):
             if domain == "www.example.com":
-                return True
+                answer = MagicMock()
+                answer.address = "1.2.3.4"
+                return [answer]
             raise dns.resolver.NXDOMAIN()
             
         resolver_instance.resolve.side_effect = side_effect
@@ -106,8 +108,9 @@ class TestDNSReconExecution:
         assert "mail.example.com" not in result.data["brute_force"]
 
 
+    @patch("src.adapters.dns_recon.DNSReconAdapter._store_evidence", return_value="/tmp/evidence.txt")
     @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_brute_force_missing_wordlist(self, mock_file):
+    def test_brute_force_missing_wordlist(self, mock_file, mock_evidence):
         adapter = DNSReconAdapter()
         params = {"target": "example.com", "mode": "brute_force", "wordlist": "missing.txt"}
         
@@ -116,6 +119,23 @@ class TestDNSReconExecution:
         # Should be FAILURE because BF failed (missing wordlist) and ZT was not requested
         assert result.status == AdapterResultStatus.FAILURE
         assert any("Wordlist not found" in err for err in result.data["errors"])
+
+    def test_validate_params_domain_alias(self):
+        adapter = DNSReconAdapter()
+        params = {"domain": "example.com", "mode": "all"}
+        adapter.validate_params(params)
+        assert params["target"] == "example.com"
+
+    def test_interpret_brute_force_strings(self):
+        adapter = DNSReconAdapter()
+        from src.adapters.interface import AdapterResult, AdapterResultStatus
+        result = AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data={"zone_transfer": {}, "brute_force": ["www.example.com"]},
+            metadata={},
+        )
+        text = adapter.interpret_result(result)
+        assert "www.example.com" in text
 
     @pytest.mark.skip(reason="Test harness path configuration issue preventing 'adapters' module import")
     def test_plugin_manager_load_and_run(self):

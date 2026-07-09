@@ -9,13 +9,14 @@ import json
 import sqlite3
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional, Union
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Union
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-from .models import SeverityLevel, AssetModel
+from .models import SeverityLevel, AssetModel, severity_for_db
 from .db import get_db_connection
 
 def _safe_json_default(obj):
@@ -273,12 +274,32 @@ class FindingsNormalizer:
             )
             
             # Create finding based on tool type
-            if tool_name.lower() in ['nmap', 'rustscan', 'masscan']:
+            if tool_name.lower() in ['nmap', 'rustscan', 'masscan', 'viewdns']:
                 findings.extend(self._normalize_port_scan_output(tool_output, asset, evidence_metadata))
             elif tool_name.lower() in ['gobuster', 'dirb', 'dirsearch']:
                 findings.extend(self._normalize_directory_scan_output(tool_output, asset, evidence_metadata))
             elif tool_name.lower() in ['nikto', 'nuclei']:
                 findings.extend(self._normalize_vulnerability_scan_output(tool_output, asset, evidence_metadata))
+            elif tool_name.lower() in ['web_vuln_scanner', 'sqli_scanner', 'web_server_scanner']:
+                findings.extend(self._normalize_web_scan_output(
+                    tool_name, tool_output, asset, evidence_metadata
+                ))
+            elif tool_name.lower() in [
+                'passive_recon', 'osint_harvester', 'credential_tester', 'camera_security'
+            ]:
+                findings.extend(self._normalize_specialized_intel_output(
+                    tool_name, tool_output, asset, evidence_metadata
+                ))
+            elif tool_name.lower() in [
+                'dns_lookup', 'dns_recon', 'whois', 'ssl_check', 'public_ip'
+            ]:
+                findings.extend(self._normalize_network_infra_output(
+                    tool_name, tool_output, asset, evidence_metadata
+                ))
+            elif tool_name.lower() in ['wappalyzer', 'sublist3r']:
+                findings.extend(self._normalize_web_intel_wrapper_output(
+                    tool_name, tool_output, asset, evidence_metadata
+                ))
             else:
                 # Generic finding for unknown tools
                 description = f"Scan results from {tool_name} on {asset.value}"
@@ -355,13 +376,57 @@ class FindingsNormalizer:
         """Normalize directory scanning tool output."""
         findings = []
         
-        # Example: Check for sensitive directories/files
         sensitive_paths = [
             '/admin', '/login', '/config', '/backup', '/.git', '/.env',
             '/wp-admin', '/phpmyadmin', '/manager', '/console'
         ]
+        critical_paths = ['/.env', '/.git', '/config', '/backup']
+
+        entries = self._extract_dir_entries(output)
+        if entries:
+            for entry in entries:
+                path = entry.get("path") or entry.get("host", "")
+                if not path:
+                    continue
+                if not any(sensitive in path.lower() for sensitive in sensitive_paths):
+                    continue
+                status = entry.get("status")
+                if entry.get("severity"):
+                    severity = self._map_severity(entry["severity"])
+                elif status == 200:
+                    severity = (
+                        SeverityLevel.CRITICAL
+                        if any(c in path.lower() for c in critical_paths)
+                        else SeverityLevel.HIGH
+                    )
+                elif status in (401, 403):
+                    severity = SeverityLevel.MEDIUM
+                elif status in (301, 302, 307):
+                    severity = SeverityLevel.LOW
+                else:
+                    severity = SeverityLevel.MEDIUM
+                confidence = 0.95 if status == 200 else 0.7
+                findings.append(Finding(
+                    title=f"Sensitive path discovered: {path}",
+                    description=(
+                        f"Directory scan revealed potentially sensitive path: {path}"
+                        + (f" (HTTP {status})" if status else "")
+                    ),
+                    severity=severity,
+                    confidence=confidence,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Restrict access to sensitive paths, implement proper authentication, "
+                                  "or remove unnecessary sensitive content.",
+                    references=[
+                        "https://owasp.org/www-project-web-security-testing-guide/"
+                    ]
+                ))
+            return findings
+
         found_paths = self._extract_found_paths(output)
-        
         for path in found_paths:
             if any(sensitive in path.lower() for sensitive in sensitive_paths):
                 finding = Finding(
@@ -393,7 +458,7 @@ class FindingsNormalizer:
         finding = Finding(
             title=f"Vulnerability scan completed on {asset.name}",
             description="Vulnerability scanning tool executed successfully",
-            severity=SeverityLevel.INFO,
+            severity=SeverityLevel.LOW,
             confidence=0.95,
             asset_id=asset.id,
             asset_name=asset.name,
@@ -404,39 +469,536 @@ class FindingsNormalizer:
         findings.append(finding)
         
         return findings
+
+    def _map_severity(self, severity_str: str) -> SeverityLevel:
+        mapping = {
+            "critical": SeverityLevel.CRITICAL,
+            "high": SeverityLevel.HIGH,
+            "medium": SeverityLevel.MEDIUM,
+            "low": SeverityLevel.LOW,
+            "info": SeverityLevel.LOW,
+            "error": SeverityLevel.HIGH,
+        }
+        return mapping.get(str(severity_str).lower(), SeverityLevel.MEDIUM)
+
+    def _normalize_web_scan_output(
+        self,
+        tool_name: str,
+        output: Any,
+        asset: AssetModel,
+        evidence_metadata: Dict[str, str],
+    ) -> List[Finding]:
+        """Normalize web_vuln_scanner, sqli_scanner, and web_server_scanner output."""
+        findings: List[Finding] = []
+
+        if not isinstance(output, dict):
+            return findings
+
+        if tool_name.lower() == "web_server_scanner":
+            items = output.get("findings", [])
+            skip_severities = {"OK", "INFO"}
+            for item in items:
+                sev_str = str(item.get("severity", "MEDIUM")).upper()
+                if sev_str in skip_severities:
+                    continue
+
+                title = item.get("title", "Web server finding")
+                detail = item.get("detail", "")
+                confidence = float(item.get("confidence", 0.75))
+
+                findings.append(Finding(
+                    title=title,
+                    description=detail,
+                    severity=self._map_severity(sev_str),
+                    confidence=confidence,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Review and remediate the identified web server misconfiguration.",
+                ))
+        else:
+            for vuln in output.get("vulnerabilities", []):
+                vuln_type = vuln.get("type", "unknown")
+                param = vuln.get("parameter", "")
+                url = vuln.get("url", output.get("target_url", asset.value))
+                evidence = vuln.get("evidence", "")
+                sev_str = vuln.get("severity", "medium")
+                confidence = float(vuln.get("confidence", 0.7))
+
+                title = f"{tool_name}: {vuln_type}"
+                if param:
+                    title += f" in parameter '{param}'"
+
+                description = evidence or f"Detected at {url}"
+                if vuln.get("payload"):
+                    description += f" (payload: {vuln['payload']})"
+
+                fix_map = {
+                    "xss_reflected": "Encode output and validate input; deploy CSP.",
+                    "path_traversal": "Sanitize file paths; use allowlists for includes.",
+                    "ssti": "Never pass user input to template engines.",
+                    "error_based": "Use parameterized queries; review error handling.",
+                    "boolean_blind": "Use parameterized queries; verify with manual testing.",
+                    "time_blind": "Use parameterized queries; verify with manual testing.",
+                }
+
+                findings.append(Finding(
+                    title=title,
+                    description=description,
+                    severity=self._map_severity(sev_str),
+                    confidence=confidence,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix=fix_map.get(
+                        vuln_type, "Review scan evidence and validate manually."
+                    ),
+                ))
+
+        if not findings:
+            findings.append(Finding(
+                title=f"{tool_name} scan completed on {asset.name}",
+                description=(
+                    output.get("interpretation")
+                    or f"No actionable issues from {tool_name}."
+                ),
+                severity=SeverityLevel.LOW,
+                confidence=0.95,
+                asset_id=asset.id,
+                asset_name=asset.name,
+                evidence_path=evidence_metadata["path"],
+                evidence_hash=evidence_metadata["hash"],
+                recommended_fix="No immediate action required based on automated scan.",
+            ))
+
+        return findings
+
+    def _normalize_specialized_intel_output(
+        self,
+        tool_name: str,
+        output: Any,
+        asset: AssetModel,
+        evidence_metadata: Dict[str, str],
+    ) -> List[Finding]:
+        """Normalize passive_recon, osint_harvester, credential_tester, camera_security."""
+        findings: List[Finding] = []
+
+        if not isinstance(output, dict):
+            return findings
+
+        tool = tool_name.lower()
+
+        if tool == "passive_recon":
+            for secret in output.get("potential_secrets", []):
+                sev_str = secret.get("severity", "low")
+                confidence = float(secret.get("confidence", 0.5))
+                findings.append(Finding(
+                    title=f"Passive recon indicator: {secret.get('type', 'unknown')}",
+                    description=(
+                        f"Match '{secret.get('match')}' in archived URL {secret.get('url')} "
+                        f"(indicator only — content not verified)"
+                    ),
+                    severity=self._map_severity(sev_str),
+                    confidence=confidence,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Manually verify archived URL; rotate credentials if confirmed.",
+                ))
+
+        elif tool == "credential_tester":
+            for cred in output.get("valid_credentials", []):
+                findings.append(Finding(
+                    title=f"Valid credentials found ({output.get('protocol', 'unknown')})",
+                    description=(
+                        f"Username '{cred.get('username')}' authenticated on "
+                        f"{output.get('target')}:{output.get('port')}"
+                    ),
+                    severity=SeverityLevel.CRITICAL,
+                    confidence=0.9,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Change credentials immediately and restrict access.",
+                ))
+
+        elif tool == "camera_security":
+            for finding_text in output.get("findings", []):
+                if not isinstance(finding_text, str):
+                    continue
+                if finding_text.startswith("✓"):
+                    continue
+                if "CRITICAL" in finding_text:
+                    sev = SeverityLevel.CRITICAL
+                elif "VULNERABILITY" in finding_text or "RISK" in finding_text:
+                    sev = SeverityLevel.HIGH
+                else:
+                    sev = SeverityLevel.MEDIUM
+                findings.append(Finding(
+                    title="Camera security finding",
+                    description=finding_text,
+                    severity=sev,
+                    confidence=0.75,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Restrict camera access, disable anonymous streams, change defaults.",
+                ))
+
+        elif tool == "osint_harvester":
+            emails = output.get("emails", [])
+            subdomains = output.get("subdomains", [])
+            if emails:
+                findings.append(Finding(
+                    title=f"OSINT emails discovered ({len(emails)})",
+                    description=f"Sample: {', '.join(emails[:5])}",
+                    severity=SeverityLevel.LOW,
+                    confidence=0.85,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Review exposed contact information for privacy impact.",
+                ))
+            if subdomains:
+                findings.append(Finding(
+                    title=f"OSINT subdomains discovered ({len(subdomains)})",
+                    description=f"Sample: {', '.join(subdomains[:5])}",
+                    severity=SeverityLevel.LOW,
+                    confidence=0.9,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Review subdomain attack surface.",
+                ))
+
+        if not findings:
+            description = output.get("interpretation") or f"No actionable issues from {tool_name}."
+            findings.append(Finding(
+                title=f"{tool_name} scan completed on {asset.name}",
+                description=description,
+                severity=SeverityLevel.LOW,
+                confidence=0.95,
+                asset_id=asset.id,
+                asset_name=asset.name,
+                evidence_path=evidence_metadata["path"],
+                evidence_hash=evidence_metadata["hash"],
+                recommended_fix="No immediate action required based on automated scan.",
+            ))
+
+        return findings
+
+    def _normalize_network_infra_output(
+        self,
+        tool_name: str,
+        output: Any,
+        asset: AssetModel,
+        evidence_metadata: Dict[str, str],
+    ) -> List[Finding]:
+        """Normalize dns_lookup, dns_recon, whois, ssl_check, public_ip output."""
+        findings: List[Finding] = []
+
+        if not isinstance(output, dict):
+            return findings
+
+        tool = tool_name.lower()
+
+        if tool == "dns_lookup":
+            for rtype, rtype_data in output.get("records", {}).items():
+                records = rtype_data.get("records", [])
+                error = rtype_data.get("error")
+                if records:
+                    findings.append(Finding(
+                        title=f"DNS {rtype} records for {output.get('domain', asset.name)}",
+                        description=f"{rtype}: {', '.join(records[:5])}"
+                        + (f" (+{len(records) - 5} more)" if len(records) > 5 else ""),
+                        severity=SeverityLevel.LOW,
+                        confidence=0.9,
+                        asset_id=asset.id,
+                        asset_name=asset.name,
+                        evidence_path=evidence_metadata["path"],
+                        evidence_hash=evidence_metadata["hash"],
+                        recommended_fix="Review DNS records for misconfigurations or data exposure.",
+                    ))
+                elif error:
+                    findings.append(Finding(
+                        title=f"DNS {rtype} query issue",
+                        description=str(error),
+                        severity=SeverityLevel.LOW,
+                        confidence=0.85,
+                        asset_id=asset.id,
+                        asset_name=asset.name,
+                        evidence_path=evidence_metadata["path"],
+                        evidence_hash=evidence_metadata["hash"],
+                        recommended_fix="Verify DNS configuration.",
+                    ))
+
+        elif tool == "dns_recon":
+            for ns, res in output.get("zone_transfer", {}).items():
+                if isinstance(res, dict) and res.get("status") == "success":
+                    findings.append(Finding(
+                        title=f"DNS zone transfer successful on {ns}",
+                        description=f"AXFR returned {len(res.get('records', []))} records.",
+                        severity=SeverityLevel.CRITICAL,
+                        confidence=0.95,
+                        asset_id=asset.id,
+                        asset_name=asset.name,
+                        evidence_path=evidence_metadata["path"],
+                        evidence_hash=evidence_metadata["hash"],
+                        recommended_fix="Disable zone transfers to unauthorized hosts immediately.",
+                    ))
+            for sub in output.get("brute_force", []):
+                name = sub if isinstance(sub, str) else sub.get("name", "")
+                if name:
+                    findings.append(Finding(
+                        title=f"Brute-forced subdomain: {name}",
+                        description=f"Resolved subdomain discovered via DNS brute-force.",
+                        severity=SeverityLevel.LOW,
+                        confidence=0.8,
+                        asset_id=asset.id,
+                        asset_name=asset.name,
+                        evidence_path=evidence_metadata["path"],
+                        evidence_hash=evidence_metadata["hash"],
+                        recommended_fix="Review subdomain attack surface.",
+                    ))
+
+        elif tool == "whois":
+            domain = output.get("domain", asset.name)
+            expiry = output.get("expiration_date")
+            expires_in = output.get("expires_in_days")
+            if expires_in is None and expiry:
+                try:
+                    from datetime import datetime
+                    if isinstance(expiry, list):
+                        expiry = expiry[0]
+                    if hasattr(expiry, "timestamp"):
+                        expires_in = (expiry - datetime.utcnow()).days
+                except Exception:
+                    pass
+            sev = SeverityLevel.LOW
+            if expires_in is not None:
+                if expires_in < 0:
+                    sev = SeverityLevel.MEDIUM
+                elif expires_in < 30:
+                    sev = SeverityLevel.MEDIUM
+            registrar = output.get("registrar")
+            if isinstance(registrar, list):
+                registrar = registrar[0]
+            findings.append(Finding(
+                title=f"WHOIS registration for {domain}",
+                description=f"Registrar: {registrar}; expiration: {expiry}",
+                severity=sev,
+                confidence=0.85,
+                asset_id=asset.id,
+                asset_name=asset.name,
+                evidence_path=evidence_metadata["path"],
+                evidence_hash=evidence_metadata["hash"],
+                recommended_fix="Monitor domain expiration and registrar accuracy.",
+            ))
+
+        elif tool == "ssl_check":
+            is_expired = output.get("is_expired", False)
+            expires_in = output.get("expires_in_days")
+            subject = output.get("subject", {})
+            cn = subject.get("commonName", "unknown") if isinstance(subject, dict) else "unknown"
+            if is_expired:
+                sev = SeverityLevel.HIGH
+            elif expires_in is not None and expires_in < 30:
+                sev = SeverityLevel.MEDIUM
+            else:
+                sev = SeverityLevel.LOW
+            findings.append(Finding(
+                title=f"SSL certificate metadata for {cn}",
+                description=(
+                    f"Expires: {output.get('not_after', 'unknown')}; "
+                    "metadata only (trust not validated by scanner)"
+                ),
+                severity=sev,
+                confidence=0.9,
+                asset_id=asset.id,
+                asset_name=asset.name,
+                evidence_path=evidence_metadata["path"],
+                evidence_hash=evidence_metadata["hash"],
+                recommended_fix="Renew expired certificates; review TLS configuration.",
+            ))
+
+        elif tool == "public_ip":
+            parts = []
+            if output.get("ipv4"):
+                parts.append(f"IPv4: {output['ipv4']}")
+            if output.get("ipv6"):
+                parts.append(f"IPv6: {output['ipv6']}")
+            services = output.get("services_used")
+            if services:
+                parts.append(f"Services: {', '.join(services)}")
+            if parts:
+                findings.append(Finding(
+                    title="Public IP addresses detected",
+                    description="; ".join(parts),
+                    severity=SeverityLevel.LOW,
+                    confidence=0.95,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="No action required for IP detection.",
+                ))
+
+        if not findings:
+            description = output.get("interpretation") or f"No actionable issues from {tool_name}."
+            findings.append(Finding(
+                title=f"{tool_name} scan completed on {asset.name}",
+                description=description,
+                severity=SeverityLevel.LOW,
+                confidence=0.95,
+                asset_id=asset.id,
+                asset_name=asset.name,
+                evidence_path=evidence_metadata["path"],
+                evidence_hash=evidence_metadata["hash"],
+                recommended_fix="No immediate action required based on automated scan.",
+            ))
+
+        return findings
+
+    def _normalize_web_intel_wrapper_output(
+        self,
+        tool_name: str,
+        output: Any,
+        asset: AssetModel,
+        evidence_metadata: Dict[str, str],
+    ) -> List[Finding]:
+        """Normalize wappalyzer and sublist3r output."""
+        findings: List[Finding] = []
+        confidence_threshold = 50
+
+        if not isinstance(output, dict):
+            return findings
+
+        tool = tool_name.lower()
+
+        if tool == "wappalyzer":
+            for tech in output.get("technologies", []):
+                conf = int(tech.get("confidence", 0) or 0)
+                if conf < confidence_threshold:
+                    continue
+                name = tech.get("name", "unknown")
+                version = tech.get("version")
+                categories = tech.get("categories", [])
+                sev = SeverityLevel.LOW
+                cat_str = " ".join(categories).lower() if categories else ""
+                if any(x in cat_str for x in ("php", "wordpress", "jquery")):
+                    sev = SeverityLevel.LOW
+                findings.append(Finding(
+                    title=f"Technology detected: {name}",
+                    description=(
+                        f"Version: {version or 'unknown'}; confidence: {conf}%"
+                        + (f"; categories: {', '.join(categories)}" if categories else "")
+                    ),
+                    severity=sev,
+                    confidence=min(conf / 100.0, 0.95),
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Review stack for outdated or vulnerable components.",
+                ))
+
+        elif tool == "sublist3r":
+            domain = output.get("domain", asset.name)
+            sensitive_prefixes = ("dev.", "staging.", "admin.", "test.", "internal.")
+            for sub in output.get("subdomains", []):
+                if not isinstance(sub, str):
+                    continue
+                if not sub.endswith(f".{domain}") and sub != domain:
+                    continue
+                sev = SeverityLevel.LOW
+                if any(sub.startswith(p) for p in sensitive_prefixes):
+                    sev = SeverityLevel.MEDIUM
+                findings.append(Finding(
+                    title=f"Subdomain discovered: {sub}",
+                    description=f"Enumerated via Sublist3r for zone {domain}.",
+                    severity=sev,
+                    confidence=0.85,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Validate subdomain ownership and review exposure.",
+                ))
+
+        if not findings:
+            description = output.get("interpretation") or f"No actionable issues from {tool_name}."
+            findings.append(Finding(
+                title=f"{tool_name} scan completed on {asset.name}",
+                description=description,
+                severity=SeverityLevel.LOW,
+                confidence=0.95,
+                asset_id=asset.id,
+                asset_name=asset.name,
+                evidence_path=evidence_metadata["path"],
+                evidence_hash=evidence_metadata["hash"],
+                recommended_fix="No immediate action required based on automated scan.",
+            ))
+
+        return findings
     
     def _extract_open_ports(self, output: Any) -> List[int]:
         """Extract open ports from scan output."""
-        # Simplified extraction - would be more sophisticated in real implementation
         ports = []
         if isinstance(output, dict):
-            # Example: {"ports": [{"port": 80, "state": "open"}, ...]}
             if "ports" in output:
                 for port_info in output["ports"]:
                     if isinstance(port_info, dict) and port_info.get("state") == "open":
-                        ports.append(port_info.get("port", 0))
+                        ports.append(int(port_info.get("port", 0)))
+            if "hosts" in output:
+                for host in output["hosts"]:
+                    if not isinstance(host, dict):
+                        continue
+                    for port_info in host.get("ports", []):
+                        if isinstance(port_info, dict) and port_info.get("state") == "open":
+                            ports.append(int(port_info.get("port", 0)))
+            if "open_ports" in output:
+                for port_info in output["open_ports"]:
+                    if isinstance(port_info, dict):
+                        port_num = port_info.get("port") or port_info.get("number")
+                        if port_num is not None:
+                            ports.append(int(port_num))
+                    elif isinstance(port_info, (int, str)) and str(port_info).isdigit():
+                        ports.append(int(port_info))
         elif isinstance(output, str):
-            # Simple regex extraction
-            # Simple regex extraction for "80/tcp open" or "port 80 open"
             import re
-            # Match standard nmap output: 80/tcp open
             port_matches = re.findall(r'(\d+)/(?:tcp|udp)\s+open', output, re.IGNORECASE)
-            # Match alternative output: Port 80 open
             if not port_matches:
                 port_matches = re.findall(r'port\s+(\d+).*?open', output, re.IGNORECASE)
-            
             ports = [int(p) for p in port_matches]
-        return ports
+        return [p for p in ports if p > 0]
     
+    def _extract_dir_entries(self, output: Any) -> List[Dict[str, Any]]:
+        """Extract directory scan entries with optional status metadata."""
+        if isinstance(output, dict) and "entries" in output:
+            return [e for e in output["entries"] if isinstance(e, dict)]
+        return []
+
     def _extract_found_paths(self, output: Any) -> List[str]:
         """Extract found paths from directory scan output."""
         paths = []
         if isinstance(output, dict):
-            # Example: {"paths": ["/admin", "/login", ...]}
             if "paths" in output:
-                paths = output["paths"]
+                paths = list(output["paths"])
+            elif "entries" in output:
+                for entry in output["entries"]:
+                    if not isinstance(entry, dict):
+                        continue
+                    path = entry.get("path") or entry.get("host")
+                    if path:
+                        paths.append(str(path))
         elif isinstance(output, str):
-            # Simple line-by-line extraction
             lines = output.strip().split('\n')
             for line in lines:
                 if line.strip().startswith('/'):
@@ -879,11 +1441,27 @@ class ReportingManager:
         Args:
             db_connection: Optional database connection
         """
-        self.db_connection = db_connection or get_db_connection()
+        self._injected_connection = db_connection
         self.logger = logging.getLogger("black_glove.reporting.manager")
         self.findings_normalizer = FindingsNormalizer()
         self.report_generator = ReportGenerator()
         self.evidence_storage = EvidenceStorage()
+
+    @property
+    def db_connection(self):
+        """Optional injected connection (used by tests and ReportingContext)."""
+        return self._injected_connection
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        if self._injected_connection is not None:
+            yield self._injected_connection
+        else:
+            conn = get_db_connection()
+            try:
+                yield conn
+            finally:
+                conn.close()
     
     def get_findings_from_database(self) -> List[Finding]:
         """
@@ -894,29 +1472,30 @@ class ReportingManager:
         """
         findings = []
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute("""
-                SELECT id, title, severity, confidence, asset_id, evidence_path, 
-                       recommended_fix, created_at
-                FROM findings
-                ORDER BY severity, created_at DESC
-            """)
-            
-            rows = cursor.fetchall()
-            for row in rows:
-                finding = Finding(
-                    id=row[0],
-                    title=row[1],
-                    severity=SeverityLevel(row[2]) if row[2] else SeverityLevel.MEDIUM,
-                    confidence=row[3] or 0.8,
-                    asset_id=row[4],
-                    evidence_path=row[5],
-                    recommended_fix=row[6] or "",
-                    created_at=row[7]
-                )
-                findings.append(finding)
-            
-            self.logger.debug(f"Retrieved {len(findings)} findings from database")
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, title, severity, confidence, asset_id, evidence_path, 
+                           recommended_fix, created_at
+                    FROM findings
+                    ORDER BY severity, created_at DESC
+                """)
+                
+                rows = cursor.fetchall()
+                for row in rows:
+                    finding = Finding(
+                        id=row[0],
+                        title=row[1],
+                        severity=SeverityLevel(row[2]) if row[2] else SeverityLevel.MEDIUM,
+                        confidence=row[3] or 0.8,
+                        asset_id=row[4],
+                        evidence_path=row[5],
+                        recommended_fix=row[6] or "",
+                        created_at=row[7]
+                    )
+                    findings.append(finding)
+                
+                self.logger.debug(f"Retrieved {len(findings)} findings from database")
             
         except Exception as e:
             self.logger.error(f"Error retrieving findings from database: {e}")
@@ -932,20 +1511,21 @@ class ReportingManager:
         """
         assets = []
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute("SELECT id, name, type, value FROM assets ORDER BY name")
-            
-            rows = cursor.fetchall()
-            for row in rows:
-                asset = AssetModel(
-                    id=row[0],
-                    name=row[1],
-                    type=row[2],
-                    value=row[3]
-                )
-                assets.append(asset)
-            
-            self.logger.debug(f"Retrieved {len(assets)} assets from database")
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, name, type, value FROM assets ORDER BY name")
+                
+                rows = cursor.fetchall()
+                for row in rows:
+                    asset = AssetModel(
+                        id=row[0],
+                        name=row[1],
+                        type=row[2],
+                        value=row[3]
+                    )
+                    assets.append(asset)
+                
+                self.logger.debug(f"Retrieved {len(assets)} assets from database")
             
         except Exception as e:
             self.logger.error(f"Error retrieving assets from database: {e}")
@@ -960,28 +1540,30 @@ class ReportingManager:
             findings: List of findings to save
         """
         try:
-            cursor = self.db_connection.cursor()
-            
-            for finding in findings:
-                cursor.execute("""
-                    INSERT INTO findings 
-                    (asset_id, title, severity, confidence, evidence_path, recommended_fix)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    finding.asset_id,
-                    finding.title,
-                    finding.severity.value,
-                    finding.confidence,
-                    finding.evidence_path,
-                    finding.recommended_fix
-                ))
-            
-            self.db_connection.commit()
-            self.logger.info(f"Saved {len(findings)} findings to database")
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                
+                for finding in findings:
+                    cursor.execute("""
+                        INSERT INTO findings 
+                        (asset_id, title, severity, confidence, evidence_path, recommended_fix)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        finding.asset_id,
+                        finding.title,
+                        severity_for_db(finding.severity),
+                        finding.confidence,
+                        finding.evidence_path,
+                        finding.recommended_fix
+                    ))
+                
+                conn.commit()
+                self.logger.info(f"Saved {len(findings)} findings to database")
             
         except Exception as e:
             self.logger.error(f"Error saving findings to database: {e}")
-            self.db_connection.rollback()
+            if self._injected_connection is not None:
+                self._injected_connection.rollback()
     
     def generate_assessment_report(self, format_type: ReportFormat = ReportFormat.JSON,
                                  include_evidence: bool = True) -> str:
@@ -1019,8 +1601,8 @@ class ReportingManager:
     
     def cleanup(self) -> None:
         """Clean up resources."""
-        if hasattr(self.db_connection, 'close'):
-            self.db_connection.close()
+        if self._injected_connection is not None and hasattr(self._injected_connection, 'close'):
+            self._injected_connection.close()
         self.logger.debug("Reporting manager cleanup completed")
 
 

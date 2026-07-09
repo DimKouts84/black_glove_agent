@@ -214,61 +214,19 @@ def setup_config_file(config: Optional[ConfigModel] = None) -> None:
     Args:
         config: Optional ConfigModel to write. If None, uses defaults.
     """
-    # Prefer current directory for new config
-    config_path = Path.cwd() / "config.yaml"
-    
-    if config_path.exists():
+    from .config_service import get_config_service
+
+    service = get_config_service()
+    save_path = service.canonical_save_path()
+
+    if save_path.exists():
         typer.echo("✓ Configuration file already exists")
         return
-    
+
     typer.echo("⚙️  Setting up configuration file...")
-    
-    # Use provided config or default
-    if config is None:
-        config = ConfigModel()
-    
-    config_content = f"""# Black Glove Configuration File
-# Generated on first run - customize as needed
-
-# LLM Settings
-llm_provider: "{config.llm_provider}"
-llm_endpoint: "{config.llm_endpoint}"
-llm_model: "{config.llm_model}"
-llm_temperature: {config.llm_temperature}
-llm_timeout: {config.llm_timeout}
-llm_api_key: "{config.llm_api_key or ''}"
-
-# Scan Settings
-default_rate_limit: {config.default_rate_limit}
-max_rate_limit: {config.max_rate_limit}
-scan_timeout: {config.scan_timeout}
-
-# Logging Settings
-log_level: "{config.log_level}"
-log_retention_days: {config.log_retention_days}
-
-# Safety Settings
-require_lab_mode_for_exploits: {str(config.require_lab_mode_for_exploits).lower()}
-enable_exploit_adapters: {str(config.enable_exploit_adapters).lower()}
-
-# Evidence Storage
-evidence_storage_path: "{config.evidence_storage_path}"
-
-# Asset Management
-# authorized_networks and authorized_domains are no longer enforced
-blocked_targets: {config.blocked_targets}
-
-# Additional Settings
-# extra_settings:
-#   custom_field: "value"
-"""
-    
-    try:
-        config_path.write_text(config_content)
-        typer.echo(f"✓ Configuration file created at: {config_path}")
-    except Exception as e:
-        typer.echo(f"✗ Failed to create configuration file: {e}")
-        raise
+    cfg = config or ConfigModel()
+    path = service.setup_defaults(cfg)
+    typer.echo(f"✓ Configuration file created at: {path}")
 
 def initialize_database() -> None:
     """
@@ -1077,6 +1035,82 @@ def remove_asset(
         console.print(f"[red]❌ Failed to remove asset: {e}[/red]")
         raise typer.Exit(code=1)
 
+@app.command("launch-web")
+@global_exception_handler
+def launch_web(
+    host: str = typer.Option(None, "--host", "-H", help="Bind host (default from config)"),
+    port: int = typer.Option(None, "--port", "-p", help="Bind port (default from config)"),
+    force_rebuild: bool = typer.Option(False, "--force-rebuild", help="Rebuild frontend static bundle"),
+    skip_browser: bool = typer.Option(False, "--skip-browser", help="Do not open browser"),
+):
+    """
+    Bootstrap environment if needed, then start the web UI (same as launch-web.bat).
+    """
+    import webbrowser
+    from .bootstrap import ensure_all, is_server_running, wait_for_server
+
+    try:
+        python_exe, cfg_host, cfg_port = ensure_all(force_frontend=force_rebuild)
+    except RuntimeError as exc:
+        console.print(f"[red]Bootstrap failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+    bind_host = host or cfg_host
+    bind_port = port or cfg_port
+    url = f"http://{bind_host}:{bind_port}"
+
+    if is_server_running(bind_host, bind_port):
+        console.print(f"[green]Server already running at {url}[/green]")
+        if not skip_browser:
+            webbrowser.open(url)
+        return
+
+    if not skip_browser:
+        import threading
+        threading.Thread(
+            target=lambda: wait_for_server(bind_host, bind_port) and webbrowser.open(url),
+            daemon=True,
+        ).start()
+
+    console.print(Panel(f"[bold cyan]Black Glove Web UI[/bold cyan]\n{url}", border_style="cyan"))
+
+    try:
+        import uvicorn
+    except ImportError:
+        console.print("[red]uvicorn not installed.[/red]")
+        raise typer.Exit(1)
+
+    from webapp.app import create_app
+    uvicorn.run(create_app(), host=bind_host, port=bind_port, reload=False)
+
+
+@app.command("serve")
+@global_exception_handler
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-H", help="Bind host"),
+    port: int = typer.Option(8787, "--port", "-p", help="Bind port"),
+    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (dev)"),
+):
+    """
+    Start the Black Glove web UI and API server (local-first).
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        console.print("[red]uvicorn not installed. Run: uv pip install fastapi uvicorn[standard] websockets[/red]")
+        raise typer.Exit(1)
+
+    from webapp.app import create_app
+
+    console.print(Panel(
+        f"[bold cyan]Black Glove Web UI[/bold cyan]\n"
+        f"http://{host}:{port}",
+        border_style="cyan",
+    ))
+    web_app = create_app()
+    uvicorn.run(web_app, host=host, port=port, reload=reload)
+
+
 @app.command()
 @global_exception_handler
 def chat(
@@ -1091,24 +1125,10 @@ def chat(
     multi-step tool execution. Type 'exit', 'quit', or press Ctrl+C to end session.
     """
     import asyncio
-    from rich.prompt import Prompt
     from rich.markdown import Markdown
-    from .plugin_manager import create_plugin_manager
-    from .llm_client import create_llm_client
     from .session_manager import SessionManager
     from .db import init_db
-    from .models import ConfigModel
-
-    # New Imports
-    from agent.tools.registry import ToolRegistry
-    from agent.tools.adapter_wrapper import AdapterToolWrapper
-    from agent.tools.report_tool import ReportTool
-    from agent.subagent_tool import SubagentTool
-    from agent.executor import AgentExecutor
-    from agent.agent_library.root import ROOT_AGENT
-    from agent.agent_library.planner import PLANNER_AGENT
-    from agent.agent_library.researcher import RESEARCHER_AGENT
-    from agent.agent_library.analyst import ANALYST_AGENT
+    from .runtime import AgentRuntime
     from . import ui
     
     # Load configuration
@@ -1129,36 +1149,13 @@ def chat(
             if not session_info:
                 session_id = session_manager.create_session("Security Assessment")
             console.print(f"🔄 Resuming session: [cyan]{session_id}[/cyan]")
-        except:
+        except Exception:
             session_id = session_manager.create_session("Security Assessment")
     else:
         session_id = session_manager.create_session("Security Assessment")
         os.environ["CHAT_SESSION_ID"] = session_id
 
-    # Initialize components
-    plugin_manager = create_plugin_manager(config=config.dict())
-    llm_client = create_llm_client(config)
-    
-    # --- Tool Registry Setup ---
-    master_tool_registry = ToolRegistry()
-    
-    # 1. Register Adapter Tools (from PluginManager to Registry)
-    # These are needed so the Researcher agent can use them
-    adapter_names = plugin_manager.discover_adapters()
-    for adapter_name in adapter_names:
-        adapter_tool = AdapterToolWrapper(adapter_name, plugin_manager)
-        master_tool_registry.register(adapter_tool)
-        
-    # 2. Register Subagent Tools
-    planner_tool = SubagentTool(PLANNER_AGENT, llm_client, master_tool_registry)
-    researcher_tool = SubagentTool(RESEARCHER_AGENT, llm_client, master_tool_registry)
-    analyst_tool = SubagentTool(ANALYST_AGENT, llm_client, master_tool_registry)
-    report_tool = ReportTool()
-    
-    master_tool_registry.register(planner_tool)
-    master_tool_registry.register(researcher_tool)
-    master_tool_registry.register(analyst_tool)
-    master_tool_registry.register(report_tool)
+    runtime = AgentRuntime(config=config)
     
     # Callback for CLI rendering
     def on_activity(event):
@@ -1178,20 +1175,21 @@ def chat(
                      console.print(f"📤 [bold green]{agent_name} finished task[/bold green]")
             elif event_type == "warning":
                  console.print(f"[yellow]⚠️ {content}[/yellow]")
+            elif event_type == "approval_request":
+                 console.print(f"[bold yellow]⚠️ Approval required: {content}[/bold yellow]")
+            elif event_type == "approval_resolved":
+                 console.print(f"[dim]Approval: {content}[/dim]")
         except Exception:
             pass
 
-    # Initialize Root Executor
-    root_executor = AgentExecutor(
-        agent_definition=ROOT_AGENT, 
-        llm_client=llm_client, 
-        tool_registry=master_tool_registry,
-        on_activity=on_activity
-    )
+    async def cli_approval_callback(tool_name: str, params: dict) -> bool:
+        if not config.require_approval:
+            return True
+        return typer.confirm(f"Approve execution of '{tool_name}'?", default=False)
 
     # CLI Loop
     async def chat_loop():
-        nonlocal config, llm_client
+        nonlocal config, runtime
         while True:
             try:
                 ui.print_status_bar(config.llm_provider, config.llm_model)
@@ -1209,18 +1207,8 @@ def chat(
                     console.print("[bold yellow]⚙️  Entering Configuration Mode...[/bold yellow]")
                     # Run full wizard (async)
                     await run_configuration_wizard()
-                    # Reload config
                     config = load_config()
-
-                    # Re-initialize components with new config
-                    plugin_manager = create_plugin_manager(config=config.dict())
-                    llm_client = create_llm_client(config)
-                    # Note: AgentExecutor refers to old instances. 
-                    # For full reload we might need to recreate executor or update its references.
-                    # Simple way: update llm_client
-                    root_executor.llm_client = llm_client
-                    # Update tool registry? (Adapter tools rely on plugin_manager)
-                    # This is complex to hot-reload everything perfectly but this covers LLM client change.
+                    runtime.reload_config()
                     console.print("[green]Configuration updated! Resuming chat...[/green]")
                     continue
 
@@ -1316,7 +1304,7 @@ def chat(
                         try: adapters = parts[parts.index("-A") + 1]
                         except: pass
                         
-                    _recon_impl(mode, asset, preset, dry_run, adapters, llm_client=llm_client)
+                    _recon_impl(mode, asset, preset, dry_run, adapters, llm_client=runtime.llm_client)
                     continue
 
                 if cmd == "report":
@@ -1363,7 +1351,13 @@ def chat(
                 
                 with console.status("[bold green]Acting...[/bold green]"):
                     try:
-                        result = await root_executor.run({"user_query": user_input}, conversation_history=history)
+                        result = await runtime.run_turn(
+                            session_id,
+                            user_input,
+                            history=history,
+                            on_activity=on_activity,
+                            approval_callback=cli_approval_callback,
+                        )
                         
                         # Process Result
                         final_output = result.get("final_answer", {})

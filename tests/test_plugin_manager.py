@@ -150,6 +150,8 @@ class TestPluginManager:
         # Should find at least the example adapter
         assert "example" in adapters
         assert len(adapters) >= 1
+        assert "domain_params" not in adapters
+        assert "url_params" not in adapters
     
     def test_plugin_manager_load_adapter(self):
         """Test loading adapters through plugin manager."""
@@ -323,6 +325,23 @@ class TestPluginManagerIntegration:
         
         # Try to validate non-existent adapter
         assert manager.validate_adapter("nonexistent_adapter") is False
+
+    def test_get_adapter_config_merges_yaml_block(self):
+        manager = PluginManager(config={
+            "scan_timeout": 120,
+            "adapters": {
+                "sublist3r": {"threads": 20},
+                "nmap": {"timeout": 300},
+            },
+        })
+        assert manager._get_adapter_config("sublist3r") == {"threads": 20}
+        assert manager._get_adapter_config("nmap") == {"timeout": 300}
+        assert manager._get_adapter_config("whois") == {}
+
+    def test_get_adapter_config_nmap_fallback_scan_timeout(self):
+        manager = PluginManager(config={"scan_timeout": 90, "adapters": {}})
+        cfg = manager._get_adapter_config("nmap")
+        assert cfg == {"timeout": 90}
     
     def test_adapter_discovery_with_empty_directory(self):
         """Test adapter discovery with empty directory."""

@@ -72,3 +72,19 @@ uv.lock
 data/
 bin/nmap/*
 bin/gobuster/gobuster.exe
+
+# Frontend / Node.js
+node_modules/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Vite build output (rebuilt by launch-web / black-glove ensure-all)
+src/webapp/static/
+
+# Local env overrides (Vite)
+.env.local
+.env.*.local
+
+# Windows shortcuts (user-created launchers)
+*.lnk

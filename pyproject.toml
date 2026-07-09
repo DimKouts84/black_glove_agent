@@ -47,6 +47,11 @@ dependencies = [
     "questionary",
     "paramiko",
     "jinja2",
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+    "httpx",
+    "chromadb",
 ]
 
 [project.optional-dependencies]

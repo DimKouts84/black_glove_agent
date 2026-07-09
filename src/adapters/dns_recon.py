@@ -10,6 +10,7 @@ import dns.query
 import dns.exception
 
 from .base import BaseAdapter, AdapterResult, AdapterResultStatus
+from .domain_params import resolve_domain
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +58,12 @@ class DNSReconAdapter(BaseAdapter):
         if brute_force:
             summary += f"- Brute force found {len(brute_force)} subdomains.\n"
             for item in brute_force[:10]:
-                 # item is like {'name': 'foo.com', 'address': '1.2.3.4'}
-                 name = item.get("name", "")
-                 addr = item.get("address", "")
-                 summary += f"  {name} -> {addr}\n"
+                if isinstance(item, str):
+                    summary += f"  {item}\n"
+                else:
+                    name = item.get("name", "")
+                    addr = item.get("address", "")
+                    summary += f"  {name} -> {addr}\n"
             if len(brute_force) > 10:
                 summary += f"  ... ({len(brute_force)-10} more)\n"
         else:
@@ -69,11 +72,12 @@ class DNSReconAdapter(BaseAdapter):
         return summary
 
     def get_info(self) -> Dict[str, Any]:
-        return {
+        base_info = super().get_info()
+        base_info.update({
             "name": self.name,
             "version": "1.0.0",
             "description": self.description,
-            "capabilities": ["zone_transfer", "brute_force"],
+            "capabilities": base_info.get("capabilities", []) + ["zone_transfer", "brute_force"],
             "requirements": ["dnspython"],
             "parameters": {
                 "type": "object",
@@ -94,10 +98,17 @@ class DNSReconAdapter(BaseAdapter):
                 },
                 "required": ["target"]
             }
-        }
+        })
+        return base_info
 
     def validate_params(self, params: Dict[str, Any]) -> None:
-        if "target" not in params or not params["target"]:
+        if not params.get("target"):
+            try:
+                params["target"] = resolve_domain(params)
+            except ValueError as exc:
+                raise ValueError("Target domain is required") from exc
+        super().validate_params(params)
+        if not params.get("target"):
             raise ValueError("Target domain is required")
         
         mode = params.get("mode", "all")
@@ -152,10 +163,20 @@ class DNSReconAdapter(BaseAdapter):
         elif result_data["errors"]:
              status = AdapterResultStatus.PARTIAL
 
+        evidence_lines = [f"DNS Recon for {domain}"]
+        for ns, res in result_data["zone_transfer"].items():
+            if isinstance(res, dict) and res.get("status") == "success":
+                evidence_lines.append(f"Zone transfer SUCCESS on {ns}: {len(res.get('records', []))} records")
+        for sub in result_data["brute_force"]:
+            evidence_lines.append(f"Brute: {sub}")
+        evidence_filename = f"dns_recon_{domain.replace('.', '_')}_{int(time.time())}.txt"
+        evidence_path = self._store_evidence("\n".join(evidence_lines), evidence_filename)
+
         return AdapterResult(
             status=status,
             data=result_data,
-            metadata={}
+            metadata={"domain": domain},
+            evidence_path=evidence_path,
         )
 
     def _attempt_zone_transfer(self, domain: str) -> Dict[str, Any]:
@@ -196,6 +217,7 @@ class DNSReconAdapter(BaseAdapter):
     def _brute_force_subdomains(self, domain: str, wordlist_path: Path) -> List[str]:
         """Brute-forces subdomains using a wordlist and ThreadPool."""
         found_subdomains = set()
+        wildcard_ips = self._detect_wildcard_ips(domain)
         
         try:
             with open(wordlist_path, "r", encoding="utf-8") as f:
@@ -213,8 +235,10 @@ class DNSReconAdapter(BaseAdapter):
         def check_subdomain(sub: str) -> Optional[str]:
             full_domain = f"{sub}.{domain}"
             try:
-                # Try A record
-                resolver.resolve(full_domain, 'A')
+                answers = resolver.resolve(full_domain, 'A')
+                ips = {r.address for r in answers}
+                if wildcard_ips and ips.issubset(wildcard_ips):
+                    return None
                 return full_domain
             except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout):
                 return None
@@ -229,6 +253,21 @@ class DNSReconAdapter(BaseAdapter):
                     found_subdomains.add(result)
         
         return sorted(list(found_subdomains))
+
+    def _detect_wildcard_ips(self, domain: str) -> Set[str]:
+        """Return A-record IPs for a random subdomain probe (wildcard DNS)."""
+        import random
+        import string
+        probe = "".join(random.choices(string.ascii_lowercase, k=12))
+        probe_host = f"{probe}.{domain}"
+        try:
+            resolver = dns.resolver.Resolver()
+            resolver.timeout = 2.0
+            resolver.lifetime = 2.0
+            answers = resolver.resolve(probe_host, "A")
+            return {r.address for r in answers}
+        except Exception:
+            return set()
 
 
 def create_dns_recon_adapter(config: Dict[str, Any] = None) -> BaseAdapter:

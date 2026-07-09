@@ -158,7 +158,7 @@ class TestOSINTHarvesterValidation:
 
     def test_validate_params_empty_target(self):
         adapter = create_osint_harvester_adapter()
-        with pytest.raises(ValueError, match="non-empty"):
+        with pytest.raises(ValueError, match="domain or target is required"):
             adapter.validate_params({"target": ""})
 
     def test_validate_params_invalid_domain(self):

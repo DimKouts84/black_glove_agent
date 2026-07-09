@@ -2,11 +2,14 @@ import wappalyzer
 from typing import Any, Dict
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
+from .url_params import resolve_target_url
 import time
 import warnings
 
 # Suppress warnings from Wappalyzer if any
 warnings.filterwarnings("ignore")
+
+CONFIDENCE_THRESHOLD = 50
 
 class WappalyzerAdapter(BaseAdapter):
     """
@@ -16,6 +19,15 @@ class WappalyzerAdapter(BaseAdapter):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._required_params = ["url"]
+
+    def validate_params(self, params: Dict[str, Any]) -> bool:
+        if "url" not in params:
+            try:
+                params["url"] = resolve_target_url(params)
+            except ValueError:
+                pass
+        super().validate_params(params)
+        return True
 
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
         """
@@ -30,10 +42,6 @@ class WappalyzerAdapter(BaseAdapter):
         url = params["url"]
         
         try:
-            # Ensure URL has protocol
-            if not url.startswith("http"):
-                url = f"http://{url}"
-                
             self.logger.info(f"Starting Wappalyzer scan for {url}")
             
             # wappalyzer.analyze returns: {url: {tech_name: {version, confidence, categories, groups}, ...}}
@@ -57,15 +65,15 @@ class WappalyzerAdapter(BaseAdapter):
             
             # Store evidence
             evidence_filename = f"wappalyzer_{url.replace('://', '_').replace('/', '_')}_{int(time.time())}.txt"
-            evidence_data = f"Wappalyzer Results for {url}\\n\\n"
+            evidence_data = f"Wappalyzer Results for {url}\n\n"
             for tech in formatted_results:
-                evidence_data += f"Technology: {tech['name']}\\n"
+                evidence_data += f"Technology: {tech['name']}\n"
                 if tech['version']:
-                    evidence_data += f"  Version: {tech['version']}\\n"
-                evidence_data += f"  Confidence: {tech['confidence']}%\\n"
+                    evidence_data += f"  Version: {tech['version']}\n"
+                evidence_data += f"  Confidence: {tech['confidence']}%\n"
                 if tech['categories']:
-                    evidence_data += f"  Categories: {', '.join(tech['categories'])}\\n"
-                evidence_data += "\\n"
+                    evidence_data += f"  Categories: {', '.join(tech['categories'])}\n"
+                evidence_data += "\n"
             evidence_path = self._store_evidence(evidence_data, evidence_filename)
             
             return AdapterResult(
@@ -104,15 +112,17 @@ class WappalyzerAdapter(BaseAdapter):
         if not data:
             return "No Wappalyzer data."
             
-        techs = data.get("technologies", [])
-        target = data.get("url", "unknown") # Use 'url' from data, not 'target'
+        techs = [
+            t for t in data.get("technologies", [])
+            if int(t.get("confidence", 0) or 0) >= CONFIDENCE_THRESHOLD
+        ]
+        target = data.get("url", "unknown")
         
         if not techs:
-            return f"Wappalyzer detected NO technologies on {target}."
+            return f"Wappalyzer detected NO technologies above {CONFIDENCE_THRESHOLD}% confidence on {target}."
             
-        summary = f"Wappalyzer detected {len(techs)} technologies on {target}:\n"
+        summary = f"Wappalyzer detected {len(techs)} technologies on {target} (confidence >= {CONFIDENCE_THRESHOLD}%):\n"
         
-        # techs is a list of dictionaries, as formatted in _execute_impl
         for tech in techs:
             name = tech.get("name", "Unknown")
             version = tech.get("version")
