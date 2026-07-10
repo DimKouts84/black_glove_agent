@@ -27,12 +27,20 @@ Black Glove is a local-first, both Web UI *and* CLI-driven, LLM-assisted penetra
 
 ---
 
-### CLI Demo
+### CLI Interface
 
 Demo of the CLI interface:
 
 <p align="center">
    <img src="assets/V0_1_demo_gif_mvp.gif" alt="Black Glove Demo" width="1200" style="max-width:100%;height:auto;" />
+</p>
+
+### Web Application
+
+Demo of the web interface:
+
+<p align="center">
+   <img src="assets/we-application.png" alt="Black Glove Web App" width="1200" style="max-width:100%;height:auto;" />
 </p>
 
 
