@@ -7,10 +7,11 @@ for all tool adapters, reducing boilerplate code and ensuring consistency.
 
 import time
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from .interface import AdapterInterface, AdapterResult, AdapterResultStatus
+from .transient_errors import is_transient_adapter_error
 
 
 class BaseAdapter(AdapterInterface):
@@ -101,40 +102,116 @@ class BaseAdapter(AdapterInterface):
             AdapterResult: Standardized result structure
         """
         start_time = time.time()
-        
+        retry_limit = int(self.config.get("retries", 3))
+        max_attempts = max(1, retry_limit + 1)
+        last_result: Optional[AdapterResult] = None
+        warnings: List[str] = []
+
         try:
-            # Validate parameters
             self.validate_params(params)
-            
-            # Execute the actual implementation
-            result = self._execute_impl(params)
-            
-            # Record execution time
-            execution_time = time.time() - start_time
-            self._last_execution_time = execution_time
-            
-            # Add timing to result if it's an AdapterResult
-            if isinstance(result, AdapterResult):
-                result.execution_time = execution_time
-            
-            self.logger.info(f"Adapter {self.name} executed successfully in {execution_time:.2f}s")
-            return result
-            
         except Exception as e:
             execution_time = time.time() - start_time
-            self.logger.error(f"Adapter {self.name} execution failed: {str(e)}")
-            
+            self.logger.error(f"Adapter {self.name} parameter validation failed: {str(e)}")
             return AdapterResult(
                 status=AdapterResultStatus.ERROR,
                 data=None,
                 metadata={
                     "adapter": self.name,
                     "timestamp": time.time(),
-                    "execution_time": execution_time
+                    "execution_time": execution_time,
+                    "retries_attempted": 0,
                 },
                 error_message=str(e),
-                execution_time=execution_time
+                execution_time=execution_time,
             )
+
+        for attempt in range(max_attempts):
+            try:
+                result = self._execute_impl(params)
+                if not isinstance(result, AdapterResult):
+                    raise TypeError(f"{self.name} _execute_impl must return AdapterResult")
+
+                if (
+                    result.status in (
+                        AdapterResultStatus.FAILURE,
+                        AdapterResultStatus.ERROR,
+                        AdapterResultStatus.TIMEOUT,
+                    )
+                    and is_transient_adapter_error(result.error_message or "")
+                    and attempt < max_attempts - 1
+                ):
+                    delay = 2 ** attempt
+                    warning = (
+                        f"Transient error on attempt {attempt + 1}/{max_attempts}: "
+                        f"{result.error_message}; retrying in {delay}s"
+                    )
+                    warnings.append(warning)
+                    self.logger.warning(warning)
+                    last_result = result
+                    time.sleep(delay)
+                    continue
+
+                execution_time = time.time() - start_time
+                self._last_execution_time = execution_time
+                result.execution_time = execution_time
+                if warnings:
+                    result.metadata = dict(result.metadata or {})
+                    result.metadata["retries_attempted"] = attempt
+                    result.metadata["transient_retry_warnings"] = warnings
+                self.logger.info(
+                    f"Adapter {self.name} executed successfully in {execution_time:.2f}s"
+                )
+                return result
+
+            except Exception as e:
+                if is_transient_adapter_error(str(e)) and attempt < max_attempts - 1:
+                    delay = 2 ** attempt
+                    warning = (
+                        f"Transient exception on attempt {attempt + 1}/{max_attempts}: "
+                        f"{e}; retrying in {delay}s"
+                    )
+                    warnings.append(warning)
+                    self.logger.warning(warning)
+                    time.sleep(delay)
+                    continue
+
+                execution_time = time.time() - start_time
+                self.logger.error(f"Adapter {self.name} execution failed: {str(e)}")
+                return AdapterResult(
+                    status=AdapterResultStatus.ERROR,
+                    data=None,
+                    metadata={
+                        "adapter": self.name,
+                        "timestamp": time.time(),
+                        "execution_time": execution_time,
+                        "retries_attempted": attempt,
+                        "transient_retry_warnings": warnings,
+                    },
+                    error_message=str(e),
+                    execution_time=execution_time,
+                )
+
+        execution_time = time.time() - start_time
+        if last_result is not None:
+            last_result.execution_time = execution_time
+            last_result.metadata = dict(last_result.metadata or {})
+            last_result.metadata["retries_attempted"] = max_attempts - 1
+            last_result.metadata["transient_retry_warnings"] = warnings
+            return last_result
+
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            data=None,
+            metadata={
+                "adapter": self.name,
+                "timestamp": time.time(),
+                "execution_time": execution_time,
+                "retries_attempted": max_attempts - 1,
+                "transient_retry_warnings": warnings,
+            },
+            error_message="Adapter execution failed after retries",
+            execution_time=execution_time,
+        )
     
     def _execute_impl(self, params: Dict[str, Any]) -> AdapterResult:
         """

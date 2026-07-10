@@ -485,6 +485,15 @@ class PluginManager:
                 domain = normalized.get("domain") or normalized.get("target")
                 if domain:
                     normalized["domain"] = _strip_domain(domain)
+            adapter_cfg = self._get_adapter_config("gobuster")
+            from adapters.gobuster import create_gobuster_adapter
+            helper = create_gobuster_adapter(adapter_cfg)
+            try:
+                normalized["wordlist"] = helper._resolve_wordlist_path(
+                    normalized.get("wordlist") or adapter_cfg.get("wordlist")
+                )
+            except ValueError:
+                pass
 
         if adapter_name == "credential_tester":
             target = normalized.get("target") or normalized.get("target_url")
@@ -502,6 +511,10 @@ class PluginManager:
             scan_timeout = self.config.get("scan_timeout")
             if scan_timeout is not None:
                 adapter_cfg["timeout"] = scan_timeout
+        if "retries" not in adapter_cfg:
+            default_retries = self.config.get("adapter_retries", 3)
+            if default_retries is not None:
+                adapter_cfg["retries"] = default_retries
         return adapter_cfg
 
     def validate_adapter(self, adapter_name: str) -> bool:

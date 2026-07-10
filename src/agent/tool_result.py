@@ -10,6 +10,18 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 
+def _is_retryable_error(error: Optional[str], status: str) -> bool:
+    if status != "error":
+        return False
+    if not error:
+        return True
+    try:
+        from adapters.transient_errors import is_transient_adapter_error
+        return is_transient_adapter_error(error)
+    except ImportError:
+        return True
+
+
 class ToolResultEnvelope(BaseModel):
     """Canonical result passed between executor, agents, and persistence."""
 
@@ -25,6 +37,7 @@ class ToolResultEnvelope(BaseModel):
     error: Optional[str] = None
     raw_digest: Optional[str] = None
     report_content: Optional[str] = None
+    report_path: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
 
     def to_llm_context(self, max_len: int = 8000) -> str:
@@ -42,6 +55,8 @@ class ToolResultEnvelope(BaseModel):
         }
         if self.report_content:
             payload["report_preview"] = self.report_content[:1500]
+        if self.report_path:
+            payload["report_path"] = self.report_path
         if self.data:
             display = dict(self.data)
             display.pop("interpretation", None)
@@ -55,7 +70,7 @@ class ToolResultEnvelope(BaseModel):
 
     def to_trace_details(self) -> Dict[str, Any]:
         """Structured metadata for trace persistence."""
-        return {
+        details: Dict[str, Any] = {
             "tool": self.tool_name,
             "status": self.status,
             "evidence_paths": self.evidence_paths,
@@ -65,6 +80,9 @@ class ToolResultEnvelope(BaseModel):
             "result_digest": self.raw_digest,
             "error": self.error,
         }
+        if self.report_path:
+            details["report_path"] = self.report_path
+        return details
 
     @classmethod
     def _map_adapter_status(cls, status_value: Optional[str]) -> str:
@@ -114,7 +132,7 @@ class ToolResultEnvelope(BaseModel):
                 tool_name=tool_name,
                 summary=result,
                 error=result,
-                retryable=True,
+                retryable=_is_retryable_error(result, "error"),
             )
 
         if isinstance(result, str) and not result.startswith("Error:"):
@@ -132,6 +150,25 @@ class ToolResultEnvelope(BaseModel):
         if isinstance(data, dict) and data.get("evidence_path"):
             evidence_paths.append(str(data["evidence_path"]))
 
+        if (
+            tool_name == "generate_report"
+            and isinstance(data, dict)
+            and data.get("report_path")
+        ):
+            report_path = str(data["report_path"])
+            summary = str(data.get("summary", "Report generated"))[:500]
+            preview = str(data.get("report_preview", ""))[:1500]
+            return cls(
+                status="success",
+                tool_name=tool_name,
+                summary=summary,
+                report_content=preview or None,
+                report_path=report_path,
+                raw_digest=report_path,
+                evidence_paths=[report_path],
+                data=data,
+            )
+
         subagent = cls._extract_subagent_fields(data) if isinstance(data, dict) else None
         if subagent:
             status, summary = subagent
@@ -146,7 +183,7 @@ class ToolResultEnvelope(BaseModel):
                 raw_digest=digest,
                 data=data,
                 evidence_paths=evidence_paths,
-                retryable=status == "error",
+                retryable=_is_retryable_error(summary if status == "error" else None, status),
             )
 
         status = "success"
@@ -189,7 +226,7 @@ class ToolResultEnvelope(BaseModel):
             warnings=warnings,
             coverage=coverage,
             error=summary if status == "error" else None,
-            retryable=status == "error",
+            retryable=_is_retryable_error(summary if status == "error" else None, status),
         )
 
     @classmethod

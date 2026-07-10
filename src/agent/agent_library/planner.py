@@ -60,6 +60,13 @@ STRATEGY:
 2.  **Active Recon**: Use `nmap` and `gobuster`. For `gobuster`, consider multiple wordlists if available.
 3.  **Investigate Findings**: If a previous step found something interesting (e.g. a weird port, a git repo), add a specific step to investigate it further.
 
+WEBSITE FULL-SCAN CHECKLIST (when goal mentions website, domain, full scan, all tools, or every tool):
+  Required recon: whois, passive_recon, osint_harvester, dns_lookup, sublist3r, ssl_check
+  Required scanning: wappalyzer (https URL), web_server_scanner (https URL), nmap, web_vuln_scanner, sqli_scanner, gobuster (dir mode on https URL)
+  Final step: generate_report
+  Do NOT omit ssl_check, sublist3r, nmap, or gobuster for all-tools / comprehensive website assessments.
+  For narrower goals (single-tool or focused checks), omit nmap/gobuster only when not requested.
+
 IMPORTANT:
 Do NOT try to execute these tools directly (e.g. do not output {"tool": "nmap"}).
 You do not have access to them. Only the Root Agent does.

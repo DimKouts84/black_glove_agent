@@ -42,6 +42,7 @@ def init_db() -> None:
             _create_worker_tables(conn)
             create_finding_observations_table(conn)
             _supersede_stale_scan_completed_findings(conn)
+            _merge_duplicate_header_findings(conn)
     finally:
         conn.close()
 
@@ -168,6 +169,63 @@ def _supersede_stale_scan_completed_findings(conn: sqlite3.Connection) -> None:
           )
         """
     )
+
+
+def _merge_duplicate_header_findings(conn: sqlite3.Connection) -> None:
+    """Merge duplicate web_server_scanner header rows; stabilize fingerprints (idempotent)."""
+    import hashlib
+
+    cursor = conn.execute(
+        """
+        SELECT asset_id, title, GROUP_CONCAT(id) AS ids
+        FROM findings
+        WHERE source_tool = 'web_server_scanner'
+          AND (title LIKE 'Missing %' OR title LIKE 'Present %')
+        GROUP BY asset_id, title
+        HAVING COUNT(*) > 1
+        """
+    )
+    for asset_id, title, ids_str in cursor.fetchall():
+        ids = sorted(int(x) for x in ids_str.split(","))
+        keep_id, dup_ids = ids[0], ids[1:]
+        for dup_id in dup_ids:
+            conn.execute(
+                "UPDATE finding_observations SET finding_id = ? WHERE finding_id = ?",
+                (keep_id, dup_id),
+            )
+            conn.execute("DELETE FROM findings WHERE id = ?", (dup_id,))
+
+    for row in conn.execute(
+        """
+        SELECT id, asset_id, source_tool, title
+        FROM findings
+        WHERE source_tool = 'web_server_scanner'
+          AND (title LIKE 'Missing %' OR title LIKE 'Present %')
+        """
+    ):
+        finding_id, asset_id, source_tool, finding_title = row
+        raw = f"{asset_id}|{source_tool}|{finding_title.strip().lower()}"
+        fingerprint = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        try:
+            conn.execute(
+                "UPDATE findings SET fingerprint = ? WHERE id = ?",
+                (fingerprint, finding_id),
+            )
+        except sqlite3.IntegrityError:
+            existing = conn.execute(
+                """
+                SELECT id FROM findings
+                WHERE fingerprint = ? AND id != ?
+                """,
+                (fingerprint, finding_id),
+            ).fetchone()
+            if existing:
+                canonical_id = existing[0]
+                conn.execute(
+                    "UPDATE finding_observations SET finding_id = ? WHERE finding_id = ?",
+                    (canonical_id, finding_id),
+                )
+                conn.execute("DELETE FROM findings WHERE id = ?", (finding_id,))
 
 
 def create_engagement_tables(conn: sqlite3.Connection) -> None:
@@ -465,6 +523,7 @@ def run_migrations() -> None:
             _create_worker_tables(conn)
             create_finding_observations_table(conn)
             _supersede_stale_scan_completed_findings(conn)
+            _merge_duplicate_header_findings(conn)
     finally:
         conn.close()
 

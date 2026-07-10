@@ -68,6 +68,35 @@ class GobusterAdapter(BaseAdapter):
             "rate_limit_rpm": None,  # reserved for orchestrator/policy engine
         }
 
+    @staticmethod
+    def _project_root() -> Path:
+        return Path(__file__).parent.parent.parent
+
+    def _resolve_wordlist_path(self, wordlist: Optional[str]) -> str:
+        """Resolve bare filenames and missing paths to bundled defaults."""
+        if wordlist and str(wordlist).strip():
+            candidate = Path(wordlist).expanduser()
+            if candidate.is_file():
+                return str(candidate.resolve())
+
+            root_relative = self._project_root() / candidate
+            if root_relative.is_file():
+                return str(root_relative.resolve())
+
+            bundled = self._project_root() / "bin" / "wordlists" / candidate.name
+            if bundled.is_file() and len(candidate.parts) == 1:
+                return str(bundled.resolve())
+
+            if candidate.is_absolute() or len(candidate.parts) > 1:
+                return str(candidate)
+
+        if self._default_wordlist and Path(self._default_wordlist).is_file():
+            return str(Path(self._default_wordlist).resolve())
+
+        raise ValueError(
+            "wordlist must be a valid file path; omit wordlist to use the bundled default"
+        )
+
     # ---- Validation ----
 
     def validate_config(self) -> bool:
@@ -106,12 +135,7 @@ class GobusterAdapter(BaseAdapter):
                 params["domain"] = resolve_domain(params)
 
         wordlist = params.get("wordlist") or self.config.get("wordlist") or self._defaults["wordlist"]
-        if not isinstance(wordlist, str) or not wordlist.strip():
-            raise ValueError("wordlist must be provided in params or config")
-        
-        # Ensure wordlist is in params for execution
-        if "wordlist" not in params:
-            params["wordlist"] = wordlist
+        params["wordlist"] = self._resolve_wordlist_path(wordlist)
 
         if mode == "dir":
             url = params.get("url")
@@ -158,6 +182,7 @@ class GobusterAdapter(BaseAdapter):
         # Resolve mode and build command
         mode = params.get("mode") or cfg.get("default_mode", self._defaults["default_mode"])
         wordlist = params.get("wordlist") or cfg.get("wordlist") or self._defaults["wordlist"]
+        wordlist = self._resolve_wordlist_path(wordlist)
         cmd = self._build_command(params=params, wordlist=wordlist, mode=mode)
 
         # Evidence directory

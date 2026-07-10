@@ -10,7 +10,7 @@ import sqlite3
 import hashlib
 import logging
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Union
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -281,7 +281,9 @@ class FindingsNormalizer:
             
             # Create finding based on tool type
             if tool_name.lower() in ['nmap', 'rustscan', 'masscan', 'viewdns']:
-                findings.extend(self._normalize_port_scan_output(tool_output, asset, evidence_metadata))
+                findings.extend(self._normalize_port_scan_output(
+                    tool_output, asset, evidence_metadata, tool_name=tool_name.lower()
+                ))
             elif tool_name.lower() in ['gobuster', 'dirb', 'dirsearch']:
                 findings.extend(self._normalize_directory_scan_output(tool_output, asset, evidence_metadata))
             elif tool_name.lower() in ['nikto', 'nuclei']:
@@ -351,22 +353,24 @@ class FindingsNormalizer:
         return findings
     
     def _normalize_port_scan_output(self, output: Any, asset: AssetModel, 
-                                  evidence_metadata: Dict[str, str]) -> List[Finding]:
+                                  evidence_metadata: Dict[str, str],
+                                  tool_name: str = "nmap") -> List[Finding]:
         """Normalize port scan tool output."""
         findings = []
         
         # Example: Check for common high-risk ports
         high_risk_ports = [21, 22, 23, 25, 53, 110, 143, 445, 1433, 3306, 3389, 5432, 5900]
         open_ports = self._extract_open_ports(output)
+        port_services = self._extract_port_services(output)
         
         for port in open_ports:
             if port in high_risk_ports:
                 severity = SeverityLevel.HIGH if port in [21, 23, 3389] else SeverityLevel.MEDIUM
                 finding = Finding(
                     title=f"High-risk service detected on port {port}",
-                    description=f"Service running on port {port} ({self._get_port_service(port)}) "
+                    description=f"Service running on port {port} ({port_services.get(port) or self._get_port_service(port)}) "
                               f"may pose security risks if not properly configured.",
-                    severity=SeverityLevel.HIGH,
+                    severity=severity,
                     confidence=0.95,
                     asset_id=asset.id,
                     asset_name=asset.name,
@@ -376,9 +380,29 @@ class FindingsNormalizer:
                                   f"restrict access if not needed, or implement proper security controls.",
                     references=[
                         f"https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml?search={port}"
-                    ]
+                    ],
+                    source_tool=tool_name,
                 )
                 findings.append(finding)
+
+        if open_ports:
+            port_details = []
+            for port in sorted(set(open_ports)):
+                service = port_services.get(port) or self._get_port_service(port)
+                port_details.append(f"{port}/{service}")
+            findings.append(Finding(
+                title=f"Open ports discovered ({len(set(open_ports))})",
+                description=", ".join(port_details),
+                severity=SeverityLevel.INFO,
+                confidence=0.95,
+                asset_id=asset.id,
+                asset_name=asset.name,
+                evidence_path=evidence_metadata["path"],
+                evidence_hash=evidence_metadata["hash"],
+                recommended_fix="Review exposed services and close unnecessary ports.",
+                verification_state="informational",
+                source_tool=tool_name,
+            ))
         
         return findings
     
@@ -492,14 +516,84 @@ class FindingsNormalizer:
         }
         return mapping.get(str(severity_str).lower(), SeverityLevel.MEDIUM)
 
-    def reconcile_cross_tool_conflicts(self, findings: List[Finding]) -> List[Finding]:
+    @staticmethod
+    def _normalize_subdomain_label(name: str) -> str:
+        label = str(name).strip().lower()
+        if label.startswith("*."):
+            label = label[2:]
+        return label
+
+    @classmethod
+    def _normalize_subdomain_names(cls, names: Iterable[str]) -> List[str]:
+        seen: set = set()
+        ordered: List[str] = []
+        for name in names:
+            if not name:
+                continue
+            normalized = cls._normalize_subdomain_label(name)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                ordered.append(normalized)
+        return sorted(ordered)
+
+    @classmethod
+    def _subdomain_fingerprint(cls, asset_id: int, names: Iterable[str]) -> str:
+        normalized = cls._normalize_subdomain_names(names)
+        raw = f"{asset_id}|subdomains|{'|'.join(normalized)}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _emit_subdomain_finding(
+        self,
+        asset: AssetModel,
+        names: Iterable[str],
+        source_tool: str,
+        evidence_metadata: Dict[str, str],
+    ) -> Optional[Finding]:
+        normalized = self._normalize_subdomain_names(names)
+        if not normalized:
+            return None
+        sample = normalized[:5]
+        finding = Finding(
+            title=f"Subdomains discovered ({len(normalized)})",
+            description=f"Sources: {source_tool}; sample: {', '.join(sample)}",
+            severity=SeverityLevel.LOW,
+            confidence=0.9,
+            asset_id=asset.id,
+            asset_name=asset.name,
+            evidence_path=evidence_metadata["path"],
+            evidence_hash=evidence_metadata["hash"],
+            source_tool=source_tool,
+            recommended_fix="Review subdomain attack surface.",
+        )
+        finding.fingerprint = self._subdomain_fingerprint(asset.id, normalized)
+        return finding
+
+    def reconcile_cross_tool_conflicts(
+        self,
+        findings: List[Finding],
+        *,
+        run_id: Optional[str] = None,
+        current_findings: Optional[List[Finding]] = None,
+    ) -> List[Finding]:
         """
         Reconcile contradictory observations from different tools on the same asset.
-        Mutates findings in place and returns the list.
+
+        When run_id is set, only findings from that run (plus current_findings) are
+        considered. Returns findings mutated during this call (for persistence).
         """
+        current_batch_ids = {id(f) for f in (current_findings or [])}
+        mutated: List[Finding] = []
+
+        def _in_scope(finding: Finding) -> bool:
+            if run_id is None:
+                return True
+            if id(finding) in current_batch_ids:
+                return True
+            return finding.run_id == run_id
+
         by_asset: Dict[int, List[Finding]] = {}
         for finding in findings:
-            if finding.asset_id is None:
+            if finding.asset_id is None or not _in_scope(finding):
                 continue
             by_asset.setdefault(finding.asset_id, []).append(finding)
 
@@ -518,6 +612,14 @@ class FindingsNormalizer:
                 continue
 
             for finding in missing_hsts:
+                if finding.verification_state == "conflicted":
+                    continue
+                before = (
+                    finding.severity,
+                    finding.verification_state,
+                    finding.description,
+                    finding.recommended_fix,
+                )
                 finding.severity = SeverityLevel.INFO
                 finding.verification_state = "conflicted"
                 finding.description = (
@@ -528,8 +630,16 @@ class FindingsNormalizer:
                     "Confirm whether HSTS is enforced via HTTPS redirect, CDN, or preload; "
                     "add Strict-Transport-Security on origin if missing."
                 )
+                after = (
+                    finding.severity,
+                    finding.verification_state,
+                    finding.description,
+                    finding.recommended_fix,
+                )
+                if before != after:
+                    mutated.append(finding)
 
-        return findings
+        return mutated
 
     def _normalize_web_scan_output(
         self,
@@ -558,17 +668,29 @@ class FindingsNormalizer:
                 if note:
                     detail = f"{detail} ({note})"
                 confidence = float(item.get("confidence", 0.75))
+                sev = self._map_severity(sev_str)
+                verification_state = "indicator"
+
+                response_url = str(item.get("response_url", ""))
+                is_http_scan = (
+                    item.get("context") == "http_scan"
+                    or response_url.lower().startswith("http://")
+                )
+                if title == "Missing Strict-Transport-Security" and is_http_scan:
+                    sev = SeverityLevel.INFO
+                    verification_state = "informational"
 
                 findings.append(Finding(
                     title=title,
                     description=detail,
-                    severity=self._map_severity(sev_str),
+                    severity=sev,
                     confidence=confidence,
                     asset_id=asset.id,
                     asset_name=asset.name,
                     evidence_path=evidence_metadata["path"],
                     evidence_hash=evidence_metadata["hash"],
                     source_tool=tool_name,
+                    verification_state=verification_state,
                     recommended_fix="Review and remediate the identified web server misconfiguration.",
                 ))
         else:
@@ -667,6 +789,18 @@ class FindingsNormalizer:
                     recommended_fix="Manually verify archived URL; rotate credentials if confirmed.",
                 ))
 
+            crt_sh = output.get("crt_sh") or {}
+            cert_names: List[str] = []
+            for cert in crt_sh.get("certificates") or []:
+                for name in cert.get("name_value") or []:
+                    if name:
+                        cert_names.append(str(name).strip())
+            subdomain_finding = self._emit_subdomain_finding(
+                asset, cert_names, tool_name, evidence_metadata
+            )
+            if subdomain_finding:
+                findings.append(subdomain_finding)
+
         elif tool == "credential_tester":
             for cred in output.get("valid_credentials", []):
                 findings.append(Finding(
@@ -724,24 +858,21 @@ class FindingsNormalizer:
                     recommended_fix="Review exposed contact information for privacy impact.",
                 ))
             if subdomains:
-                findings.append(Finding(
-                    title=f"OSINT subdomains discovered ({len(subdomains)})",
-                    description=f"Sample: {', '.join(subdomains[:5])}",
-                    severity=SeverityLevel.LOW,
-                    confidence=0.9,
-                    asset_id=asset.id,
-                    asset_name=asset.name,
-                    evidence_path=evidence_metadata["path"],
-                    evidence_hash=evidence_metadata["hash"],
-                    recommended_fix="Review subdomain attack surface.",
-                ))
+                subdomain_finding = self._emit_subdomain_finding(
+                    asset, subdomains, tool_name, evidence_metadata
+                )
+                if subdomain_finding:
+                    findings.append(subdomain_finding)
 
         if not findings:
             description = output.get("interpretation") or f"No actionable issues from {tool_name}."
             coverage = output.get("coverage") or {}
             errors = output.get("errors") or {}
-            if tool == "passive_recon" and errors and not coverage.get("crt_sh_ok") and not coverage.get("wayback_ok"):
-                return findings
+            if tool == "passive_recon":
+                if coverage.get("crt_sh_ok") or coverage.get("wayback_ok"):
+                    return findings
+                if errors and not coverage.get("crt_sh_ok") and not coverage.get("wayback_ok"):
+                    return findings
             findings.append(Finding(
                 title=f"{tool_name} scan completed on {asset.name}",
                 description=description,
@@ -789,16 +920,23 @@ class FindingsNormalizer:
                         recommended_fix="Review DNS records for misconfigurations or data exposure.",
                     ))
                 elif error:
+                    benign_no_record = {
+                        "No answer for record type",
+                        "Domain does not exist",
+                    }
+                    if str(error) in benign_no_record:
+                        continue
                     findings.append(Finding(
                         title=f"DNS {rtype} query issue",
                         description=str(error),
-                        severity=SeverityLevel.LOW,
+                        severity=SeverityLevel.INFO,
                         confidence=0.85,
                         asset_id=asset.id,
                         asset_name=asset.name,
                         evidence_path=evidence_metadata["path"],
                         evidence_hash=evidence_metadata["hash"],
                         recommended_fix="Verify DNS configuration.",
+                        verification_state="informational",
                     ))
 
         elif tool == "dns_recon":
@@ -1067,6 +1205,30 @@ class FindingsNormalizer:
                 port_matches = re.findall(r'port\s+(\d+).*?open', output, re.IGNORECASE)
             ports = [int(p) for p in port_matches]
         return [p for p in ports if p > 0]
+
+    def _extract_port_services(self, output: Any) -> Dict[int, str]:
+        """Map open port numbers to service names when present in scan output."""
+        services: Dict[int, str] = {}
+        if not isinstance(output, dict):
+            return services
+        if "hosts" in output:
+            for host in output["hosts"]:
+                if not isinstance(host, dict):
+                    continue
+                for port_info in host.get("ports", []):
+                    if not isinstance(port_info, dict) or port_info.get("state") != "open":
+                        continue
+                    port = int(port_info.get("port", 0) or 0)
+                    if port > 0:
+                        services[port] = str(port_info.get("service") or self._get_port_service(port))
+        if "ports" in output:
+            for port_info in output["ports"]:
+                if not isinstance(port_info, dict) or port_info.get("state") != "open":
+                    continue
+                port = int(port_info.get("port", 0) or 0)
+                if port > 0:
+                    services[port] = str(port_info.get("service") or self._get_port_service(port))
+        return services
     
     def _extract_dir_entries(self, output: Any) -> List[Dict[str, Any]]:
         """Extract directory scan entries with optional status metadata."""
@@ -1423,6 +1585,49 @@ class ReportGenerator:
             counts[severity] = counts.get(severity, 0) + 1
         return counts
 
+    @staticmethod
+    def _aggregate_asset_metadata_from_findings(
+        findings: List[Finding],
+        asset: AssetModel,
+    ) -> Dict[str, List[Any]]:
+        """Derive IPs, tech stack, and open ports from normalized findings."""
+        import re
+
+        ips: set = set()
+        tech_stack: set = set()
+        open_ports: set = set()
+
+        for finding in findings:
+            if finding.asset_id != asset.id and finding.asset_name != asset.name:
+                continue
+            title = finding.title or ""
+            desc = finding.description or ""
+            source = (finding.source_tool or "").lower()
+
+            if title.startswith("DNS A records") or title.startswith("DNS AAAA records"):
+                for part in desc.split(":", 1)[-1].split(","):
+                    ip = part.strip().split()[0].strip()
+                    if ip and not ip.startswith("("):
+                        ips.add(ip)
+
+            if source == "wappalyzer" and title.startswith("Technology detected: "):
+                tech = title.replace("Technology detected: ", "", 1).strip()
+                if tech:
+                    tech_stack.add(tech)
+
+            if source in ("nmap", "rustscan", "masscan"):
+                if title.startswith("Open ports discovered"):
+                    for match in re.findall(r"\b(\d+)\b", desc):
+                        open_ports.add(int(match))
+                for match in re.findall(r"port (\d+)", title, re.IGNORECASE):
+                    open_ports.add(int(match))
+
+        return {
+            "ip_addresses": sorted(ips),
+            "tech_stack": sorted(tech_stack),
+            "open_ports": sorted(open_ports),
+        }
+
     def _generate_markdown_report_v2(self, findings: List[Finding], assets: List[AssetModel], 
                                    metadata: Dict[str, Any]) -> str:
         """
@@ -1464,20 +1669,31 @@ class ReportGenerator:
                 if asset.name in rf.affected_assets
             ]
             
+            meta = self._aggregate_asset_metadata_from_findings(findings, asset)
+            ip_addresses = list(meta["ip_addresses"])
+            if not ip_addresses and asset.type.value == "host":
+                ip_addresses = [asset.value]
+
             asset_reports.append(AssetReport(
                 target=asset.name,
-                ip_addresses=[asset.value] if asset.type.value == "host" else [],
-                findings=asset_specific_findings
-                # tech_stack and open_ports would be populated from refined asset data if available
+                ip_addresses=ip_addresses,
+                tech_stack=meta["tech_stack"],
+                open_ports=meta["open_ports"],
+                findings=asset_specific_findings,
             ))
 
         # 3. Create Executive Summary
         active_findings = [
-            f for f in findings if f.verification_state != "conflicted"
+            f for f in findings
+            if f.verification_state not in ("conflicted", "informational")
         ]
         conflicted_findings = [
             f for f in findings if f.verification_state == "conflicted"
         ]
+        informational_findings = [
+            f for f in findings if f.verification_state == "informational"
+        ]
+        informational_titles = {f.title for f in informational_findings}
         severity_counts = self._count_findings_by_severity(active_findings)
         risk_score = 10.0
         if severity_counts.get("critical", 0) > 0:
@@ -1496,6 +1712,7 @@ class ReportGenerator:
                 rf for rf in report_findings
                 if rf.severity in [ReportSeverity.CRITICAL, ReportSeverity.HIGH]
                 and rf.title not in conflicted_titles
+                and rf.title not in informational_titles
             ],
             key=lambda x: x.severity.value
         )[:5]
@@ -1507,6 +1724,11 @@ class ReportGenerator:
         if conflicted_findings:
             overview += (
                 f" {len(conflicted_findings)} reconciled cross-tool observation(s) "
+                "documented separately."
+            )
+        if informational_findings:
+            overview += (
+                f" {len(informational_findings)} scan coverage note(s) "
                 "documented separately."
             )
 
@@ -1527,11 +1749,16 @@ class ReportGenerator:
         if not target:
             target = "Unknown Target"
 
+        detailed_findings = [
+            rf for rf in report_findings
+            if rf.title not in informational_titles
+        ]
+
         full_report = FullReport(
             target=target,
             executive_summary=exec_summary,
             assets=asset_reports,
-            all_findings=report_findings,
+            all_findings=detailed_findings,
             reconciled_findings=[
                 ReportFinding(
                     title=f.title,
@@ -1542,6 +1769,17 @@ class ReportGenerator:
                     affected_assets=[f.asset_name] if f.asset_name else [],
                 )
                 for f in conflicted_findings
+            ],
+            coverage_findings=[
+                ReportFinding(
+                    title=f.title,
+                    severity=ReportSeverity.INFO,
+                    description=f.description,
+                    remediation=f.recommended_fix,
+                    evidence=[f.evidence_path] if f.evidence_path else [],
+                    affected_assets=[f.asset_name] if f.asset_name else [],
+                )
+                for f in informational_findings
             ],
         )
         
@@ -1615,32 +1853,46 @@ class ReportingManager:
                                COALESCE(o.description, f.description),
                                COALESCE(o.evidence_hash, f.evidence_hash),
                                f.source_tool, f.verification_state, f.fingerprint,
-                               f.observation_count, o.run_id, o.step_id
+                               f.observation_count, o.run_id, o.step_id,
+                               COALESCE(a.name, '')
                         FROM finding_observations o
                         JOIN findings f ON f.id = o.finding_id
+                        LEFT JOIN assets a ON a.id = f.asset_id
+                        INNER JOIN (
+                            SELECT finding_id, MAX(id) AS max_obs_id
+                            FROM finding_observations
+                            WHERE run_id = ?
+                            GROUP BY finding_id
+                        ) latest ON latest.max_obs_id = o.id
                         WHERE o.run_id = ?
                         ORDER BY f.severity, o.observed_at DESC
                         """,
-                        (run_id,),
+                        (run_id, run_id),
                     )
                 else:
                     cursor.execute(
                         """
-                        SELECT id, title, severity, confidence, asset_id, evidence_path,
-                               recommended_fix, created_at, description, evidence_hash,
-                               source_tool, verification_state, fingerprint, observation_count,
-                               run_id, step_id
-                        FROM findings
-                        ORDER BY severity, created_at DESC
+                        SELECT f.id, f.title, f.severity, f.confidence, f.asset_id,
+                               f.evidence_path, f.recommended_fix, f.created_at,
+                               f.description, f.evidence_hash, f.source_tool,
+                               f.verification_state, f.fingerprint, f.observation_count,
+                               f.run_id, f.step_id, COALESCE(a.name, '')
+                        FROM findings f
+                        LEFT JOIN assets a ON a.id = f.asset_id
+                        ORDER BY f.severity, f.created_at DESC
                         """
                     )
 
                 rows = cursor.fetchall()
                 for row in rows:
+                    if (row[11] or "indicator") == "informational":
+                        severity = SeverityLevel.INFO
+                    else:
+                        severity = SeverityLevel(row[2]) if row[2] else SeverityLevel.MEDIUM
                     finding = Finding(
                         id=row[0],
                         title=row[1],
-                        severity=SeverityLevel(row[2]) if row[2] else SeverityLevel.MEDIUM,
+                        severity=severity,
                         confidence=row[3] or 0.8,
                         asset_id=row[4],
                         evidence_path=row[5],
@@ -1654,6 +1906,7 @@ class ReportingManager:
                         observation_count=row[13] or 1,
                         run_id=row[14],
                         step_id=row[15],
+                        asset_name=row[16] or "",
                     )
                     findings.append(finding)
 
@@ -1669,6 +1922,7 @@ class ReportingManager:
         asset_id: int,
         *,
         exclude_superseded: bool = True,
+        run_id: Optional[str] = None,
     ) -> List[Finding]:
         """Load canonical findings for an asset (used for cross-tool reconciliation)."""
         findings: List[Finding] = []
@@ -1683,10 +1937,14 @@ class ReportingManager:
                     FROM findings
                     WHERE asset_id = ?
                 """
+                params: List[Any] = [asset_id]
+                if run_id:
+                    sql += " AND run_id = ?"
+                    params.append(run_id)
                 if exclude_superseded:
                     sql += " AND verification_state != 'superseded'"
                 sql += " ORDER BY created_at DESC"
-                cursor.execute(sql, (asset_id,))
+                cursor.execute(sql, tuple(params))
                 for row in cursor.fetchall():
                     findings.append(
                         Finding(
@@ -1817,6 +2075,7 @@ class ReportingManager:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(fingerprint) DO UPDATE SET
                             observation_count = observation_count + 1,
+                            severity = excluded.severity,
                             confidence = MAX(findings.confidence, excluded.confidence),
                             evidence_path = excluded.evidence_path,
                             evidence_hash = excluded.evidence_hash,
@@ -1853,6 +2112,39 @@ class ReportingManager:
                     finding_id = row[0]
                     finding.id = finding_id
 
+                    if finding.run_id:
+                        cursor.execute(
+                            """
+                            SELECT id, description FROM finding_observations
+                            WHERE finding_id = ? AND run_id = ?
+                            LIMIT 1
+                            """,
+                            (finding_id, finding.run_id),
+                        )
+                        existing_obs = cursor.fetchone()
+                        if existing_obs:
+                            merged_description = self._merge_observation_descriptions(
+                                existing_obs[1] or "",
+                                finding.description or "",
+                            )
+                            cursor.execute(
+                                """
+                                UPDATE finding_observations
+                                SET description = ?, evidence_path = ?, evidence_hash = ?,
+                                    observed_at = ?, step_id = COALESCE(?, step_id)
+                                WHERE id = ?
+                                """,
+                                (
+                                    merged_description,
+                                    finding.evidence_path,
+                                    finding.evidence_hash,
+                                    observed_at,
+                                    finding.step_id,
+                                    existing_obs[0],
+                                ),
+                            )
+                            continue
+
                     cursor.execute(
                         """
                         INSERT INTO finding_observations
@@ -1880,11 +2172,48 @@ class ReportingManager:
                 self._injected_connection.rollback()
 
     @staticmethod
+    def _merge_observation_descriptions(existing: str, new: str) -> str:
+        """Merge observation text when the same finding is re-saved in one run."""
+        import re
+
+        if not existing or existing == new:
+            return new
+        if not new:
+            return existing
+
+        def _split_sources(description: str):
+            match = re.match(r"Sources:\s*([^;]+);?\s*(.*)", description, re.DOTALL)
+            if not match:
+                return [], description
+            sources = [s.strip() for s in match.group(1).split(",") if s.strip()]
+            tail = match.group(2).strip()
+            return sources, tail
+
+        existing_sources, existing_tail = _split_sources(existing)
+        new_sources, new_tail = _split_sources(new)
+        if existing_sources or new_sources:
+            merged = sorted(set(existing_sources + new_sources))
+            tail = new_tail or existing_tail
+            prefix = f"Sources: {', '.join(merged)}"
+            return f"{prefix}; {tail}" if tail else prefix
+        return new
+
+    @staticmethod
     def _finding_fingerprint(finding: Finding) -> str:
+        title_lower = finding.title.strip().lower()
+        if (
+            finding.source_tool == "web_server_scanner"
+            and (title_lower.startswith("missing ") or title_lower.startswith("present "))
+        ):
+            raw = f"{finding.asset_id}|{finding.source_tool}|{title_lower}"
+            return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        if finding.title.startswith("Subdomains discovered ("):
+            if finding.fingerprint:
+                return finding.fingerprint
         location = (finding.description or "").strip().lower()[:200]
         raw = (
             f"{finding.asset_id}|{finding.source_tool}|"
-            f"{finding.title.strip().lower()}|{location}"
+            f"{title_lower}|{location}"
         )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
     

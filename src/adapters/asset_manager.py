@@ -80,14 +80,28 @@ class AssetManagerAdapter(BaseAdapter):
         try:
             conn = self._get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM assets WHERE value = ?", (params["value"],))
-            if cursor.fetchone():
+            cursor.execute(
+                "SELECT id, name, type FROM assets WHERE value = ?",
+                (params["value"],),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                asset_id, existing_name, existing_type = existing
                 conn.close()
+                msg = (
+                    f"Asset '{existing_name}' ({params['value']}) "
+                    f"already registered (ID {asset_id})"
+                )
                 return AdapterResult(
-                    status=AdapterResultStatus.FAILURE,
-                    data=None,
-                    metadata={"error": "Duplicate asset"},
-                    error_message=f"Asset with value {params['value']} already exists",
+                    status=AdapterResultStatus.SUCCESS,
+                    data=msg,
+                    metadata={
+                        "asset_id": asset_id,
+                        "name": existing_name,
+                        "type": existing_type,
+                        "value": params["value"],
+                        "action": "exists",
+                    },
                 )
 
             cursor.execute(

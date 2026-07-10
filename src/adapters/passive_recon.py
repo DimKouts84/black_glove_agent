@@ -58,7 +58,7 @@ class PassiveReconAdapter(BaseAdapter):
         # Defaults
         self._defaults = {
             "timeout": 30,
-            "retries": 1,
+            "retries": 3,
             "backoff_factor": 1.5,
             "respect_retry_after": True,
             "crt_sh": {
@@ -285,9 +285,12 @@ class PassiveReconAdapter(BaseAdapter):
             "crt_sh_ok": "crt_sh" not in errors and crt_result.get("count", 0) > 0,
             "wayback_ok": "wayback" not in errors and wb_result.get("count", 0) > 0,
         }
-        if errors and not both_empty:
-            status = AdapterResultStatus.PARTIAL
-        elif both_empty and errors:
+        if "wayback" not in errors and not coverage["wayback_ok"]:
+            warnings.append("wayback: no snapshots returned")
+        if "crt_sh" not in errors and not coverage["crt_sh_ok"]:
+            warnings.append("crt_sh: no certificates returned")
+        fully_ok = coverage["crt_sh_ok"] and coverage["wayback_ok"]
+        if errors or not fully_ok:
             status = AdapterResultStatus.PARTIAL
         else:
             status = AdapterResultStatus.SUCCESS

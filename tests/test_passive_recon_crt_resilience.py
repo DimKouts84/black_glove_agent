@@ -35,6 +35,28 @@ class TestPassiveReconCrtResilience:
 
     @patch.object(PassiveReconAdapter, "_fetch_crt_sh_entries")
     @patch.object(PassiveReconAdapter, "_http_get")
+    def test_crt_ok_wayback_empty_is_partial(self, mock_wb_get, mock_crt):
+        mock_crt.return_value = (
+            [{"name_value": "www.example.com\napi.example.com", "id": 1}],
+            None,
+        )
+        mock_wb_get.return_value = '[["timestamp","original","mime","statuscode","length","digest"]]'
+
+        adapter = PassiveReconAdapter({})
+        result = adapter.execute({"domain": "example.com"})
+
+        assert result.status == AdapterResultStatus.PARTIAL
+        assert result.data["coverage"]["crt_sh_ok"] is True
+        assert result.data["coverage"]["wayback_ok"] is False
+        assert any("wayback" in w for w in result.data["warnings"])
+
+        envelope = ToolResultEnvelope.from_adapter_result(
+            "passive_recon", result, dict(result.data)
+        )
+        assert envelope.status == "partial"
+
+    @patch.object(PassiveReconAdapter, "_fetch_crt_sh_entries")
+    @patch.object(PassiveReconAdapter, "_http_get")
     def test_both_sources_fail_is_partial_not_error(self, mock_wb_get, mock_crt):
         mock_crt.return_value = ([], "HTTPError 502")
         mock_wb_get.side_effect = RuntimeError("wayback down")

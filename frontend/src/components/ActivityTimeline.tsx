@@ -75,8 +75,15 @@ export function ActivityTimeline({ events, acting = false, compact = false, newe
                         ? 'text-yellow-400'
                         : 'text-dim'
                   }>
-                    {ev.content || 'Tool execution completed'}
+                    {ev.tool === 'generate_report' && ev.report_path
+                      ? `Report saved: ${ev.content || 'Assessment report generated'}`
+                      : (ev.content || 'Tool execution completed')}
                   </p>
+                  {ev.tool === 'generate_report' && ev.report_path && (
+                    <p className="text-[10px] text-accent break-all">
+                      report: {ev.report_path}
+                    </p>
+                  )}
                   {ev.status && (
                     <p className="text-[10px] text-secondary">status: {ev.status}</p>
                   )}

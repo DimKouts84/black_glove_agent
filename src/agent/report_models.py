@@ -49,3 +49,4 @@ class FullReport(BaseModel):
     assets: List[AssetReport]
     all_findings: List[Finding]
     reconciled_findings: List[Finding] = Field(default_factory=list)
+    coverage_findings: List[Finding] = Field(default_factory=list)

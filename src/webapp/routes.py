@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -231,14 +232,53 @@ def delete_asset(asset_id: int):
 
 # --- Reports ---
 
+@router.get("/reports/{run_id}")
+def get_report(run_id: str):
+    """Return a persisted report file for a run, or generate on demand."""
+    from agent.tools.report_tool import _reports_dir, _FORMAT_EXTENSIONS
+
+    reports_dir = _reports_dir()
+    for ext in _FORMAT_EXTENSIONS.values():
+        path = reports_dir / f"{run_id}.{ext}"
+        if path.exists():
+            return {
+                "run_id": run_id,
+                "format": next(k for k, v in _FORMAT_EXTENSIONS.items() if v == ext),
+                "content": path.read_text(encoding="utf-8"),
+                "report_path": str(path),
+            }
+
+    tool = ReportTool()
+    result = tool.execute({"format": "markdown", "run_id": run_id})
+    if isinstance(result, dict) and result.get("report_path"):
+        path = Path(result["report_path"])
+        return {
+            "run_id": run_id,
+            "format": result.get("format", "markdown"),
+            "content": path.read_text(encoding="utf-8") if path.exists() else "",
+            "report_path": str(path),
+            "summary": result.get("summary"),
+        }
+    if isinstance(result, str):
+        return {"run_id": run_id, "format": "markdown", "content": result}
+    raise HTTPException(status_code=404, detail="Report not found")
+
+
 @router.post("/reports")
 def generate_report(body: ReportGenerateRequest):
     tool = ReportTool()
-    content = tool.execute({
+    result = tool.execute({
         "format": body.format,
         "include_evidence": body.include_evidence,
     })
-    return {"format": body.format, "content": content}
+    if isinstance(result, dict):
+        return {
+            "format": body.format,
+            "summary": result.get("summary"),
+            "report_path": result.get("report_path"),
+            "content": result.get("report_preview"),
+        }
+    return {"format": body.format, "content": result}
 
 
 # --- Tools (dynamic decoupling contract) ---

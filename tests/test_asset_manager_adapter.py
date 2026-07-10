@@ -41,12 +41,13 @@ class TestAssetManagerAdapter:
         listed = adapter.execute({"command": "list"})
         assert "example.com" in listed.data
 
-    def test_add_duplicate_fails(self, db_path):
+    def test_add_duplicate_is_idempotent(self, db_path):
         adapter = create_asset_manager_adapter()
         params = {"command": "add", "name": "a", "type": "domain", "value": "dup.com"}
         adapter.execute(params)
         dup = adapter.execute({"command": "add", "name": "b", "type": "domain", "value": "dup.com"})
-        assert dup.status == AdapterResultStatus.FAILURE
+        assert dup.status == AdapterResultStatus.SUCCESS
+        assert dup.metadata.get("action") == "exists"
 
     def test_remove_missing_fails(self, db_path):
         adapter = create_asset_manager_adapter()

@@ -388,6 +388,7 @@ class AgentRuntime:
         detail_keys = (
             "tool", "status", "approved", "approval_id", "evidence_paths",
             "warnings", "coverage", "metrics", "result_digest", "error",
+            "report_path",
             "step_id", "task_id", "worker_instance_id", "parallel_group",
         )
         details = {k: event[k] for k in detail_keys if k in event and event[k] is not None}

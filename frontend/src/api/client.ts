@@ -84,6 +84,7 @@ export interface TraceEvent {
   coverage?: Record<string, unknown>;
   result_digest?: string;
   error?: string;
+  report_path?: string;
 }
 
 export interface Finding {

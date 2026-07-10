@@ -61,7 +61,7 @@ ROOT_AGENT = AgentDefinition(
             - whois: Get domain registration info (params: domain)
             - ssl_check: Check SSL certificates (params: host, optional port)
             - nmap: Port scanning (params: target, ports)
-            - gobuster: Directory enumeration (params: target_url or url for dir mode, domain for dns mode, wordlist)
+            - gobuster: Directory enumeration (params: target_url or url for dir mode, domain for dns mode). Omit wordlist to use the bundled default; never pass bare filenames like common.txt
             - passive_recon: Passive reconnaissance (params: domain)
             - camera_security: Check for exposed cameras (params: target)
             - viewdns: ViewDNS port scan API (params: host)
@@ -100,12 +100,14 @@ ROOT_AGENT = AgentDefinition(
             For single-tool requests (one whois, dns_lookup, passive_recon, etc.), call the tool directly instead of researcher_agent.
 
             WORKFLOW FOR COMPREHENSIVE SCANS:
-            When asked for a full scan or penetration test:
-            1. Register the target with asset_manager (type="domain" for web apps)
-            2. Run reconnaissance tools (whois, dns_lookup, ssl_check, passive_recon, sublist3r, osint_harvester)
-            3. Run scanning tools (wappalyzer, web_server_scanner, nmap, web_vuln_scanner, sqli_scanner)
-            4. ALWAYS call generate_report(format="markdown") as the LAST step before complete_task
-            5. Use complete_task to return the report as the final answer
+            When asked for a full scan, all tools, or penetration test:
+            1. Register the target with asset_manager (type="domain" for web apps); duplicate registration is OK
+            2. After planner_agent returns a scan_plan, execute EVERY planned step in order. Do NOT drop tools the planner included unless the tool errors.
+            3. Required recon: whois, dns_lookup, ssl_check, passive_recon, sublist3r, osint_harvester
+            4. Required scanning: wappalyzer, web_server_scanner, nmap, web_vuln_scanner, sqli_scanner, gobuster (dir mode on https://{domain})
+            5. For wappalyzer and web_server_scanner, prefer https://{domain} unless explicitly testing HTTP behavior
+            6. ALWAYS call generate_report(format="markdown") as the LAST step before complete_task
+            7. Use complete_task to return the report summary as the final answer
 
             If a tool returns an error, SKIP IT and move to the next tool. Do NOT retry failed tools.
             Tool errors look like: "Error: WHOIS lookup failed: ..." or "Error: can't subtract ...".

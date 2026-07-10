@@ -449,11 +449,18 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
         if self.definition.output_config:
             output_name = self.definition.output_config.output_name
             
-            if report_content and len(report_content) > 50:
+            if report_content and (
+                (isinstance(report_content, dict) and report_content.get("report_path"))
+                or (isinstance(report_content, str) and len(report_content) > 50)
+            ):
+                if isinstance(report_content, dict):
+                    answer = report_content.get("summary") or report_content.get("report_preview", "")
+                else:
+                    answer = report_content
                 # We got a real report from the DB findings
                 return {
                     output_name: {
-                        "answer": report_content
+                        "answer": answer
                     }
                 }
             else:

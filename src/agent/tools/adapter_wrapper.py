@@ -236,19 +236,26 @@ class AdapterToolWrapper:
 
                     self._apply_provenance(findings, provenance)
 
-                    peers = self.reporting_manager.get_findings_for_asset(asset.id)
+                    run_id = provenance.get("run_id") if provenance else None
 
-                    self.reporting_manager.findings_normalizer.reconcile_cross_tool_conflicts(
+                    peers = self.reporting_manager.get_findings_for_asset(
+                        asset.id, run_id=run_id
+                    )
 
-                        peers + findings
-
+                    mutated = (
+                        self.reporting_manager.findings_normalizer
+                        .reconcile_cross_tool_conflicts(
+                            peers + findings,
+                            run_id=run_id,
+                            current_findings=findings,
+                        )
                     )
 
                     to_save = list(findings)
 
-                    for peer in peers:
+                    for peer in mutated:
 
-                        if peer.verification_state == "conflicted" and peer not in to_save:
+                        if peer not in to_save:
 
                             to_save.append(peer)
 

@@ -78,3 +78,21 @@ class TestFindingsNormalizerSpecializedIntel:
 
         findings = normalizer.normalize_tool_output("osint_harvester", output, asset)
         assert len(findings) == 2
+
+    def test_passive_recon_crt_subdomains_no_scan_completed(self, normalizer, asset, tmp_path, monkeypatch):
+        monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)
+
+        output = {
+            "crt_sh": {
+                "certificates": [
+                    {"name_value": ["www.example.com", "api.example.com"]},
+                ],
+                "count": 1,
+            },
+            "coverage": {"crt_sh_ok": True, "wayback_ok": False},
+        }
+
+        findings = normalizer.normalize_tool_output("passive_recon", output, asset)
+        assert len(findings) == 1
+        assert "Subdomains discovered" in findings[0].title
+        assert all("scan completed" not in f.title for f in findings)

@@ -244,6 +244,7 @@ class WebServerScannerAdapter(BaseAdapter):
             "response_url": resp.url,
             "response_status": resp.status_code,
         }
+        is_http = urlparse(base_url).scheme.lower() == "http"
 
         for header_name, description, severity in SECURITY_HEADERS:
             value = resp.headers.get(header_name)
@@ -260,6 +261,9 @@ class WebServerScannerAdapter(BaseAdapter):
                         "Direct HTTP response lacked HSTS header. "
                         "Technology fingerprinting may still detect HSTS via redirects or preload lists."
                     )
+                    if is_http:
+                        finding["severity"] = "INFO"
+                        finding["context"] = "http_scan"
                 findings.append(finding)
             else:
                 findings.append({

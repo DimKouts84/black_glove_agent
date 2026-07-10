@@ -18,6 +18,7 @@ export interface ActivityEvent {
   coverage?: Record<string, unknown>;
   result_digest?: string;
   error?: string;
+  report_path?: string;
 }
 
 export interface ChatMessage {
@@ -72,6 +73,7 @@ function traceEventToActivity(e: TraceEvent, runId: string): ActivityEvent {
     coverage: e.coverage,
     result_digest: e.result_digest,
     error: e.error,
+    report_path: e.report_path,
   };
 }
 
