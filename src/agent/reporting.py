@@ -865,14 +865,9 @@ class FindingsNormalizer:
                     findings.append(subdomain_finding)
 
         if not findings:
-            description = output.get("interpretation") or f"No actionable issues from {tool_name}."
-            coverage = output.get("coverage") or {}
-            errors = output.get("errors") or {}
             if tool == "passive_recon":
-                if coverage.get("crt_sh_ok") or coverage.get("wayback_ok"):
-                    return findings
-                if errors and not coverage.get("crt_sh_ok") and not coverage.get("wayback_ok"):
-                    return findings
+                return findings
+            description = output.get("interpretation") or f"No actionable issues from {tool_name}."
             findings.append(Finding(
                 title=f"{tool_name} scan completed on {asset.name}",
                 description=description,

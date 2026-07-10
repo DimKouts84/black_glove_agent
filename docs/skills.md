@@ -46,7 +46,7 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 ### `passive_recon` / `osint_harvester` (crt.sh)
 - Upstream crt.sh 502/503/timeout → `partial` (not hard `error`) with `warnings` and `coverage.crt_sh_ok: false`.
 - Empty Wayback results (0 snapshots, no exception) → `partial` with `wayback: no snapshots returned` warning.
-- crt.sh subdomain data is normalized into findings; generic `scan completed` rows are omitted when crt.sh or Wayback produced data.
+- crt.sh subdomain data is normalized into findings; generic `scan completed` rows are never emitted for `passive_recon` (empty partial runs surface warnings in trace only).
 - Shared retry logic lives in `crt_sh_client` (not discovered as an adapter).
 
 ## Adapter notes (user-visible)
@@ -92,6 +92,7 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 ### `gobuster`
 - Bare wordlist filenames (e.g. `common.txt`) and config-relative paths (`bin/wordlists/common.txt`) resolve to the bundled wordlist under `bin/wordlists/`.
 - Omit `wordlist` in tool params to use the bundled default automatically.
+- SPA catch-all HTTP 200 responses (soft-404): pre-probes a random path, retries with `--exclude-length`, and returns `partial` (not hard `error`) when enumeration cannot proceed after exclusion.
 
 ### `nmap`
 - Emits an informational `Open ports discovered (N)` finding listing all open ports (not only high-risk services).

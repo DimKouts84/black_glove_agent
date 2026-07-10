@@ -61,7 +61,7 @@ ROOT_AGENT = AgentDefinition(
             - whois: Get domain registration info (params: domain)
             - ssl_check: Check SSL certificates (params: host, optional port)
             - nmap: Port scanning (params: target, ports)
-            - gobuster: Directory enumeration (params: target_url or url for dir mode, domain for dns mode). Omit wordlist to use the bundled default; never pass bare filenames like common.txt
+            - gobuster: Directory enumeration (params: target_url or url for dir mode, domain for dns mode). Omit wordlist to use the bundled default; adapter auto-handles SPA soft-404 catch-all responses
             - passive_recon: Passive reconnaissance (params: domain)
             - camera_security: Check for exposed cameras (params: target)
             - viewdns: ViewDNS port scan API (params: host)

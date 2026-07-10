@@ -25,6 +25,11 @@ _SAFE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 _SAFE_DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9\-]{2,63}$"
 )
+_SOFT404_ERROR_PATTERN = re.compile(
+    r"status code that matches the provided options",
+    re.IGNORECASE,
+)
+_SOFT404_LENGTH_PATTERN = re.compile(r"Length:\s*(\d+)", re.IGNORECASE)
 
 class GobusterAdapter(BaseAdapter):
     """
@@ -95,6 +100,92 @@ class GobusterAdapter(BaseAdapter):
 
         raise ValueError(
             "wordlist must be a valid file path; omit wordlist to use the bundled default"
+        )
+
+    @staticmethod
+    def _parse_soft404_exclude_length(stderr: str) -> Optional[int]:
+        if not stderr:
+            return None
+        match = _SOFT404_LENGTH_PATTERN.search(stderr)
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _is_soft404_gobuster_error(message: str) -> bool:
+        if not message:
+            return False
+        return bool(_SOFT404_ERROR_PATTERN.search(message))
+
+    @staticmethod
+    def _probe_soft404_length(url: str) -> Optional[int]:
+        try:
+            import requests
+            from urllib.parse import urljoin
+
+            probe_url = urljoin(url.rstrip("/") + "/", "black_glove_probe_not_found_xyz123")
+            resp = requests.get(probe_url, timeout=10, verify=False, allow_redirects=False)
+            if resp.status_code in (404, 403, 200):
+                return len(resp.content)
+        except Exception:
+            pass
+        return None
+
+    def _run_process(
+        self,
+        params: Dict[str, Any],
+        wordlist: str,
+        mode: str,
+        timeout: float,
+    ) -> tuple[Dict[str, Any], List[str]]:
+        cmd = self._build_command(params=params, wordlist=wordlist, mode=mode)
+        run_result = self._runner.run(
+            {
+                "command": cmd[0],
+                "args": cmd[1:],
+                "env": {},
+                "cwd": None,
+                "timeout": timeout,
+            }
+        )
+        return run_result, cmd
+
+    def _finalize_success(
+        self,
+        run_result: Dict[str, Any],
+        params: Dict[str, Any],
+        mode: str,
+        metadata_extra: Optional[Dict[str, Any]] = None,
+    ) -> AdapterResult:
+        stdout = run_result.get("stdout", "") or ""
+        parsed = self._parse_output(stdout, mode)
+        self._filter_entries(parsed, params, mode)
+        self._annotate_entries(parsed.get("entries", []), mode)
+
+        safe_id = None
+        if mode == "dir":
+            safe_id = (params.get("url") or "").replace("/", "_").replace(":", "_").replace(".", "_")
+        else:
+            safe_id = (params.get("domain") or "").replace(".", "_")
+        evidence_filename = f"gobuster_{mode}_{safe_id}_{int(time.time())}.txt"
+        evidence_path = self._store_evidence(stdout, evidence_filename)
+
+        metadata = {
+            "adapter": self.name,
+            "timestamp": time.time(),
+            "mode": mode,
+            "url": params.get("url"),
+            "domain": params.get("domain"),
+            "threads": params.get("threads"),
+            "extensions": params.get("extensions"),
+            "status_codes": params.get("status_codes"),
+        }
+        if metadata_extra:
+            metadata.update(metadata_extra)
+
+        return AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data=parsed,
+            metadata=metadata,
+            evidence_path=evidence_path,
         )
 
     # ---- Validation ----
@@ -179,13 +270,10 @@ class GobusterAdapter(BaseAdapter):
         cfg = self.config or {}
         timeout = float(cfg.get("timeout", self._defaults["timeout"]))
 
-        # Resolve mode and build command
         mode = params.get("mode") or cfg.get("default_mode", self._defaults["default_mode"])
         wordlist = params.get("wordlist") or cfg.get("wordlist") or self._defaults["wordlist"]
         wordlist = self._resolve_wordlist_path(wordlist)
-        cmd = self._build_command(params=params, wordlist=wordlist, mode=mode)
 
-        # Evidence directory
         evidence_dir = "evidence/" + self.name.lower()
         try:
             from pathlib import Path as _P
@@ -193,17 +281,18 @@ class GobusterAdapter(BaseAdapter):
         except Exception:
             pass
 
-        # Execute process
-        # cmd[0] is the executable path (system or bundled)
-        run_result = self._runner.run(
-            {
-                "command": cmd[0],
-                "args": cmd[1:], 
-                "env": {},
-                "cwd": None,
-                "timeout": timeout,
-            }
-        )
+        run_params = dict(params)
+        exclude_lengths: List[int] = [
+            int(length) for length in (run_params.get("exclude_lengths") or [])
+        ]
+        pre_probe_length: Optional[int] = None
+        if mode == "dir":
+            pre_probe_length = self._probe_soft404_length(params.get("url", "").strip())
+            if pre_probe_length is not None and pre_probe_length not in exclude_lengths:
+                exclude_lengths.append(pre_probe_length)
+        run_params["exclude_lengths"] = exclude_lengths
+
+        run_result, cmd = self._run_process(run_params, wordlist, mode, timeout)
 
         if run_result["status"] == "timeout":
             return AdapterResult(
@@ -213,43 +302,67 @@ class GobusterAdapter(BaseAdapter):
                 error_message=run_result.get("stderr") or "Execution timed out",
             )
 
-        if run_result["status"] == "error" or (run_result.get("exit_code") not in (None, 0)):
+        stderr = run_result.get("stderr") or ""
+        failed = run_result["status"] == "error" or (run_result.get("exit_code") not in (None, 0))
+
+        if failed and mode == "dir" and self._is_soft404_gobuster_error(stderr):
+            retry_lengths = list(exclude_lengths)
+            parsed_length = self._parse_soft404_exclude_length(stderr)
+            if parsed_length is not None and parsed_length not in retry_lengths:
+                retry_lengths.append(parsed_length)
+            if retry_lengths != exclude_lengths:
+                retry_params = dict(params)
+                retry_params["exclude_lengths"] = retry_lengths
+                run_result, cmd = self._run_process(retry_params, wordlist, mode, timeout)
+                exclude_lengths = retry_lengths
+                stderr = run_result.get("stderr") or ""
+                failed = run_result["status"] == "error" or (
+                    run_result.get("exit_code") not in (None, 0)
+                )
+
+        if failed:
+            if mode == "dir" and self._is_soft404_gobuster_error(stderr):
+                excluded = exclude_lengths[0] if exclude_lengths else "unknown"
+                message = (
+                    "Directory enumeration skipped: SPA catch-all 200 responses; "
+                    f"excluded length {excluded} but no distinct paths found"
+                )
+                return AdapterResult(
+                    status=AdapterResultStatus.PARTIAL,
+                    data={
+                        "stdout": run_result.get("stdout", ""),
+                        "stderr": stderr,
+                        "exit_code": run_result.get("exit_code"),
+                        "mode": mode,
+                        "entries": [],
+                    },
+                    metadata={
+                        "adapter": self.name,
+                        "timestamp": time.time(),
+                        "command": cmd,
+                        "soft_404_excluded_length": exclude_lengths[0] if exclude_lengths else None,
+                        "warnings": [message],
+                    },
+                    error_message=message,
+                )
             return AdapterResult(
                 status=AdapterResultStatus.FAILURE,
-                data={"stdout": run_result.get("stdout", ""), "stderr": run_result.get("stderr", ""), "exit_code": run_result.get("exit_code")},
+                data={
+                    "stdout": run_result.get("stdout", ""),
+                    "stderr": stderr,
+                    "exit_code": run_result.get("exit_code"),
+                },
                 metadata={"adapter": self.name, "timestamp": time.time(), "command": cmd},
-                error_message=run_result.get("stderr") or "gobuster execution failed",
+                error_message=stderr or "gobuster execution failed",
             )
 
-        stdout = run_result.get("stdout", "") or ""
-        parsed = self._parse_output(stdout, mode)
-        self._filter_entries(parsed, params, mode)
-        self._annotate_entries(parsed.get("entries", []), mode)
-
-        # Evidence
-        safe_id = None
-        if mode == "dir":
-            safe_id = (params.get("url") or "").replace("/", "_").replace(":", "_").replace(".", "_")
-        else:
-            safe_id = (params.get("domain") or "").replace(".", "_")
-        evidence_filename = f"gobuster_{mode}_{safe_id}_{int(time.time())}.txt"
-        evidence_path = self._store_evidence(stdout, evidence_filename)
-
-        return AdapterResult(
-            status=AdapterResultStatus.SUCCESS,
-            data=parsed,
-            metadata={
-                "adapter": self.name,
-                "timestamp": time.time(),
-                "mode": mode,
-                "url": params.get("url"),
-                "domain": params.get("domain"),
-                "threads": params.get("threads"),
-                "extensions": params.get("extensions"),
-                "status_codes": params.get("status_codes"),
-            },
-            evidence_path=evidence_path,
-        )
+        metadata_extra: Dict[str, Any] = {}
+        if exclude_lengths:
+            metadata_extra["soft_404_excluded_length"] = exclude_lengths[0]
+            metadata_extra["warnings"] = [
+                f"Excluded catch-all response length {exclude_lengths[0]} for SPA soft-404 handling"
+            ]
+        return self._finalize_success(run_result, run_params, mode, metadata_extra)
 
     # ---- Builders/Parsers ----
 
@@ -280,6 +393,9 @@ class GobusterAdapter(BaseAdapter):
             scs = params.get("status_codes") or []
             if scs:
                 cmd += ["-s", ",".join(str(int(c)) for c in scs)]
+            exclude_lengths = params.get("exclude_lengths") or []
+            for length in exclude_lengths:
+                cmd += ["--exclude-length", str(int(length))]
         else:  # dns
             domain = params["domain"].strip()
             cmd += ["-d", domain]
@@ -372,6 +488,8 @@ class GobusterAdapter(BaseAdapter):
                 entry["severity"] = "medium"
 
     def interpret_result(self, result: AdapterResult) -> str:
+        if result.status == AdapterResultStatus.PARTIAL:
+            return result.error_message or "Gobuster directory enumeration skipped due to SPA soft-404 responses."
         if result.status != AdapterResultStatus.SUCCESS:
             return f"Gobuster scan failed: {result.error_message}"
             
