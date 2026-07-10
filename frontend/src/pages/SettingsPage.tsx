@@ -100,21 +100,6 @@ function ConfigFieldInput({
     );
   }
 
-  if (field.name === 'authorized_networks' || field.name === 'authorized_domains' || field.name === 'blocked_targets') {
-    const arr = Array.isArray(value) ? value as string[] : [];
-    return (
-      <div>
-        {label}
-        <input
-          className="w-full bg-panel border border-border rounded px-3 py-2 text-sm font-mono"
-          value={arr.join(', ')}
-          onChange={(e) => onChange(e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
-        />
-        <p className="text-dim text-xs mt-1">{field.description} (comma-separated)</p>
-      </div>
-    );
-  }
-
   if (field.secret) {
     return (
       <div>

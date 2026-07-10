@@ -39,6 +39,9 @@ export function FindingsPage() {
                   <p className="text-dim text-xs mt-1">
                     Asset: {f.asset_name} ({f.asset_value}) · Confidence: {((f.confidence || 0) * 100).toFixed(0)}%
                   </p>
+                  {f.description && (
+                    <p className="text-xs text-secondary mt-1 whitespace-pre-wrap">{f.description}</p>
+                  )}
                   {f.evidence_path && <p className="text-xs text-secondary mt-1">Evidence: {f.evidence_path}</p>}
                   {f.recommended_fix && <p className="text-xs text-primary mt-1">Fix: {f.recommended_fix}</p>}
                 </div>

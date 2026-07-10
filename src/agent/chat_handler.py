@@ -42,7 +42,6 @@ class ChatHandler:
         self,
         llm_client: LLMClient,
         plugin_manager: PluginManager,
-        policy_engine: Any,
         console: Optional[Console] = None,
         db_conn: Optional[sqlite3.Connection] = None
     ):
@@ -52,13 +51,11 @@ class ChatHandler:
         Args:
             llm_client: LLM client for conversation
             plugin_manager: Plugin manager for tool execution
-            policy_engine: Policy engine for safety enforcement
             console: Rich console for output (creates new if None)
             db_conn: Database connection for asset management
         """
         self.llm_client = llm_client
         self.plugin_manager = plugin_manager
-        self.policy_engine = policy_engine
         self.console = console or Console()
         self.conversation_memory = ConversationMemory(max_size=20)
         self.logger = logging.getLogger("black_glove.chat")

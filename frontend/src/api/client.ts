@@ -77,6 +77,13 @@ export interface TraceEvent {
   content: string;
   params?: Record<string, unknown>;
   ts: string;
+  tool?: string;
+  status?: string;
+  evidence_paths?: string[];
+  warnings?: string[];
+  coverage?: Record<string, unknown>;
+  result_digest?: string;
+  error?: string;
 }
 
 export interface Finding {
@@ -87,6 +94,7 @@ export interface Finding {
   confidence: number;
   evidence_path?: string;
   recommended_fix?: string;
+  description?: string;
   created_at: string;
   asset_name: string;
   asset_value: string;

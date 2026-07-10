@@ -152,6 +152,8 @@ class TestPluginManager:
         assert len(adapters) >= 1
         assert "domain_params" not in adapters
         assert "url_params" not in adapters
+        assert "rdap_client" not in adapters
+        assert "crt_sh_client" not in adapters
     
     def test_plugin_manager_load_adapter(self):
         """Test loading adapters through plugin manager."""

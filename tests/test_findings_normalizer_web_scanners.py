@@ -82,6 +82,20 @@ class TestFindingsNormalizerWebScanners:
         assert len(findings) == 1
         assert findings[0].severity == SeverityLevel.HIGH
 
+    def test_untested_scan_produces_no_findings(self, normalizer, asset, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            normalizer.evidence_storage, "storage_path", tmp_path
+        )
+
+        output = {
+            "not_applicable": True,
+            "coverage": {"scanned_params": 0, "untested": True},
+            "interpretation": "no parameters",
+        }
+
+        findings = normalizer.normalize_tool_output("web_vuln_scanner", output, asset)
+        assert findings == []
+
     def test_empty_vulnerabilities_creates_low_finding(self, normalizer, asset, tmp_path, monkeypatch):
         monkeypatch.setattr(
             normalizer.evidence_storage, "storage_path", tmp_path
@@ -89,6 +103,8 @@ class TestFindingsNormalizerWebScanners:
 
         output = {
             "vulnerabilities": [],
+            "scanned_params": ["q"],
+            "coverage": {"scanned_params": 1, "untested": False},
             "interpretation": "No issues found",
         }
 

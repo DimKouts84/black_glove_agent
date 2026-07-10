@@ -158,7 +158,7 @@ Each requirement includes an ID, priority (MUST/SHOULD/CAN), and acceptance crit
 
 * The system must show a mandatory legal notice at first run and require explicit typed acknowledgment ("I own these assets and accept responsibility").
 * Every active scan requires per-action human approval (double-confirm via typed `yes` and passphrase).
-* High-risk adapters (e.g., Metasploit) are disabled by default and require toggling a `--enable-exploit-adapter` flag and a LAB\_MODE environment variable.
+* High-risk adapters (e.g., Metasploit) are disabled by default and require `enable_exploit_adapters: true` in config.
 * The policy engine enforces:
 
   * Deny scanning private IP ranges not in the asset list.

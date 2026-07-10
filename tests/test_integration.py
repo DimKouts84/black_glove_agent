@@ -16,11 +16,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.agent.orchestrator import Orchestrator, create_orchestrator, OrchestratorContext
-from src.agent.policy_engine import create_policy_engine
 from src.agent.plugin_manager import create_plugin_manager
 from src.agent.llm_client import LLMConfig, LLMProvider, create_llm_client
 from src.agent.models import Asset
-from src.adapters.interface import AdapterResult, AdapterResultStatus
+from adapters.interface import AdapterResult, AdapterResultStatus
 
 
 class TestCoreArchitectureIntegration:
@@ -30,18 +29,6 @@ class TestCoreArchitectureIntegration:
         """Test complete passive reconnaissance workflow with all components."""
         # Create configuration with all components
         config = {
-            "policy": {
-                "rate_limiting": {
-                    "window_size": 60,
-                    "max_requests": 10,
-                    "global_max_requests": 100
-                },
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24", "10.0.0.0/8"],
-                    "authorized_domains": ["example.com", "test.com"]
-                },
-                "allowed_exploits": []
-            },
             "passive_tools": ["whois", "dns_lookup"],
             "scan_mode": "passive"
         }
@@ -61,7 +48,8 @@ class TestCoreArchitectureIntegration:
         assert len(orchestrator.assets) == 1
         
         # Mock adapter responses for passive recon
-        with patch('src.agent.plugin_manager.PluginManager.run_adapter') as mock_run_adapter:
+        with patch('src.agent.orchestrator.Orchestrator._analyze_findings', return_value=[]), \
+             patch('src.agent.plugin_manager.PluginManager.run_adapter') as mock_run_adapter:
             # Mock successful adapter results
             adapter_result = AdapterResult(
                 status=AdapterResultStatus.SUCCESS,
@@ -78,98 +66,8 @@ class TestCoreArchitectureIntegration:
             assert len(orchestrator.scan_results) == 2
             assert orchestrator.workflow_manager.state.name == "COMPLETED"
             
-            # Verify policy engine was used (rate limiting)
-            rates = orchestrator.policy_engine.get_current_rates()
-            assert "global" in rates
-            
             # Verify findings were processed
             assert len(orchestrator.result_processor.findings) >= 0
-    
-    def test_policy_engine_integration(self):
-        """Test policy engine integration with unauthorized targets."""
-        config = {
-            "policy": {
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24"],
-                    "authorized_domains": ["example.com"]
-                },
-                "rate_limiting": {
-                    "window_size": 60,
-                    "max_requests": 5
-                }
-            }
-        }
-        
-        orchestrator = create_orchestrator(config)
-        
-        # Test unauthorized IP target
-        unauthorized_asset = Asset(
-            target="10.0.0.1",  # Not in authorized networks
-            tool_name="nmap",
-            parameters={}
-        )
-        
-        assert orchestrator.add_asset(unauthorized_asset) is False
-        assert len(orchestrator.assets) == 0
-        
-        # Test unauthorized domain target
-        unauthorized_domain_asset = Asset(
-            target="malicious.com",  # Not in authorized domains
-            tool_name="nmap",
-            parameters={}
-        )
-        
-        assert orchestrator.add_asset(unauthorized_domain_asset) is False
-        assert len(orchestrator.assets) == 0
-        
-        # Verify violations were logged
-        violations = orchestrator.policy_engine.get_violation_report()
-        assert len(violations) >= 2  # At least 2 violations logged
-    
-    def test_rate_limiting_integration(self):
-        """Test rate limiting integration across components."""
-        config = {
-            "policy": {
-                "rate_limiting": {
-                    "window_size": 1,  # 1 second window for testing
-                    "max_requests": 2,  # Only 2 requests allowed per second
-                    "global_max_requests": 5
-                },
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24"]
-                }
-            },
-            "passive_tools": ["whois", "dns_lookup", "ssl_check"]  # 3 tools
-        }
-        
-        orchestrator = create_orchestrator(config)
-        
-        # Add authorized asset
-        asset = Asset(
-            target="192.168.1.100",
-            tool_name="whois",
-            parameters={}
-        )
-        assert orchestrator.add_asset(asset) is True
-        
-        # Mock adapter to track calls
-        call_count = 0
-        def mock_adapter_run(tool_name, params):
-            nonlocal call_count
-            call_count += 1
-            return AdapterResult(
-                status=AdapterResultStatus.SUCCESS,
-                data={"result": f"test_{call_count}"},
-                metadata={"tool": tool_name}
-            )
-        
-        with patch('src.agent.plugin_manager.PluginManager.run_adapter', side_effect=mock_adapter_run):
-            # Run passive recon - should be rate limited
-            results = orchestrator.run_passive_recon()
-            
-            # Should have some results but rate limiting may have affected some
-            assert len(results) >= 0
-            assert call_count >= 0
     
     def test_plugin_manager_adapter_discovery(self):
         """Test plugin manager adapter discovery and validation."""
@@ -225,7 +123,6 @@ class TestCoreArchitectureIntegration:
         # Test factory function
         orchestrator = create_orchestrator()
         assert orchestrator is not None
-        assert hasattr(orchestrator, 'policy_engine')
         assert hasattr(orchestrator, 'plugin_manager')
         assert hasattr(orchestrator, 'llm_client')
         
@@ -241,15 +138,6 @@ class TestCoreArchitectureIntegration:
     def test_complete_workflow_with_error_handling(self):
         """Test complete workflow with various error conditions."""
         config = {
-            "policy": {
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24"]
-                },
-                "rate_limiting": {
-                    "window_size": 60,
-                    "max_requests": 10
-                }
-            },
             "passive_tools": ["whois"]
         }
         
@@ -273,12 +161,11 @@ class TestCoreArchitectureIntegration:
             assert isinstance(results, list)
         
         # Test with LLM failure
-        with patch('src.agent.llm_client.requests.post') as mock_post:
-            mock_post.side_effect = Exception("LLM unavailable")
-            
+        with patch('src.agent.orchestrator.Orchestrator._load_passive_results_from_evidence', return_value=[]), \
+             patch('src.agent.llm_client.LLMClient.plan_next_steps', side_effect=Exception("LLM unavailable")):
+
             # Planning should fall back to default
             steps = orchestrator.plan_active_scans()
-            # Should still return default steps
             assert isinstance(steps, list)
         
         # Test report generation with errors
@@ -291,21 +178,9 @@ class TestCoreArchitectureIntegration:
 class TestCrossComponentIntegration:
     """Tests for integration between multiple components."""
     
-    def test_policy_and_adapter_integration(self):
-        """Test policy engine and adapter integration."""
-        config = {
-            "policy": {
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24"]
-                },
-                "rate_limiting": {
-                    "window_size": 60,
-                    "max_requests": 5
-                }
-            }
-        }
-        
-        orchestrator = create_orchestrator(config)
+    def test_adapter_integration(self):
+        """Test adapter integration through orchestrator."""
+        orchestrator = create_orchestrator({"require_approval": False})
         
         # Add authorized asset
         asset = Asset(
@@ -315,8 +190,9 @@ class TestCrossComponentIntegration:
         )
         assert orchestrator.add_asset(asset) is True
         
-        # Mock adapter execution that respects rate limits
-        with patch('src.agent.plugin_manager.PluginManager.run_adapter') as mock_run:
+        # Mock adapter execution
+        with patch('src.agent.orchestrator.Orchestrator._analyze_findings', return_value=[]), \
+             patch('src.agent.plugin_manager.PluginManager.run_adapter') as mock_run:
             adapter_result = AdapterResult(
                 status=AdapterResultStatus.SUCCESS,
                 data={"test": "data"},
@@ -341,22 +217,10 @@ class TestCrossComponentIntegration:
             assert result is not None
             assert result.tool_name == "test_tool"
             assert result.status == "completed"
-            
-            # Verify rate limiting was tracked
-            rates = orchestrator.policy_engine.get_current_rates()
-            assert "test_tool" in rates or "global" in rates
     
     def test_evidence_storage_integration(self):
         """Test evidence storage integration across components."""
-        config = {
-            "policy": {
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24"]
-                }
-            }
-        }
-        
-        orchestrator = create_orchestrator(config)
+        orchestrator = create_orchestrator({})
         
         # Add asset
         asset = Asset(
@@ -367,7 +231,8 @@ class TestCrossComponentIntegration:
         assert orchestrator.add_asset(asset) is True
         
         # Mock adapter with evidence path
-        with patch('src.agent.plugin_manager.PluginManager.run_adapter') as mock_run:
+        with patch('src.agent.orchestrator.Orchestrator._analyze_findings', return_value=[]), \
+             patch('src.agent.plugin_manager.PluginManager.run_adapter') as mock_run:
             adapter_result = AdapterResult(
                 status=AdapterResultStatus.SUCCESS,
                 data={"domain": "test.com"},

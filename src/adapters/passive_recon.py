@@ -17,6 +17,7 @@ from urllib import request, parse, error
 
 from .base import BaseAdapter
 from .interface import AdapterResult, AdapterResultStatus
+from .crt_sh_client import fetch_crt_sh_entries, parse_crt_json
 
 class PassiveReconAdapter(BaseAdapter):
     """
@@ -188,22 +189,21 @@ class PassiveReconAdapter(BaseAdapter):
 
         # crt.sh
         try:
-            # rate limit
             self._rate_limit_wait(crt_base, crt_rpm)
 
             t0 = time.time()
-            crt_query = f"%.{domain}" if crt_include_sub else domain
-            crt_url = f"{crt_base}/?q={parse.quote(crt_query)}&output=json"
-            crt_raw = self._http_get(crt_url, crt_timeout)
+            crt_entries, crt_err = self._fetch_crt_sh_entries(
+                crt_base, domain, crt_include_sub, crt_timeout
+            )
             timings["crt_sh_time"] = time.time() - t0
+            if crt_err:
+                errors["crt_sh"] = crt_err
 
-            crt_entries = self._parse_crt_json(crt_raw)
             if crt_limit and len(crt_entries) > crt_limit:
                 crt_entries = crt_entries[:crt_limit]
 
             normalized = []
             for e in crt_entries:
-                # name_value may include multiple names separated by newlines
                 names = []
                 nv = e.get("name_value")
                 if isinstance(nv, str):
@@ -280,11 +280,15 @@ class PassiveReconAdapter(BaseAdapter):
 
         # Determine status
         both_empty = crt_result.get("count", 0) == 0 and wb_result.get("count", 0) == 0
-        if errors and not both_empty and (crt_result.get("count", 0) > 0 or wb_result.get("count", 0) > 0):
+        warnings = [f"{k}: {v}" for k, v in errors.items()]
+        coverage = {
+            "crt_sh_ok": "crt_sh" not in errors and crt_result.get("count", 0) > 0,
+            "wayback_ok": "wayback" not in errors and wb_result.get("count", 0) > 0,
+        }
+        if errors and not both_empty:
             status = AdapterResultStatus.PARTIAL
         elif both_empty and errors:
-            # If both failed, treat as FAILURE (no data), not ERROR (reserved for exceptions in BaseAdapter)
-            status = AdapterResultStatus.FAILURE
+            status = AdapterResultStatus.PARTIAL
         else:
             status = AdapterResultStatus.SUCCESS
 
@@ -296,11 +300,17 @@ class PassiveReconAdapter(BaseAdapter):
             "potential_secrets": potential_secrets,
             "timings": timings,
             "errors": errors,
+            "warnings": warnings,
+            "coverage": coverage,
         }
 
         # Store evidence
         evidence_filename = f"passive_recon_{domain.replace('.', '_')}_{int(time.time())}.json"
         evidence_path = self._store_evidence(data, evidence_filename)
+
+        error_message = None
+        if status == AdapterResultStatus.PARTIAL and errors:
+            error_message = "; ".join(f"{k}: {v}" for k, v in errors.items())
 
         return AdapterResult(
             status=status,
@@ -312,11 +322,30 @@ class PassiveReconAdapter(BaseAdapter):
                 "crt_limit": crt_limit,
                 "wayback_limit": wb_limit,
                 "timestamp": time.time(),
+                "warnings": warnings,
             },
             evidence_path=evidence_path,
+            error_message=error_message,
         )
 
     # ---- Helpers ----
+
+    def _fetch_crt_sh_entries(
+        self,
+        crt_base: str,
+        domain: str,
+        include_subdomains: bool,
+        timeout: float,
+    ) -> tuple:
+        """Query crt.sh via shared client. HTTP 404 means no certificates found."""
+        retries = self.config.get("retries", self._defaults["retries"])
+        return fetch_crt_sh_entries(
+            domain,
+            base_url=crt_base,
+            include_subdomains=include_subdomains,
+            timeout=timeout,
+            retries=retries,
+        )
 
     def _rate_limit_wait(self, base_url: str, rpm: Optional[int]) -> None:
         """

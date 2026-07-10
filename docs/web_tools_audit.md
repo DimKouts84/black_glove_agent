@@ -35,9 +35,9 @@ Audit baseline for the Web Application Intelligence adapter group (2026-07-09).
 
 | Tool | Status | Notes |
 |------|--------|-------|
-| `web_vuln_scanner` | Done | Prior custom-scanner pass |
-| `sqli_scanner` | Done | Prior custom-scanner pass |
-| `web_server_scanner` | Done | Prior custom-scanner pass |
+| `web_vuln_scanner` | Done | Returns `not_applicable` when URL has no query parameters; coverage metrics prevent false "clean scan" findings |
+| `sqli_scanner` | Done | Returns `not_applicable` when URL has no query parameters; coverage metrics prevent false "clean scan" findings |
+| `web_server_scanner` | Done | Header findings include response URL/status evidence; HSTS fingerprint vs direct header conflicts surfaced as warnings |
 | `gobuster` | Done | `entries[]` normalizer; post-parse `status_codes` filter |
 | `wappalyzer` | Done | Wrapper normalizer + confidence gating |
 | `sublist3r` | Done | Config `threads` via `PluginManager`; import guard |

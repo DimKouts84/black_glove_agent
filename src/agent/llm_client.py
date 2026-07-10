@@ -217,7 +217,7 @@ class LLMClient:
             if config.provider == LLMProvider.OPENROUTER:
                 self.session.headers.update({
                     "Authorization": f"Bearer {config.api_key}",
-                    "HTTP-Referer": "https://github.com/black-glove/agent",
+                    "HTTP-Referer": "https://github.com/DimKouts84/black_glove_agent",
                     "X-Title": "Black Glove Pentest Agent"
                 })
             elif config.provider == LLMProvider.ANTHROPIC:
@@ -366,6 +366,15 @@ class LLMClient:
                 else:
                     raise LLMResponseError(f"Invalid JSON response after {max_attempts} attempts: {e}")
     
+    def _parse_api_error(self, response: Dict[str, Any]) -> Optional[str]:
+        """Extract a human-readable message from provider error payloads."""
+        error = response.get("error")
+        if isinstance(error, dict):
+            return str(error.get("message") or error.get("code") or error)
+        if isinstance(error, str):
+            return error
+        return None
+
     def _parse_response(self, response: Dict[str, Any]) -> LLMResponse:
         """
         Parse API response into standardized format.
@@ -377,15 +386,24 @@ class LLMClient:
             Standardized LLMResponse
         """
         try:
+            api_error = self._parse_api_error(response)
+            if api_error:
+                raise LLMResponseError(f"API error: {api_error}")
+
             # Handle different response formats
             if "choices" in response:
                 # OpenAI/OpenRouter/Anthropic format
-                choice = response["choices"][0]
+                choices = response.get("choices") or []
+                if not choices:
+                    raise LLMResponseError("API returned empty choices array")
+                choice = choices[0]
                 if "message" in choice:
-                    content = choice["message"]["content"]
+                    content = choice["message"].get("content")
                 elif "delta" in choice:
                     content = choice["delta"].get("content", "")
                 else:
+                    content = ""
+                if content is None:
                     content = ""
                 finish_reason = choice.get("finish_reason")
                 
@@ -397,13 +415,22 @@ class LLMClient:
                 
             elif "message" in response:
                 # Ollama format
-                content = response["message"]["content"]
+                content = response["message"].get("content")
+                if content is None:
+                    content = ""
                 finish_reason = response.get("done_reason")
                 usage = response.get("prompt_eval_count")
                 model = response.get("model")
                 
             else:
-                raise LLMResponseError("Unsupported response format")
+                keys = list(response.keys())
+                self.logger.warning(
+                    "Unsupported LLM response shape (keys: %s)",
+                    keys[:10],
+                )
+                raise LLMResponseError(
+                    f"Unsupported response format (keys: {', '.join(keys[:8])})"
+                )
             
             return LLMResponse(
                 content=content,
@@ -412,7 +439,9 @@ class LLMClient:
                 model=model
             )
             
-        except (KeyError, IndexError) as e:
+        except LLMResponseError:
+            raise
+        except (KeyError, IndexError, TypeError) as e:
             raise LLMResponseError(f"Failed to parse response: {e}")
     
     def generate(self, messages: List[LLMMessage], stream: bool = False, add_to_memory: bool = True, **kwargs) -> Union[LLMResponse, Iterator[LLMResponse]]:

@@ -160,3 +160,4 @@ class TestAgentRuntime:
         asyncio.run(_run_with_emit())
         assert captured
         assert captured[0].get("run_id")
+        assert captured[0].get("id") is not None

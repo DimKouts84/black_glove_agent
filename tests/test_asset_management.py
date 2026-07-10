@@ -21,153 +21,62 @@ from src.agent.db import init_db, get_db_connection, remove_asset
 
 
 class TestAssetValidator:
-    """Test cases for the AssetValidator implementation."""
-    
+    """Test cases for format-only AssetValidator."""
+
     def test_asset_validator_initialization(self):
-        """Test AssetValidator initialization."""
         config = ConfigModel()
         validator = AssetValidator(config)
-        
         assert validator.config == config
-        assert validator.allowlist_manager is not None
-    
-    def test_validate_authorized_ip(self):
-        """Test validation of authorized IP address."""
-        config = ConfigModel(
-            authorized_networks=["192.168.1.0/24"],
-            authorized_domains=[],
-            blocked_targets=[]
-        )
-        validator = AssetValidator(config)
-        
+
+    def test_validate_valid_ip(self):
+        validator = AssetValidator(ConfigModel())
         result = validator.validate_ip("192.168.1.100")
-        
         assert result.status == ValidationStatus.VALID
         assert result.is_authorized is True
-        assert "authorized" in result.message.lower()
-    
-    def test_validate_unauthorized_ip(self):
-        """Test validation of unauthorized IP address."""
-        config = ConfigModel(
-            authorized_networks=["192.168.1.0/24"],
-            authorized_domains=[],
-            blocked_targets=[]
-        )
-        validator = AssetValidator(config)
-        
+
+    def test_validate_any_public_ip(self):
+        validator = AssetValidator(ConfigModel())
         result = validator.validate_ip("10.0.0.1")
-        
-        assert result.status == ValidationStatus.UNAUTHORIZED
-        assert result.is_authorized is False
-        assert "not in authorized networks" in result.message
-    
-    def test_validate_blocked_ip(self):
-        """Test validation of blocked IP address."""
-        config = ConfigModel(
-            authorized_networks=["192.168.1.0/24"],
-            authorized_domains=[],
-            blocked_targets=["192.168.1.100"]
-        )
-        validator = AssetValidator(config)
-        
-        result = validator.validate_ip("192.168.1.100")
-        
-        assert result.status == ValidationStatus.BLOCKED
-        assert result.is_authorized is False
-        assert "blocked" in result.message.lower()
-    
+        assert result.status == ValidationStatus.VALID
+        assert result.is_authorized is True
+
     def test_validate_invalid_ip_format(self):
-        """Test validation of invalid IP format."""
-        config = ConfigModel()
-        validator = AssetValidator(config)
-        
+        validator = AssetValidator(ConfigModel())
         result = validator.validate_ip("invalid.ip.address")
-        
         assert result.status == ValidationStatus.INVALID_FORMAT
         assert result.is_authorized is False
-        assert "invalid ip address format" in result.message.lower()
-    
-    def test_validate_authorized_domain(self):
-        """Test validation of authorized domain."""
-        config = ConfigModel(
-            authorized_networks=[],
-            authorized_domains=["example.com"],
-            blocked_targets=[]
-        )
-        validator = AssetValidator(config)
-        
+
+    def test_validate_valid_domain(self):
+        validator = AssetValidator(ConfigModel())
         result = validator.validate_domain("example.com")
-        
         assert result.status == ValidationStatus.VALID
         assert result.is_authorized is True
-        assert "authorized" in result.message.lower()
-    
-    def test_validate_subdomain_authorization(self):
-        """Test validation of subdomain authorization."""
-        config = ConfigModel(
-            authorized_networks=[],
-            authorized_domains=["example.com"],
-            blocked_targets=[]
-        )
-        validator = AssetValidator(config)
-        
+
+    def test_validate_subdomain(self):
+        validator = AssetValidator(ConfigModel())
         result = validator.validate_domain("sub.example.com")
-        
         assert result.status == ValidationStatus.VALID
         assert result.is_authorized is True
-    
-    def test_validate_unauthorized_domain(self):
-        """Test validation of unauthorized domain."""
-        config = ConfigModel(
-            authorized_networks=[],
-            authorized_domains=["example.com"],
-            blocked_targets=[]
-        )
-        validator = AssetValidator(config)
-        
-        result = validator.validate_domain("unauthorized.com")
-        
-        assert result.status == ValidationStatus.UNAUTHORIZED
+
+    def test_validate_invalid_domain_format(self):
+        validator = AssetValidator(ConfigModel())
+        result = validator.validate_domain("invalid-domain")
+        assert result.status == ValidationStatus.INVALID_FORMAT
         assert result.is_authorized is False
-        assert "not in authorized domains" in result.message
-    
+
     def test_validate_asset_host_type(self):
-        """Test validation of host-type asset."""
-        config = ConfigModel(authorized_networks=["192.168.1.0/24"])
-        validator = AssetValidator(config)
+        validator = AssetValidator(ConfigModel())
         asset = AssetModel(name="test", type=AssetType.HOST, value="192.168.1.50")
-        
         result = validator.validate_asset(asset)
-        
         assert result.status == ValidationStatus.VALID
         assert result.is_authorized is True
-    
+
     def test_validate_asset_domain_type(self):
-        """Test validation of domain-type asset."""
-        config = ConfigModel(authorized_domains=["example.com"])
-        validator = AssetValidator(config)
+        validator = AssetValidator(ConfigModel())
         asset = AssetModel(name="test", type=AssetType.DOMAIN, value="example.com")
-        
         result = validator.validate_asset(asset)
-        
         assert result.status == ValidationStatus.VALID
         assert result.is_authorized is True
-    
-    def test_is_authorized_target_ip(self):
-        """Test is_authorized_target for IP addresses."""
-        config = ConfigModel(authorized_networks=["192.168.1.0/24"])
-        validator = AssetValidator(config)
-        
-        assert validator.is_authorized_target("192.168.1.50") is True
-        assert validator.is_authorized_target("10.0.0.1") is False
-    
-    def test_is_authorized_target_domain(self):
-        """Test is_authorized_target for domains."""
-        config = ConfigModel(authorized_domains=["example.com"])
-        validator = AssetValidator(config)
-        
-        assert validator.is_authorized_target("example.com") is True
-        assert validator.is_authorized_target("unauthorized.com") is False
 
 
 class TestDatabaseAssetOperations:
@@ -303,47 +212,30 @@ class TestCLIAssetCommands:
 
         runner = CliRunner()
 
-        # Mock configuration to allow the IP
-        with patch('src.agent.models.ConfigModel') as mock_config:
-            mock_config_instance = MagicMock()
-            mock_config_instance.authorized_networks = ["192.168.1.0/24"]
-            mock_config_instance.authorized_domains = []
-            mock_config_instance.blocked_targets = []
-            mock_config.return_value = mock_config_instance
+        result = runner.invoke(
+            app,
+            ["add-asset", "test-host", "host", "192.168.1.50"],
+            input="I AGREE\n",
+        )
 
-            result = runner.invoke(
-                app, 
-                ["add-asset", "test-host", "host", "192.168.1.50"],
-                input="I AGREE\n"  # For legal notice
-            )
+        assert result.exit_code == 0
+        assert "added successfully" in result.stdout
 
-            assert result.exit_code == 0
-            assert "added successfully" in result.stdout
-    
-    def test_add_asset_command_unauthorized(self):
-        """Test add-asset command with unauthorized target."""
+    def test_add_asset_command_invalid_format(self):
+        """Test add-asset command with invalid target format."""
         from src.agent.cli import app
         from typer.testing import CliRunner
-        from src.agent.asset_validator import ValidationResult, ValidationStatus
-        from src.agent.models import ConfigModel
 
         runner = CliRunner()
 
-        # Mock load_config to return a config that doesn't authorize 10.0.0.1
-        mock_config = ConfigModel(
-            authorized_networks=["192.168.1.0/24"],  # 10.0.0.1 is not in this range
-            authorized_domains=[],
-            blocked_targets=[]
+        result = runner.invoke(
+            app,
+            ["add-asset", "test-host", "host", "not-an-ip"],
+            input="I AGREE\n",
         )
-        
-        with patch('src.agent.cli.load_config', return_value=mock_config):
-            result = runner.invoke(
-                app, 
-                ["add-asset", "test-host", "host", "10.0.0.1"],
-            )
 
-            assert result.exit_code == 1
-            assert "validation failed" in result.stdout.lower() or "not in authorized" in result.stdout.lower()
+        assert result.exit_code == 1
+        assert "validation failed" in result.stdout.lower() or "invalid" in result.stdout.lower()
     
     def test_add_asset_command_invalid_type(self):
         """Test add-asset command with invalid asset type."""
@@ -457,8 +349,7 @@ class TestAssetManagementIntegration:
         from src.agent.asset_validator import AssetValidator
         
         db_manager = DatabaseManager()
-        config = ConfigModel(authorized_networks=["192.168.1.0/24"])
-        validator = AssetValidator(config)
+        validator = AssetValidator(ConfigModel())
         
         # 1. Add asset
         asset = AssetModel(name="test-host", type=AssetType.HOST, value="192.168.1.50")
@@ -488,11 +379,7 @@ class TestAssetManagementIntegration:
         from src.agent.asset_validator import AssetValidator
         
         db_manager = DatabaseManager()
-        config = ConfigModel(
-            authorized_networks=["192.168.1.0/24"],
-            authorized_domains=["example.com"]
-        )
-        validator = AssetValidator(config)
+        validator = AssetValidator(ConfigModel())
         
         # Add multiple assets
         assets_data = [

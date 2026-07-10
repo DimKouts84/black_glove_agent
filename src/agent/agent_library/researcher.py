@@ -68,6 +68,21 @@ You should interpret the raw output and return a clean, insightful summary.
 If the tool output contains an 'INTERPRETATION' field, start your summary with that interpretation.
 Treat it as the tool's primary summary; corroborate with evidence fields and do not inflate severity beyond what the tool reported.
 If a tool fails, report the error clearly.
+
+When finished, call complete_task with a result object containing summary, raw_output, and success fields.
+
+Example complete_task format:
+{
+    "tool": "complete_task",
+    "parameters": {
+        "result": {
+            "summary": "WHOIS returned no registrar data for example.com",
+            "raw_output": "registrar: null",
+            "success": true
+        }
+    },
+    "rationale": "Reporting tool findings"
+}
 """,
         initial_query_template="Execute investigation tool ${tool_name} on target ${target} with params ${parameters}. Be thorough in your results analysis."
     )

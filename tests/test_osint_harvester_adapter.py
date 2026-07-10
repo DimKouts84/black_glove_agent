@@ -253,6 +253,28 @@ class TestSubdomainHarvesting:
         finally:
             os.chdir(cwd)
 
+    @patch("src.adapters.osint_harvester.requests.get")
+    def test_subdomain_crt_sh_404_returns_empty(self, mock_get, tmp_path):
+        """crt.sh 404 should be treated as no subdomains, not a hard failure."""
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            mock_response = MagicMock()
+            mock_response.status_code = 404
+
+            def get_side_effect(url, **kwargs):
+                if "crt.sh" in url:
+                    return mock_response
+                raise Exception("unexpected url")
+
+            mock_get.side_effect = get_side_effect
+
+            adapter = create_osint_harvester_adapter()
+            subs = adapter._harvest_subdomains_crtsh("example.com", timeout=5.0)
+            assert subs == []
+        finally:
+            os.chdir(cwd)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Email Harvesting Tests

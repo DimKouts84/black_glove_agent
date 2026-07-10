@@ -19,8 +19,7 @@ class TestOrchestratorParsing:
     @pytest.fixture
     def orchestrator(self):
         """Create a mock orchestrator."""
-        with patch("src.agent.orchestrator.create_policy_engine"), \
-             patch("src.agent.orchestrator.create_plugin_manager"), \
+        with patch("src.agent.orchestrator.create_plugin_manager"), \
              patch("src.agent.orchestrator.create_llm_client"):
             
             config = {

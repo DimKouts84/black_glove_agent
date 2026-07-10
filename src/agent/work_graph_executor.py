@@ -17,7 +17,6 @@ from agent.llm_factory import LLMClientFactory, create_llm_factory
 from agent.models import ConfigModel
 from agent.plan_validator import PlanValidationError, validate_scan_plan
 from agent.plugin_manager import PluginManager
-from agent.policy_engine import PolicyEngine
 from agent.reducer import AnalysisReducer
 from agent.tool_result import ToolResultEnvelope
 from agent.tool_risk import (
@@ -60,23 +59,19 @@ class WorkGraphExecutor:
     def __init__(
         self,
         plugin_manager: PluginManager,
-        policy_engine: PolicyEngine,
         store: Optional[EngagementStore] = None,
         *,
         require_approval: bool = False,
         safe_tools: Optional[Set[str]] = None,
         enable_exploit_adapters: bool = False,
-        require_lab_mode_for_exploits: bool = True,
         enable_parallel_workers: bool = False,
         config: Optional[ConfigModel] = None,
     ):
         self.plugin_manager = plugin_manager
-        self.policy_engine = policy_engine
         self.store = store or EngagementStore()
         self.require_approval = require_approval
         self.safe_tools = safe_tools or set()
         self.enable_exploit_adapters = enable_exploit_adapters
-        self.require_lab_mode_for_exploits = require_lab_mode_for_exploits
         self.enable_parallel_workers = enable_parallel_workers
         self.config = config
         self._cancel_events: Dict[str, asyncio.Event] = {}
@@ -163,8 +158,6 @@ class WorkGraphExecutor:
         exploit_err = check_exploit_gate(
             step.tool,
             enable_exploit_adapters=self.enable_exploit_adapters,
-            require_lab_mode_for_exploits=self.require_lab_mode_for_exploits,
-            lab_mode=engagement.lab_mode,
         )
         if exploit_err:
             write_audit("policy_block", {"tool": step.tool, "target": step.target, "reason": exploit_err})
@@ -297,7 +290,6 @@ class WorkGraphExecutor:
             safe_tools=self.safe_tools,
             llm_factory=llm_factory,
             enable_exploit_adapters=self.enable_exploit_adapters,
-            require_lab_mode_for_exploits=self.require_lab_mode_for_exploits,
         )
         reducer = AnalysisReducer(llm_factory=llm_factory)
         in_flight: Dict[asyncio.Task, WorkStep] = {}
@@ -349,7 +341,7 @@ class WorkGraphExecutor:
                     max_wall_seconds=step.timeout_seconds,
                     rationale=step.rationale,
                 )
-                worker_coro = pool.execute_task(task, ctx, lab_mode=engagement.lab_mode)
+                worker_coro = pool.execute_task(task, ctx)
                 in_flight[asyncio.create_task(worker_coro)] = step
                 if graph.strict_sequential:
                     break

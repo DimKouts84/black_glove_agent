@@ -22,11 +22,9 @@ from agent.engagement_store import EngagementStore
 from agent.executor import AgentExecutor
 from agent.models import ConfigModel
 from agent.plugin_manager import create_plugin_manager
-from agent.policy_engine import create_policy_engine
 from agent.reporting import Finding, ReportingManager, SeverityLevel
 from agent.runtime import AgentRuntime, reset_agent_runtime
 from agent.subagent_tool import SubagentTool
-from agent.target_scope import TargetScopeConfig, TargetScopeValidator
 from agent.tool_risk import check_exploit_gate, get_tool_risk, phase_allows_tool
 from agent.tool_result import ToolResultEnvelope
 from agent.work_graph import Engagement, WorkPhase, WorkStep
@@ -56,45 +54,28 @@ def memory_db():
     return conn
 
 
-class TestTargetScope:
-    def test_ip_in_authorized_network(self):
-        scope = TargetScopeConfig(
-            authorized_networks=["192.168.1.0/24"],
-            authorized_domains=[],
-            blocked_targets=[],
-        )
-        validator = TargetScopeValidator(scope)
-        assert validator.is_ip_authorized("192.168.1.50") is True
-        assert validator.is_ip_authorized("10.0.0.1") is False
-
-    def test_domain_subdomain_match(self):
-        scope = TargetScopeConfig(
-            authorized_networks=[],
-            authorized_domains=["example.com"],
-            blocked_targets=[],
-        )
-        validator = TargetScopeValidator(scope)
-        assert validator.is_domain_authorized("sub.example.com") is True
-        assert validator.is_domain_authorized("evil.com") is False
-
-    def test_blocked_target(self):
-        scope = TargetScopeConfig(
-            authorized_networks=["10.0.0.0/8"],
-            authorized_domains=["example.com"],
-            blocked_targets=["10.0.0.5"],
-        )
-        validator = TargetScopeValidator(scope)
-        assert validator.validate_target("10.0.0.5") is False
-
-
 class TestToolRisk:
-    def test_exploit_gate_blocks_by_default(self):
+    def test_exploit_gate_blocks_when_adapters_disabled(self):
         err = check_exploit_gate(
             "sqli_scanner",
             enable_exploit_adapters=False,
-            require_lab_mode_for_exploits=True,
         )
         assert err is not None
+        assert "enable_exploit_adapters" in err
+
+    def test_exploit_gate_allows_when_adapters_enabled(self):
+        err = check_exploit_gate(
+            "sqli_scanner",
+            enable_exploit_adapters=True,
+        )
+        assert err is None
+
+    def test_exploit_gate_ignores_non_exploit_tools(self):
+        err = check_exploit_gate(
+            "whois",
+            enable_exploit_adapters=False,
+        )
+        assert err is None
 
     def test_phase_gating(self):
         assert phase_allows_tool("passive", "whois") is True
@@ -111,17 +92,12 @@ class TestAuditTrail:
         assert "nmap" in row[1]
 
 
-class TestRuntimePolicyWiring:
+class TestRuntimeWiring:
     @pytest.fixture(autouse=True)
     def _reset(self):
         reset_agent_runtime()
         yield
         reset_agent_runtime()
-
-    def test_runtime_has_policy_engine(self):
-        runtime = AgentRuntime(config=ConfigModel())
-        assert runtime.policy_engine is not None
-        assert runtime.plugin_manager.policy_engine is not None
 
     def test_work_graph_executor_present(self):
         runtime = AgentRuntime(config=ConfigModel())
@@ -248,63 +224,14 @@ class TestFindingsDedup:
 
 
 class TestWorkGraphExecutor:
-    def test_blocks_unauthorized_target(self, memory_db, monkeypatch):
-        monkeypatch.setattr(
-            "agent.engagement_store.get_db_connection", lambda: memory_db
-        )
-        policy = create_policy_engine(
-            {
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24"],
-                    "authorized_domains": [],
-                    "blocked_targets": [],
-                }
-            }
-        )
-        pm = create_plugin_manager(
-            config={"enable_exploit_adapters": False},
-            policy_engine=policy,
-        )
-        store = EngagementStore(conn=memory_db)
-        executor = WorkGraphExecutor(
-            plugin_manager=pm,
-            policy_engine=policy,
-            store=store,
-            require_approval=False,
-        )
-        engagement = Engagement(name="test", targets=["8.8.8.8"])
-        step = WorkStep(
-            name="whois_ext",
-            tool="whois",
-            target="8.8.8.8",
-            parameters={"domain": "8.8.8.8"},
-            phase=WorkPhase.PASSIVE,
-        )
-        from agent.execution_context import ExecutionContext
-
-        ctx = ExecutionContext(session_id="", run_id="test")
-        envelope = asyncio.run(executor.execute_step(step, engagement, ctx))
-        assert envelope.status in {"blocked", "error"}
-        assert "BLOCKED" in (envelope.error or envelope.summary or "").upper()
-
     def test_resume_skips_completed_steps(self, memory_db, monkeypatch):
         monkeypatch.setattr(
             "agent.engagement_store.get_db_connection", lambda: memory_db
         )
-        policy = create_policy_engine(
-            {
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24"],
-                    "authorized_domains": [],
-                    "blocked_targets": [],
-                }
-            }
-        )
-        pm = create_plugin_manager(policy_engine=policy)
+        pm = create_plugin_manager()
         store = EngagementStore(conn=memory_db)
         executor = WorkGraphExecutor(
             plugin_manager=pm,
-            policy_engine=policy,
             store=store,
             require_approval=False,
         )

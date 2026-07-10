@@ -35,6 +35,6 @@ Audit baseline for the Network & Infrastructure Reconnaissance adapter group.
 | `public_ip` | Done | IPv6 validation; `services_used` in data; session asset persistence via wrapper |
 | `dns_lookup` | Done | Normalizer branch + mocked unit tests |
 | `dns_recon` | Done | Prior refactor; brute-force interpret fixed |
-| `whois` | Done | Normalizer branch; unused `timeout` param removed from docs |
+| `whois` | Done | RDAP-first via IANA bootstrap + Google Registry (`pubapi.registry.google`); legacy WHOIS fallback; `partial` when core fields missing |
 | `ssl_check` | Done | Timezone-aware expiry; expired cert tests |
 | `viewdns` | Done | PARTIAL on API errors with zero ports; evidence newlines fixed |

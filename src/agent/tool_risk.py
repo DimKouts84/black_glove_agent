@@ -92,8 +92,6 @@ def check_exploit_gate(
     tool_name: str,
     *,
     enable_exploit_adapters: bool,
-    require_lab_mode_for_exploits: bool,
-    lab_mode: bool = False,
 ) -> Optional[str]:
     """Return error message if tool is blocked, else None."""
     if not is_exploit_tool(tool_name):
@@ -101,10 +99,5 @@ def check_exploit_gate(
     if not enable_exploit_adapters:
         return (
             f"Tool '{tool_name}' is blocked: enable_exploit_adapters is false."
-        )
-    if require_lab_mode_for_exploits and not lab_mode:
-        return (
-            f"Tool '{tool_name}' requires lab_mode when "
-            "require_lab_mode_for_exploits is enabled."
         )
     return None

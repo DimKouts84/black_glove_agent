@@ -92,45 +92,17 @@ def test_asset_validation():
     
     print("Asset validation tests completed!")
 
-def test_policy_engine():
-    """Test policy engine functionality."""
-    print("\nTesting policy engine functionality...")
-    
-    from src.agent.policy_engine import create_policy_engine, PolicyViolationType
-    
-    # Create policy engine with default config
-    engine = create_policy_engine()
-    
-    # Test target validation
-    assert engine.validate_target("192.168.1.50") is True
-    assert engine.validate_target("10.0.0.1") is True # No restrictions as per current policy
-    print("✓ Target validation working (no restrictions mode)")
-    
-    # Test exploit permissions
-    assert engine.check_exploit_permissions("test_exploit") is True
-    assert engine.check_exploit_permissions("unauthorized_exploit") is False
-    assert engine.check_exploit_permissions("unauthorized_exploit", lab_mode=True) is True
-    print("✓ Exploit permission checks working")
-    
-    # Test rate limiting
-    assert engine.enforce_rate_limits("test_adapter") is True
-    print("✓ Rate limiting working")
-    
-    print("Policy engine tests completed!")
-
 if __name__ == "__main__":
     print("Running core functionality tests...\n")
     
     try:
         test_asset_management()
         test_asset_validation()
-        test_policy_engine()
         
         print("\n🎉 All core functionality tests passed!")
         print("\nCore components verified:")
         print("  • Database operations (add, get, list, remove)")
-        print("  • Asset validation and authorization")
-        print("  • Policy enforcement (targets, exploits, rate limits)")
+        print("  • Asset format validation")
         print("  • Configuration management")
         
     except Exception as e:

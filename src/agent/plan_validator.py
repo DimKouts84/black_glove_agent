@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from agent.target_scope import strip_host
 from agent.tool_risk import get_tool_risk, phase_allows_tool
 from agent.work_graph import (
     ConcurrencyLimits,
@@ -115,13 +114,6 @@ def validate_scan_plan(
                 f"Tool '{tool}' not allowed in phase '{phase.value}' (step_key={step_key})"
             )
         target = raw.get("target", "")
-        if engagement_targets and target:
-            normalized = strip_host(target)
-            allowed = {strip_host(t) for t in engagement_targets}
-            if normalized not in allowed:
-                raise PlanValidationError(
-                    f"Target '{target}' not in engagement scope (step_key={step_key})"
-                )
         step = WorkStep(
             step_key=step_key,
             name=f"{tool}_{target}_{idx}",

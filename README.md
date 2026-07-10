@@ -112,10 +112,9 @@ flowchart TD
 - **Mandatory Legal Notice**: First-run acknowledgment of responsible use
 - **Human-in-the-Loop**: Approval required by default (`require_approval: true`); fail-closed without callback
 - **Parallel scans (opt-in)**: `enable_parallel_workers: false` by default; bounded DAG scheduling for `execute_scan_plan()`
-- **Policy Engine**: Mandatory on chat/web/recon paths; fail-closed target allowlists
+- **Tool risk gating**: Phase and exploit controls via `tool_risk` (`check_exploit_gate`, `enable_exploit_adapters`)
 - **Work Graph Kernel**: Deterministic scan execution with phase gating and checkpointing
-- **Rate Limiting**: Configurable traffic throttling to prevent accidental DoS
-- **Lab Mode**: Gating for exploit/credential adapters (`enable_exploit_adapters`, `require_lab_mode_for_exploits`)
+- **Exploit adapters (opt-in)**: `sqli_scanner`, `web_vuln_scanner`, and `credential_tester` require `enable_exploit_adapters: true`
 
 ### 🧠 LLM-Powered Analysis
 - **Local LLM Support**: Works with LMStudio, Ollama, OpenAI, and Anthropic
@@ -133,7 +132,7 @@ flowchart TD
 - **React UI**: Terminal-themed web interface matching CLI aesthetics
 - **Single Command**: `black-glove serve` runs API + UI on `http://127.0.0.1:8787`
 - **Full Config Editor**: Change LLM provider, model, API keys, approval toggle from UI
-- **Session History**: View all chat sessions, sub-agent traces, and tool findings
+- **Session History**: View all chat sessions, sub-agent traces (with tool status, warnings, coverage, and evidence links), and tool findings
 - **Live Orchestration**: WebSocket streaming of agent thinking, tool calls, and approvals
 
 See [docs/webapp.md](docs/webapp.md) for architecture and API reference.
@@ -150,8 +149,8 @@ See [docs/webapp.md](docs/webapp.md) for architecture and API reference.
 - **OSINT Adapters**: DnsLookup, Sublist3r, Wappalyzer, Shodan (API), ViewDNS (API), **OSINT Harvester** (emails/docs), **DNS Recon** (zone transfers)
 - **Active Scanning**: Nmap, Gobuster, **Web Server Scanner**, **SQL Injection Scanner**, **Web Vulnerability Scanner**, **Credential Tester** (lab-gated)
 - **Specialized Adapters**: Camera Security Adapter v1.1.0 for IP camera vulnerability assessment
-- **Vulnerability Analysis**: Normalized findings with severity ratings
-- **Reporting**: Markdown and JSON report generation
+- **Vulnerability Analysis**: Normalized findings with severity ratings, run-scoped provenance, and finding descriptions in the UI
+- **Reporting**: Markdown and JSON report generation scoped to the current run by default
 
 ## 📋 Requirements
 
@@ -317,7 +316,7 @@ Black Glove reads settings from `~/.homepentest/config.yaml`. On first run, this
 ```yaml
 # Black Glove Default Configuration Template
 # This template is used to create ~/.homepentest/config.yaml on first run
-# Customize this file with your specific settings and authorized targets
+# Customize this file with your specific settings
 
 # LLM Settings
 # Configure your LLM provider and endpoint
@@ -332,8 +331,6 @@ rag_db_path: "~/.homepentest/chroma_db"  # Path to ChromaDB vector store
 
 # Scan Settings
 # Configure scanning behavior and limits
-default_rate_limit: 50  # Default packets per second
-max_rate_limit: 100  # Maximum allowed rate limit
 scan_timeout: 300  # Scan timeout in seconds
 
 # Logging Settings
@@ -343,7 +340,6 @@ log_retention_days: 90  # Log retention period in days
 
 # Safety Settings
 # Security and safety controls
-require_lab_mode_for_exploits: true  # Require lab mode for exploit tools
 enable_exploit_adapters: false  # Enable exploit adapters (disabled by default for safety)
 
 # Evidence Storage
@@ -356,13 +352,6 @@ adapters:
     threads: 20
   nmap:
     timeout: 300
-
-# Asset Management Settings
-blocked_targets:
-   # Explicitly block specific targets
-   # Example:
-   # - "192.168.1.1"     # Block specific IP
-   # - "blocked-domain.com"  # Block specific domain
 
 # Additional Settings
 # Uncomment and customize as needed

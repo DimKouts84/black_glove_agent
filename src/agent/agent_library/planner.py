@@ -67,6 +67,26 @@ Instead, you must construct a `ScanPlan` object and submit it using the `complet
 
 Your output must be a call to `complete_task` with the `scan_plan` parameter containing your plan.
 
+Example complete_task format:
+{
+    "tool": "complete_task",
+    "parameters": {
+        "scan_plan": {
+            "goal": "Comprehensive scan of example.com",
+            "reasoning": "Start passive, then active scanning",
+            "steps": [
+                {
+                    "tool": "whois",
+                    "target": "example.com",
+                    "parameters": {"domain": "example.com"},
+                    "rationale": "Domain registration baseline"
+                }
+            ]
+        }
+    },
+    "rationale": "Submitting investigative scan plan"
+}
+
 Prioritize reconnaissance first, then active scanning.
 Ensure all steps are safe and authorization is implied for this context.
 """,

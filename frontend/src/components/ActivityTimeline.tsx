@@ -67,7 +67,35 @@ export function ActivityTimeline({ events, acting = false, compact = false, newe
                 <p className="text-dim mt-0.5 break-words">{ev.content}</p>
               )}
               {ev.type === 'tool_result' && (
-                <p className="text-dim mt-0.5">Tool execution completed</p>
+                <div className="mt-0.5 break-words space-y-1">
+                  <p className={
+                    ev.content?.startsWith('Error:') || ev.status === 'error'
+                      ? 'text-glove'
+                      : ev.status === 'partial' || ev.status === 'not_applicable'
+                        ? 'text-yellow-400'
+                        : 'text-dim'
+                  }>
+                    {ev.content || 'Tool execution completed'}
+                  </p>
+                  {ev.status && (
+                    <p className="text-[10px] text-secondary">status: {ev.status}</p>
+                  )}
+                  {ev.warnings && ev.warnings.length > 0 && (
+                    <p className="text-[10px] text-yellow-400">
+                      warnings: {ev.warnings.slice(0, 2).join('; ')}
+                    </p>
+                  )}
+                  {ev.coverage && Object.keys(ev.coverage).length > 0 && (
+                    <p className="text-[10px] text-dim font-mono">
+                      coverage: {JSON.stringify(ev.coverage)}
+                    </p>
+                  )}
+                  {ev.evidence_paths && ev.evidence_paths.length > 0 && (
+                    <p className="text-[10px] text-secondary break-all">
+                      evidence: {ev.evidence_paths[0]}
+                    </p>
+                  )}
+                </div>
               )}
               {toolLabel && ev.type === 'tool_call' && (
                 <p className="text-accent mt-0.5">tool: {toolLabel}</p>

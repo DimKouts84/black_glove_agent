@@ -2,7 +2,7 @@
 Credential Tester Adapter for Black Glove Pentest Agent
 
 Hydra-like multi-protocol brute-force adapter supporting SSH, FTP, and HTTP Basic.
-Includes "Lab Mode" safeguards to prevent accidental scanning of unauthorized targets.
+Gated by `enable_exploit_adapters` at the plugin-manager level.
 """
 
 import logging
@@ -34,7 +34,7 @@ class CredentialTesterAdapter(BaseAdapter):
     Features:
     - Multi-threaded attempts
     - Configurable delay and max attempts
-    - Lab Mode safety checks (must be explicitly enabled for non-local IPs)
+    - Target scope validation for non-local IPs
     """
 
     def __init__(self, config: Dict[str, Any] = None):
@@ -69,9 +69,7 @@ class CredentialTesterAdapter(BaseAdapter):
         if not passwords or not isinstance(passwords, list):
             raise ValueError("passwords list is required")
 
-        # Lab Mode validation: If target is public, ensure force=True or similar
-        # For this adapter, we might just log a warning or enforce checks.
-        # Implemented in execution logic.
+        # Target scope validation for public IPs may be enforced in execution logic.
 
     # -- protocol implementations -------------------------------------------
 

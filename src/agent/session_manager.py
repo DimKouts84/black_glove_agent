@@ -192,21 +192,35 @@ class SessionManager:
             for row in cursor.fetchall():
                 run_id = row[0]
                 cursor.execute(
-                    "SELECT id, agent, type, content, params_json, ts "
+                    "SELECT id, agent, type, content, params_json, details_json, ts "
                     "FROM agent_events WHERE run_id = ? ORDER BY ts ASC",
                     (run_id,),
                 )
-                events = [
-                    {
+                events = []
+                for e in cursor.fetchall():
+                    params = None
+                    if e[4]:
+                        try:
+                            params = json.loads(e[4])
+                        except json.JSONDecodeError:
+                            params = None
+                    details = None
+                    if e[5]:
+                        try:
+                            details = json.loads(e[5])
+                        except json.JSONDecodeError:
+                            details = None
+                    event = {
                         "id": e[0],
                         "agent": e[1],
                         "type": e[2],
                         "content": e[3],
-                        "params": json.loads(e[4]) if e[4] else None,
-                        "ts": e[5],
+                        "params": params,
+                        "ts": e[6],
                     }
-                    for e in cursor.fetchall()
-                ]
+                    if details:
+                        event.update(details)
+                    events.append(event)
                 runs.append({
                     "id": run_id,
                     "query": row[1],

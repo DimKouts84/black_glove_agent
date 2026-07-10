@@ -24,14 +24,13 @@ from agent.executor import AgentExecutor
 from agent.llm_client import LLMClient, LLMMessage, create_llm_client
 from agent.models import ConfigModel
 from agent.plugin_manager import PluginManager, create_plugin_manager
-from agent.policy_engine import PolicyEngine, create_policy_engine
 from agent.subagent_tool import SubagentTool
-from agent.target_scope import build_policy_target_config
 from agent.tools.adapter_wrapper import AdapterToolWrapper
 from agent.tools.registry import ToolRegistry
 from agent.tools.report_tool import ReportTool
 from agent.work_graph import ConcurrencyLimits, Engagement, EngagementStatus
 from agent.work_graph_executor import WorkGraphExecutor
+from agent.execution_provenance import set_run_context, clear_run_context
 
 logger = logging.getLogger("black_glove.runtime")
 
@@ -60,7 +59,6 @@ class AgentRuntime:
         self.config_service = config_service or get_config_service()
         self._config = config or self.config_service.load()
         self._plugin_manager: Optional[PluginManager] = None
-        self._policy_engine: Optional[PolicyEngine] = None
         self._llm_client: Optional[LLMClient] = None
         self._tool_registry: Optional[ToolRegistry] = None
         self._root_executor: Optional[AgentExecutor] = None
@@ -69,14 +67,6 @@ class AgentRuntime:
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._engagement_sem = asyncio.Semaphore(2)
         self._build()
-
-    def _build_policy_engine(self, cfg: Dict[str, Any]) -> PolicyEngine:
-        policy_cfg = build_policy_target_config(cfg)
-        policy_cfg.setdefault("rate_limiting", {})
-        policy_cfg["rate_limiting"].setdefault(
-            "max_requests", cfg.get("default_rate_limit", 50)
-        )
-        return create_policy_engine(policy_cfg)
 
     @property
     def config(self) -> ConfigModel:
@@ -89,10 +79,7 @@ class AgentRuntime:
         """Build plugin manager, LLM client, tool registry, and root executor."""
         init_db()
         cfg = self._config_dict()
-        self._policy_engine = self._build_policy_engine(cfg)
-        self._plugin_manager = create_plugin_manager(
-            config=cfg, policy_engine=self._policy_engine
-        )
+        self._plugin_manager = create_plugin_manager(config=cfg)
         self._engagement_store = EngagementStore()
         self._llm_client = create_llm_client(self._config)
         self._tool_registry = ToolRegistry()
@@ -128,12 +115,10 @@ class AgentRuntime:
 
         self._work_graph_executor = WorkGraphExecutor(
             plugin_manager=self._plugin_manager,
-            policy_engine=self._policy_engine,
             store=self._engagement_store,
             require_approval=self._config.require_approval,
             safe_tools=self.SAFE_TOOLS,
             enable_exploit_adapters=self._config.enable_exploit_adapters,
-            require_lab_mode_for_exploits=self._config.require_lab_mode_for_exploits,
             enable_parallel_workers=self._config.enable_parallel_workers,
             config=self._config,
         )
@@ -157,11 +142,6 @@ class AgentRuntime:
         self._config = self.config_service.reload()
         self._build()
         return self._config
-
-    @property
-    def policy_engine(self) -> PolicyEngine:
-        assert self._policy_engine is not None
-        return self._policy_engine
 
     @property
     def work_graph_executor(self) -> WorkGraphExecutor:
@@ -191,7 +171,6 @@ class AgentRuntime:
         session_id: str,
         run_id: Optional[str] = None,
         targets: Optional[List[str]] = None,
-        lab_mode: bool = False,
         on_activity: Optional[ActivityCallback] = None,
         approval_callback: Optional[ApprovalCallback] = None,
     ) -> Dict[str, Any]:
@@ -204,7 +183,6 @@ class AgentRuntime:
                 name=scan_plan.get("goal", "scan"),
                 targets=engagement_targets,
                 session_id=session_id,
-                lab_mode=lab_mode,
                 status=EngagementStatus.PENDING,
             )
             self.engagement_store.save_engagement(engagement)
@@ -327,13 +305,15 @@ class AgentRuntime:
             run_id = str(uuid.uuid4())
             started_at = datetime.now().isoformat()
             conn = get_db_connection()
+            finalized = False
 
             try:
                 self._create_run(conn, run_id, session_id, user_query, started_at)
+                set_run_context(session_id=session_id, run_id=run_id)
 
                 def combined_activity(event: Dict[str, Any]) -> None:
-                    enriched = {**event, "run_id": run_id}
-                    self._persist_event(conn, run_id, event)
+                    event_id = self._persist_event(conn, run_id, event)
+                    enriched = {**event, "run_id": run_id, "id": event_id}
                     if on_activity:
                         on_activity(enriched)
 
@@ -356,12 +336,30 @@ class AgentRuntime:
 
                 final_answer = json.dumps(result, default=str)
                 self._finish_run(conn, run_id, "completed", final_answer)
+                finalized = True
                 return result
 
+            except asyncio.CancelledError:
+                if not finalized:
+                    self._finish_run(conn, run_id, "cancelled", "Run cancelled")
+                raise
             except Exception as exc:
-                self._finish_run(conn, run_id, "failed", str(exc))
+                if not finalized:
+                    self._finish_run(conn, run_id, "failed", str(exc))
                 raise
             finally:
+                clear_run_context()
+                if not finalized:
+                    row = conn.execute(
+                        "SELECT status FROM agent_runs WHERE id = ?", (run_id,)
+                    ).fetchone()
+                    if row and row[0] == "running":
+                        self._finish_run(
+                            conn,
+                            run_id,
+                            "interrupted",
+                            "Run ended without completion",
+                        )
                 conn.close()
 
     def _create_run(
@@ -384,21 +382,30 @@ class AgentRuntime:
         )
         conn.commit()
 
-    def _persist_event(self, conn, run_id: str, event: Dict[str, Any]) -> None:
+    def _persist_event(self, conn, run_id: str, event: Dict[str, Any]) -> int:
         params = event.get("params")
-        conn.execute(
-            "INSERT INTO agent_events (run_id, agent, type, content, params_json, ts) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+        ts = event.get("ts") or datetime.now().isoformat()
+        detail_keys = (
+            "tool", "status", "approved", "approval_id", "evidence_paths",
+            "warnings", "coverage", "metrics", "result_digest", "error",
+            "step_id", "task_id", "worker_instance_id", "parallel_group",
+        )
+        details = {k: event[k] for k in detail_keys if k in event and event[k] is not None}
+        cursor = conn.execute(
+            "INSERT INTO agent_events (run_id, agent, type, content, params_json, details_json, ts) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 event.get("agent", "unknown"),
                 event.get("type", "unknown"),
                 str(event.get("content", "")),
                 json.dumps(params) if params else None,
-                datetime.now().isoformat(),
+                json.dumps(details) if details else None,
+                ts,
             ),
         )
         conn.commit()
+        return int(cursor.lastrowid)
 
 
 _runtime_singleton: Optional[AgentRuntime] = None

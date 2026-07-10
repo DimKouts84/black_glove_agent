@@ -301,49 +301,29 @@ class OSINTHarvesterAdapter(BaseAdapter):
     def _harvest_subdomains_crtsh(
         self, domain: str, timeout: float
     ) -> List[str]:
-        """
-        Query crt.sh Certificate Transparency logs for subdomains.
+        """Query crt.sh Certificate Transparency logs for subdomains."""
+        from .crt_sh_client import fetch_crt_sh_entries
 
-        Returns a deduplicated, sorted list of subdomains.
-        """
         crt_url = self.config.get("crt_sh_url", self._defaults["crt_sh_url"])
-        # url = f"{crt_url.rstrip('/')}/?q=%.{domain}&output=json" # Replaced with params
-
-        headers = {
-            "User-Agent": self.config.get(
-                "user_agent", self._defaults["user_agent"]
-            ),
-            "Accept": "application/json",
-        }
-        
-        params = {
-            "q": f"%.{domain}",
-            "output": "json"
-        }
-
-        response = requests.get(crt_url, headers=headers, params=params, timeout=timeout)
-        response.raise_for_status()
+        entries, err = fetch_crt_sh_entries(
+            domain,
+            base_url=crt_url,
+            include_subdomains=True,
+            timeout=timeout,
+        )
+        if err:
+            raise RuntimeError(err)
 
         subdomains = set()
-        try:
-            entries = response.json()
-            if isinstance(entries, list):
-                for entry in entries:
-                    name_value = entry.get("name_value", "")
-                    if isinstance(name_value, str):
-                        for name in name_value.splitlines():
-                            name = name.strip().lower()
-                            # Remove wildcard prefix
-                            if name.startswith("*."):
-                                name = name[2:]
-                            # Only keep names belonging to target domain
-                            if name and (
-                                name == domain or name.endswith(f".{domain}")
-                            ):
-                                subdomains.add(name)
-        except (json.JSONDecodeError, ValueError):
-            self.logger.warning("Failed to parse crt.sh JSON response")
-
+        for entry in entries:
+            name_value = entry.get("name_value", "")
+            if isinstance(name_value, str):
+                for name in name_value.splitlines():
+                    name = name.strip().lower()
+                    if name.startswith("*."):
+                        name = name[2:]
+                    if name and (name == domain or name.endswith(f".{domain}")):
+                        subdomains.add(name)
         return sorted(subdomains)
 
     def _harvest_subdomains_hackertarget(self, domain: str, timeout: float) -> List[str]:

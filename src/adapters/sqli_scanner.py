@@ -101,6 +101,11 @@ class SQLiScannerAdapter(BaseAdapter):
         scanned_count = len(data.get("scanned_params", []))
 
         if not vulns:
+            if scanned_count == 0:
+                return (
+                    f"SQLi Scanner: no URL query parameters to test on {data.get('target_url', 'target')} "
+                    "(scan not applicable - parameterless URL)."
+                )
             return f"SQLi Scanner checked {scanned_count} parameters and found NO vulnerabilities."
 
         summary = f"SQLi Scanner FOUND {len(vulns)} potential issues (checked {scanned_count} params):\n"
@@ -314,7 +319,18 @@ class SQLiScannerAdapter(BaseAdapter):
         if not query_params:
             return AdapterResult(
                 status=AdapterResultStatus.SUCCESS,
-                data={"vulnerabilities": [], "message": "No parameters to test"},
+                data={
+                    "target_url": target_url,
+                    "vulnerabilities": [],
+                    "scanned_params": [],
+                    "not_applicable": True,
+                    "message": "No URL query parameters available to test",
+                    "coverage": {
+                        "scanned_params": 0,
+                        "untested": True,
+                        "reason": "no_query_parameters",
+                    },
+                },
                 metadata={},
             )
 
@@ -356,6 +372,10 @@ class SQLiScannerAdapter(BaseAdapter):
                 "target_url": target_url,
                 "vulnerabilities": findings,
                 "scanned_params": scan_params,
+                "coverage": {
+                    "scanned_params": len(scan_params),
+                    "untested": False,
+                },
             },
             metadata={},
         )

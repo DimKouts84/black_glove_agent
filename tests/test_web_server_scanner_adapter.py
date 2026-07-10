@@ -74,6 +74,24 @@ class TestWebServerScannerAdapter:
         assert len(findings) == 0
 
     @patch("src.adapters.web_server_scanner.requests.request")
+    def test_check_default_files_rejects_spa_html_as_env(self, mock_request, adapter):
+        spa_html = (
+            b"<!DOCTYPE html><html><head><title>App</title></head>"
+            b"<body><div id=\"root\" data-version=\"1.0\"></div></body></html>"
+        )
+
+        def request_side_effect(method, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.content = spa_html
+            return resp
+
+        mock_request.side_effect = request_side_effect
+
+        findings = adapter._check_default_files("http://example.com")
+        assert not any("Found: /.env" in f["title"] for f in findings)
+
+    @patch("src.adapters.web_server_scanner.requests.request")
     def test_check_http_methods(self, mock_request, adapter):
         mock_options = MagicMock()
         mock_options.headers = {"Allow": "GET, POST, OPTIONS, TRACE"}

@@ -78,3 +78,21 @@ class TestAdapterToolWrapper:
 
         out = wrapper.execute({"host": "example.com"})
         assert out["errors"] == ["bad response"]
+
+    def test_failure_result_returns_actionable_error(self, isolated_db):
+        failure = AdapterResult(
+            status=AdapterResultStatus.FAILURE,
+            data={"errors": {"crt_sh": "timeout", "wayback": "blocked"}},
+            metadata={},
+            error_message="crt.sh: timeout; wayback: blocked",
+        )
+
+        pm = MagicMock()
+        pm.run_adapter.return_value = failure
+        pm.get_adapter_info.return_value = {}
+
+        wrapper = AdapterToolWrapper("passive_recon", pm)
+        out = wrapper.execute({"domain": "example.com"})
+        assert out.startswith("Error:")
+        assert "crt.sh" in out
+        assert "None" not in out

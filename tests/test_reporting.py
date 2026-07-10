@@ -506,7 +506,24 @@ class TestReportingManager:
         mock_cursor = Mock()
         mock_conn.cursor.return_value = mock_cursor
         mock_cursor.fetchall.return_value = [
-            (1, "Test Finding", "high", 0.95, 1, "/path/evidence.txt", "Fix it", "2023-01-01T00:00:00")
+            (
+                1,
+                "Test Finding",
+                "high",
+                0.95,
+                1,
+                "/path/evidence.txt",
+                "Fix it",
+                "2023-01-01T00:00:00",
+                "Test description",
+                "abc123",
+                "nmap",
+                "indicator",
+                "fp-1",
+                1,
+                "run-1",
+                "step-1",
+            )
         ]
         
         manager = ReportingManager(mock_conn)
@@ -521,6 +538,9 @@ class TestReportingManager:
         assert finding.asset_id == 1
         assert finding.evidence_path == "/path/evidence.txt"
         assert finding.recommended_fix == "Fix it"
+        assert finding.description == "Test description"
+        assert finding.run_id == "run-1"
+        assert finding.step_id == "step-1"
     
     def test_get_assets_from_database(self):
         """Test retrieving assets from database."""
@@ -541,6 +561,73 @@ class TestReportingManager:
         assert asset.name == "test_asset"
         assert asset.type == AssetType.HOST
         assert asset.value == "192.168.1.100"
+
+    def test_get_assets_for_findings(self):
+        mock_conn = Mock()
+        mock_cursor = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [
+            (2, "dimkouts_dev", "domain", "dimkouts.dev"),
+        ]
+
+        manager = ReportingManager(mock_conn)
+        findings = [
+            Finding(title="Missing CSP", severity=SeverityLevel.HIGH, asset_id=2),
+            Finding(title="WHOIS", severity=SeverityLevel.LOW, asset_id=2),
+        ]
+        assets = manager.get_assets_for_findings(findings)
+
+        assert len(assets) == 1
+        assert assets[0].value == "dimkouts.dev"
+
+    def test_primary_report_target_uses_asset_value(self):
+        assets = [
+            AssetModel(id=1, name="home_router", type=AssetType.HOST, value="192.168.1.100"),
+            AssetModel(id=2, name="dimkouts_dev", type=AssetType.DOMAIN, value="dimkouts.dev"),
+        ]
+        findings = [
+            Finding(title="Missing CSP", severity=SeverityLevel.HIGH, asset_id=2),
+            Finding(title="Missing HSTS", severity=SeverityLevel.HIGH, asset_id=2),
+            Finding(title="Stale", severity=SeverityLevel.LOW, asset_id=1),
+        ]
+        target = ReportingManager._primary_report_target(assets, findings)
+        assert target == "dimkouts.dev"
+
+    def test_generate_assessment_report_scopes_assets_when_run_id_set(self):
+        mock_conn = Mock()
+        mock_cursor = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        run_findings = [
+            Finding(
+                id=1,
+                title="Missing CSP",
+                severity=SeverityLevel.HIGH,
+                asset_id=2,
+                run_id="run-abc",
+            ),
+        ]
+        run_assets = [
+            AssetModel(id=2, name="dimkouts_dev", type=AssetType.DOMAIN, value="dimkouts.dev"),
+        ]
+
+        manager = ReportingManager(mock_conn)
+        with patch.object(manager, "get_findings_from_database", return_value=run_findings):
+            with patch.object(manager, "get_assets_for_findings", return_value=run_assets) as mock_assets:
+                with patch.object(manager.report_generator, "generate_report") as mock_generate:
+                    mock_generate.return_value = "scoped report"
+                    content = manager.generate_assessment_report(
+                        ReportFormat.MARKDOWN,
+                        run_id="run-abc",
+                    )
+
+        assert content == "scoped report"
+        mock_assets.assert_called_once_with(run_findings)
+        args = mock_generate.call_args[0]
+        assert args[0] == run_findings
+        assert args[1] == run_assets
+        assert args[2]["primary_target"] == "dimkouts.dev"
+        assert args[2]["scoped_to_run"] is True
     
     def test_save_findings_to_database(self):
         """Test saving findings to database."""

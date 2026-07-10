@@ -16,7 +16,6 @@ from agent.db import get_db_connection, init_db
 from agent.engagement_store import EngagementStore
 from agent.execution_context import ExecutionContext
 from agent.plan_validator import PlanValidationError, validate_scan_plan
-from agent.policy_engine import RateLimiter
 from agent.work_graph import ConcurrencyLimits, Engagement, EngagementStatus, StepStatus, WorkGraph, WorkPhase, WorkStep
 from agent.work_graph_executor import WorkGraphExecutor
 
@@ -67,28 +66,6 @@ def test_validate_scan_plan_rejects_cycle():
         validate_scan_plan(plan, engagement_targets=["x.com"])
 
 
-def test_rate_limiter_atomic_acquire():
-    limiter = RateLimiter({"window_size": 60, "max_requests": 2, "global_max_requests": 100})
-    assert limiter.acquire_and_record("nmap") is True
-    assert limiter.acquire_and_record("nmap") is True
-    assert limiter.acquire_and_record("nmap") is False
-
-
-def test_rate_limiter_thread_safe():
-    limiter = RateLimiter({"window_size": 60, "max_requests": 50, "global_max_requests": 100})
-    results = []
-
-    def worker():
-        results.append(limiter.acquire_and_record("tool"))
-
-    threads = [threading.Thread(target=worker) for _ in range(20)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert sum(results) <= 50
-
-
 def test_work_graph_cas_conflict(temp_db):
     store = EngagementStore()
     engagement = Engagement(name="test", targets=["example.com"])
@@ -103,9 +80,8 @@ def test_work_graph_cas_conflict(temp_db):
 
 def test_sequential_executor_respects_dependencies(temp_db):
     pm = MagicMock()
-    policy = MagicMock()
     store = EngagementStore()
-    executor = WorkGraphExecutor(pm, policy, store=store, require_approval=False)
+    executor = WorkGraphExecutor(pm, store=store, require_approval=False)
 
     engagement = Engagement(name="e", targets=["example.com"])
     store.save_engagement(engagement)
@@ -130,10 +106,9 @@ def test_sequential_executor_respects_dependencies(temp_db):
 
 def test_parallel_scheduler_completes_independent_steps(temp_db):
     pm = MagicMock()
-    policy = MagicMock()
     store = EngagementStore()
     executor = WorkGraphExecutor(
-        pm, policy, store=store, require_approval=False, enable_parallel_workers=True
+        pm, store=store, require_approval=False, enable_parallel_workers=True
     )
 
     engagement = Engagement(name="e", targets=["a.com", "b.com"])
@@ -163,7 +138,7 @@ def test_parallel_scheduler_completes_independent_steps(temp_db):
 
     from unittest.mock import AsyncMock, patch
 
-    async def slow_execute(self, task, ctx, *, lab_mode=False):
+    async def slow_execute(self, task, ctx):
         from agent.worker_models import WorkerResult
         from agent.tool_result import ToolResultEnvelope
 
@@ -193,7 +168,7 @@ def test_cancel_scan_marks_graph_cancelled(temp_db):
     graph = WorkGraph(engagement_id=engagement.id, goal="g", steps=[])
     store.save_work_graph(graph)
 
-    executor = WorkGraphExecutor(MagicMock(), MagicMock(), store=store)
+    executor = WorkGraphExecutor(MagicMock(), store=store)
     executor.cancel(graph.id)
     loaded = store.get_work_graph(graph.id)
     assert loaded is not None

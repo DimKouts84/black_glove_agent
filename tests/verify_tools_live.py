@@ -16,7 +16,6 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from agent.plugin_manager import PluginManager
-from agent.policy_engine import create_policy_engine
 
 TEST_DOMAIN = "example.com"
 TEST_NMAP_TARGET = "scanme.nmap.org"
@@ -25,19 +24,7 @@ TEST_NMAP_TARGET = "scanme.nmap.org"
 PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 WORDLIST_PATH = PROJECT_ROOT / "bin" / "wordlists" / "common.txt"
 
-CONFIG = {
-    "rate_limiting": {
-        "window_size": 60,
-        "max_requests": 100,
-        "global_max_requests": 500,
-    },
-    "target_validation": {
-        "authorized_networks": ["8.8.8.8/32", "127.0.0.1/32"],
-        "authorized_domains": [TEST_DOMAIN, f"http://{TEST_DOMAIN}", f"https://{TEST_DOMAIN}", TEST_NMAP_TARGET, f"http://{TEST_NMAP_TARGET}"],
-        "blocked_targets": []
-    },
-    "allowed_exploits": ["safe_exploit"],
-}
+CONFIG = {}
 
 TEST_CASES = {
     'asset_manager': [({'command': 'list'}, 'list assets')],
@@ -57,8 +44,7 @@ def main():
     print(f"=== Live Tool Verification Started at {datetime.now()} ===")
     print(f"Targets: Domain={TEST_DOMAIN}, Nmap={TEST_NMAP_TARGET}\n")
 
-    pe = create_policy_engine(CONFIG)
-    pm = PluginManager(config={}, policy_engine=pe)
+    pm = PluginManager(config=CONFIG)
 
     adapters = pm.discover_adapters()
     results = []

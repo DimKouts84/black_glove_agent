@@ -38,7 +38,10 @@ def init_db() -> None:
             create_agent_events_table(conn)
             create_engagement_tables(conn)
             _migrate_findings_columns(conn)
+            _migrate_agent_events_columns(conn)
             _create_worker_tables(conn)
+            create_finding_observations_table(conn)
+            _supersede_stale_scan_completed_findings(conn)
     finally:
         conn.close()
 
@@ -102,6 +105,68 @@ def _migrate_findings_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE findings ADD COLUMN {column} {definition}")
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_fingerprint ON findings(fingerprint)"
+    )
+
+
+def create_finding_observations_table(conn: sqlite3.Connection) -> None:
+    """Append-only ledger linking canonical findings to run/step observations."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS finding_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            finding_id INTEGER NOT NULL,
+            run_id TEXT,
+            step_id TEXT,
+            evidence_path TEXT,
+            evidence_hash TEXT,
+            description TEXT,
+            observed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(finding_id) REFERENCES findings(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_finding_observations_run_id "
+        "ON finding_observations(run_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_finding_observations_finding_id "
+        "ON finding_observations(finding_id)"
+    )
+    _backfill_finding_observations(conn)
+
+
+def _backfill_finding_observations(conn: sqlite3.Connection) -> None:
+    """Copy legacy run_id-tagged findings into the observation ledger (idempotent)."""
+    conn.execute(
+        """
+        INSERT INTO finding_observations
+            (finding_id, run_id, step_id, evidence_path, evidence_hash, description, observed_at)
+        SELECT f.id, f.run_id, f.step_id, f.evidence_path, f.evidence_hash,
+               f.description, COALESCE(f.created_at, CURRENT_TIMESTAMP)
+        FROM findings f
+        WHERE f.run_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM finding_observations o
+              WHERE o.finding_id = f.id AND o.run_id = f.run_id
+          )
+        """
+    )
+
+
+def _supersede_stale_scan_completed_findings(conn: sqlite3.Connection) -> None:
+    """Mark pre-fix generic scan-completed rows as superseded (idempotent)."""
+    conn.execute(
+        """
+        UPDATE findings
+        SET verification_state = 'superseded'
+        WHERE verification_state NOT IN ('superseded', 'conflicted')
+          AND title LIKE '%scan completed%'
+          AND source_tool IN (
+              'web_vuln_scanner', 'sqli_scanner', 'sublist3r',
+              'wappalyzer', 'passive_recon', 'osint_harvester'
+          )
+        """
     )
 
 
@@ -319,10 +384,19 @@ def create_agent_events_table(conn: sqlite3.Connection) -> None:
             type TEXT NOT NULL,
             content TEXT,
             params_json TEXT,
+            details_json TEXT,
             ts TEXT NOT NULL,
             FOREIGN KEY(run_id) REFERENCES agent_runs(id)
         )
     """)
+    _migrate_agent_events_columns(conn)
+
+
+def _migrate_agent_events_columns(conn: sqlite3.Connection) -> None:
+    cursor = conn.execute("PRAGMA table_info(agent_events)")
+    existing = {row[1] for row in cursor.fetchall()}
+    if "details_json" not in existing:
+        conn.execute("ALTER TABLE agent_events ADD COLUMN details_json TEXT")
 
 def get_db_connection() -> sqlite3.Connection:
     """
@@ -387,7 +461,10 @@ def run_migrations() -> None:
             create_agent_events_table(conn)
             create_engagement_tables(conn)
             _migrate_findings_columns(conn)
+            _migrate_agent_events_columns(conn)
             _create_worker_tables(conn)
+            create_finding_observations_table(conn)
+            _supersede_stale_scan_completed_findings(conn)
     finally:
         conn.close()
 

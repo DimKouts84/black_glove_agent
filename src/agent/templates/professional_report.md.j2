@@ -31,6 +31,23 @@
 
 ---
 
+{% if report.reconciled_findings %}
+## Reconciled Observations
+
+Cross-tool observations reconciled when fingerprinting and direct checks disagreed:
+
+{% for finding in report.reconciled_findings %}
+### {{ finding.title }}
+
+- **Severity:** {{ finding.severity.value }}
+- **Affected Assets:** {{ finding.affected_assets | join(', ') }}
+
+{{ finding.description }}
+
+---
+{% endfor %}
+{% endif %}
+
 ## Detailed Findings
 
 {% for finding in report.all_findings %}

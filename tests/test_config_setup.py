@@ -28,8 +28,6 @@ class TestConfiguration:
         assert config.llm_temperature == 0.0
         
         # Test scan settings
-        assert config.default_rate_limit == 50
-        assert config.max_rate_limit == 100
         assert config.scan_timeout == 300
         
         # Test logging settings
@@ -37,7 +35,6 @@ class TestConfiguration:
         assert config.log_retention_days == 90
         
         # Test safety settings
-        assert config.require_lab_mode_for_exploits is True
         assert config.enable_exploit_adapters is False
         
         # Test evidence storage
@@ -50,12 +47,9 @@ class TestConfiguration:
             llm_endpoint="http://localhost:11434/api",
             llm_model="llama2",
             llm_temperature=0.8,
-            default_rate_limit=100,
-            max_rate_limit=200,
             scan_timeout=600,
             log_level="DEBUG",
             log_retention_days=180,
-            require_lab_mode_for_exploits=False,
             enable_exploit_adapters=True,
             evidence_storage_path="/custom/evidence/path"
         )
@@ -67,8 +61,6 @@ class TestConfiguration:
         assert config.llm_temperature == 0.8
         
         # Test custom scan settings
-        assert config.default_rate_limit == 100
-        assert config.max_rate_limit == 200
         assert config.scan_timeout == 600
         
         # Test custom logging settings
@@ -76,7 +68,6 @@ class TestConfiguration:
         assert config.log_retention_days == 180
         
         # Test custom safety settings
-        assert config.require_lab_mode_for_exploits is False
         assert config.enable_exploit_adapters is True
         
         # Test custom evidence storage
@@ -90,13 +81,6 @@ class TestConfiguration:
         
         with pytest.raises(ValueError):
             ConfigModel(llm_temperature=-0.1)
-        
-        # Test rate limit validation (should be >= 1)
-        with pytest.raises(ValueError):
-            ConfigModel(default_rate_limit=0)
-        
-        with pytest.raises(ValueError):
-            ConfigModel(max_rate_limit=-1)
         
         # Test scan timeout validation (should be >= 1)
         with pytest.raises(ValueError):

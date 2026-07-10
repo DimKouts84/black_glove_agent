@@ -108,6 +108,25 @@ PATH_CONTENT_VALIDATORS: Dict[str, Callable[[bytes], bool]] = {
 
 RISK_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "ERROR"}
 
+ENV_LINE_PATTERN = re.compile(rb"^[A-Z_][A-Z0-9_]*\s*=", re.MULTILINE)
+
+
+def _looks_like_html(body: bytes) -> bool:
+    sample = body[:800].lower()
+    return any(tag in sample for tag in (b"<!doctype", b"<html", b"<head", b"<body"))
+
+
+def _looks_like_env_file(body: bytes) -> bool:
+    if _looks_like_html(body):
+        return False
+    if len(body) >= 50000:
+        return False
+    return ENV_LINE_PATTERN.search(body) is not None
+
+
+# Override weak /.env validator after helpers are defined
+PATH_CONTENT_VALIDATORS["/.env"] = _looks_like_env_file
+
 DANGEROUS_METHODS = ["PUT", "DELETE", "TRACE", "CONNECT"]
 
 VERSION_PATTERN = re.compile(
@@ -177,10 +196,29 @@ class WebServerScannerAdapter(BaseAdapter):
             return len(resp.content)
         return None
 
-    def _content_matches_path(self, path: str, body: bytes, not_found_len: Optional[int]) -> bool:
+    def _probe_homepage_body(self, base_url: str) -> Optional[bytes]:
+        """Fetch homepage body to detect SPA catch-all responses."""
+        resp = self._request("GET", base_url)
+        if resp and resp.status_code == 200:
+            return resp.content
+        return None
+
+    def _content_matches_path(
+        self,
+        path: str,
+        body: bytes,
+        not_found_len: Optional[int],
+        homepage_body: Optional[bytes] = None,
+    ) -> bool:
+        if homepage_body is not None and body == homepage_body:
+            return False
+
         validator = PATH_CONTENT_VALIDATORS.get(path)
         if validator:
             return validator(body)
+
+        if _looks_like_html(body):
+            return False
 
         if not_found_len is not None and abs(len(body) - not_found_len) < 50:
             return False
@@ -202,20 +240,41 @@ class WebServerScannerAdapter(BaseAdapter):
             })
             return findings
 
+        response_meta = {
+            "response_url": resp.url,
+            "response_status": resp.status_code,
+        }
+
         for header_name, description, severity in SECURITY_HEADERS:
             value = resp.headers.get(header_name)
             if value is None:
-                findings.append({
+                finding = {
                     "check": "headers",
                     "title": f"Missing {header_name}",
                     "detail": description,
                     "severity": severity,
+                    **response_meta,
+                }
+                if header_name == "Strict-Transport-Security":
+                    finding["note"] = (
+                        "Direct HTTP response lacked HSTS header. "
+                        "Technology fingerprinting may still detect HSTS via redirects or preload lists."
+                    )
+                findings.append(finding)
+            else:
+                findings.append({
+                    "check": "headers",
+                    "title": f"Present {header_name}",
+                    "detail": value,
+                    "severity": "INFO",
+                    **response_meta,
                 })
         return findings
 
     def _check_default_files(self, base_url: str) -> List[Dict[str, Any]]:
         findings: List[Dict[str, Any]] = []
         not_found_len = self._probe_not_found_baseline(base_url)
+        homepage_body = self._probe_homepage_body(base_url)
 
         for path, description, severity in DANGEROUS_PATHS:
             if path in INFORMATIONAL_PATHS:
@@ -226,10 +285,13 @@ class WebServerScannerAdapter(BaseAdapter):
             if resp is None or resp.status_code != 200:
                 continue
 
-            if not self._content_matches_path(path, resp.content, not_found_len):
+            if not self._content_matches_path(
+                path, resp.content, not_found_len, homepage_body
+            ):
                 logger.debug(f"Skipping likely soft-404 for {path}")
                 continue
 
+            confidence = 0.85 if path in PATH_CONTENT_VALIDATORS else 0.65
             findings.append({
                 "check": "files",
                 "title": f"Found: {path}",
@@ -237,7 +299,7 @@ class WebServerScannerAdapter(BaseAdapter):
                 "severity": severity,
                 "url": url,
                 "status_code": resp.status_code,
-                "confidence": 0.85 if path in PATH_CONTENT_VALIDATORS else 0.65,
+                "confidence": confidence,
             })
         return findings
 

@@ -127,7 +127,6 @@ class Engagement(BaseModel):
     targets: List[str] = Field(default_factory=list)
     status: EngagementStatus = EngagementStatus.PENDING
     session_id: Optional[str] = None
-    lab_mode: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     budget: Dict[str, Any] = Field(

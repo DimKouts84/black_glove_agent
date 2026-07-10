@@ -17,7 +17,6 @@ from datetime import datetime
 from enum import Enum
 
 from .models import Asset, ScanResult, WorkflowStep, OrchestrationContext
-from .policy_engine import PolicyEngine, create_policy_engine
 from .plugin_manager import PluginManager, create_plugin_manager
 from .work_graph import Engagement, WorkPhase, WorkStep
 from .work_graph_executor import WorkGraphExecutor
@@ -29,7 +28,6 @@ class ScanMode(Enum):
     """Enumeration of scan modes."""
     PASSIVE = "passive"
     ACTIVE = "active"
-    LAB = "lab"
 
 
 class WorkflowState(Enum):
@@ -99,11 +97,9 @@ class Orchestrator:
         self.logger = logging.getLogger("black_glove.orchestrator")
         
         # Initialize core components
-        self.policy_engine = create_policy_engine(config.get("policy", {}))
         self.plugin_manager = create_plugin_manager(
             config.get("adapters_path"),
             config=config,
-            policy_engine=self.policy_engine,
         )
         
         if llm_client:
@@ -122,12 +118,8 @@ class Orchestrator:
 
         self.work_graph_executor = WorkGraphExecutor(
             plugin_manager=self.plugin_manager,
-            policy_engine=self.policy_engine,
             require_approval=bool(config.get("require_approval", True)),
             enable_exploit_adapters=bool(config.get("enable_exploit_adapters", False)),
-            require_lab_mode_for_exploits=bool(
-                config.get("require_lab_mode_for_exploits", True)
-            ),
         )
         
         self.logger.info("Orchestrator initialized")
@@ -140,15 +132,9 @@ class Orchestrator:
             asset: Asset to add
             
         Returns:
-            bool: True if asset was added, False if rejected by policy
+            bool: True if asset was added
         """
         self.logger.debug(f"Adding asset: {asset.target}")
-        
-        # Validate asset through policy engine
-        if not self.policy_engine.validate_asset(asset):
-            self.logger.warning(f"Asset rejected by policy: {asset.target}")
-            return False
-        
         self.assets.append(asset)
         self.logger.info(f"Asset added successfully: {asset.target}")
         return True
@@ -195,11 +181,6 @@ class Orchestrator:
             
             for tool_name in passive_tools:
                 try:
-                    # Check rate limits before execution
-                    if not self.policy_engine.enforce_rate_limits(tool_name):
-                        self.logger.warning(f"Rate limit exceeded for {tool_name}")
-                        continue
-                    
                     # Map asset parameters to tool-specific parameters
                     params = self._map_asset_to_tool_params(asset, tool_name, asset_type)
                     
@@ -214,9 +195,6 @@ class Orchestrator:
                     
                     # Run adapter
                     adapter_result = self.plugin_manager.run_adapter(tool_name, params)
-                    
-                    # Record rate limit usage
-                    self.policy_engine.rate_limiter.record_request(tool_name)
                     
                     # Process result
                     scan_result = self._process_tool_output(adapter_result, asset, tool_name)
@@ -243,7 +221,7 @@ class Orchestrator:
         Use LLM to plan active scanning steps.
         
         Args:
-            scan_mode: Scan mode (PASSIVE, ACTIVE, LAB)
+            scan_mode: Scan mode (PASSIVE, ACTIVE)
             
         Returns:
             List of planned workflow steps
@@ -296,7 +274,6 @@ class Orchestrator:
         engagement = Engagement(
             name=step.name,
             targets=[step.target],
-            lab_mode=self.config.get("scan_mode", "passive") == "lab",
         )
         work_step = WorkStep(
             name=step.name,
@@ -366,14 +343,6 @@ class Orchestrator:
             tool_name=step.tool,
             parameters=step.parameters,
         )
-
-        if not self.policy_engine.validate_asset(asset):
-            self.logger.warning(f"Step rejected by policy: {step.name}")
-            return None
-
-        if not self.policy_engine.enforce_rate_limits(step.tool):
-            self.logger.warning(f"Rate limit exceeded for {step.tool}")
-            return None
 
         try:
             adapter_result = self.plugin_manager.run_adapter(step.tool, step.parameters)
@@ -809,12 +778,9 @@ class Orchestrator:
         if scan_mode == ScanMode.PASSIVE:
             # Passive scanning steps
             tools = ["nmap", "sslscan", "nikto"]
-        elif scan_mode == ScanMode.ACTIVE:
+        else:
             # Active scanning steps
             tools = ["nmap", "sqlmap", "gobuster"]
-        else:  # LAB mode
-            # Comprehensive scanning steps
-            tools = ["nmap", "sqlmap", "gobuster", "metasploit"]
         
         # If no assets, create steps for a default target
         targets = [asset.target for asset in self.assets] if self.assets else ["default_target"]
@@ -878,12 +844,7 @@ class Orchestrator:
             bool: True if approved, False if cancelled
         """
         # In a real implementation, this would interact with user interface
-        # For now, auto-approve based on scan mode and policy
-        scan_mode = self.config.get("scan_mode", "passive")
-        
-        if scan_mode == "lab":
-            return True
-
+        # For now, deny dangerous tools by default
         dangerous_tools = {"credential_tester", "sqli_scanner", "web_vuln_scanner", "nmap", "gobuster"}
         if step.tool in dangerous_tools:
             self.logger.warning(
@@ -948,8 +909,6 @@ class Orchestrator:
             "assets": [asset.to_dict() for asset in self.assets],
             "results": [result.to_dict() for result in self.scan_results],
             "findings": self.result_processor.findings,
-            "violations": self.policy_engine.get_violation_report(),
-            "rates": self.policy_engine.get_current_rates()
         }
         
         return report_data
@@ -1095,35 +1054,10 @@ def create_orchestrator(config: Dict[str, Any] = None, db_connection=None, llm_c
     """
     if config is None:
         config = {
-            "policy": {
-                "rate_limiting": {
-                    "window_size": 60,
-                    "max_requests": 10,
-                    "global_max_requests": 100
-                },
-                "target_validation": {
-                    "authorized_networks": ["192.168.1.0/24"],
-                    "authorized_domains": ["example.com"]
-                },
-                "allowed_exploits": []
-            },
             "passive_tools": ["whois", "dns_lookup", "ssl_check"],
-            "scan_mode": "passive"
+            "scan_mode": "passive",
         }
     else:
-        # Ensure policy configuration includes target validation from main config
-        if "policy" not in config:
-            config["policy"] = {}
-        
-        if "target_validation" not in config["policy"]:
-            config["policy"]["target_validation"] = {}
-        
-        # Copy authorized networks and domains from main config to policy config
-        if "authorized_networks" in config and "target_validation" in config["policy"]:
-            config["policy"]["target_validation"]["authorized_networks"] = config["authorized_networks"]
-        if "authorized_domains" in config and "target_validation" in config["policy"]:
-            config["policy"]["target_validation"]["authorized_domains"] = config["authorized_domains"]
-        
         # Build LLM configuration from top-level settings if not provided explicitly
         if not config.get("llm"):
             provider_str = str(config.get("llm_provider", "lmstudio")).lower()

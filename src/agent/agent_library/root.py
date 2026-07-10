@@ -92,10 +92,12 @@ ROOT_AGENT = AgentDefinition(
             FOR COMPLEX TASKS, delegate to sub-agents:
             - 'planner_agent': For multi-step attack planning
                 - method: planner_agent(goal="Scan target system for vulnerabilities")
-            - 'researcher_agent': For executing multiple tools
+            - 'researcher_agent': For multi-tool investigations or when several tools must be chained
                 - method: researcher_agent(tool_name="nmap", target="example.com", parameters={...})
             - 'analyst_agent': For interpreting results
                 - method: analyst_agent(raw_data="output", query="...") OR analyst_agent(evidence_path="path/to/file", query="...")
+
+            For single-tool requests (one whois, dns_lookup, passive_recon, etc.), call the tool directly instead of researcher_agent.
 
             WORKFLOW FOR COMPREHENSIVE SCANS:
             When asked for a full scan or penetration test:
@@ -106,6 +108,9 @@ ROOT_AGENT = AgentDefinition(
             5. Use complete_task to return the report as the final answer
 
             If a tool returns an error, SKIP IT and move to the next tool. Do NOT retry failed tools.
+            Tool errors look like: "Error: WHOIS lookup failed: ..." or "Error: can't subtract ...".
+            "Unsupported response format" or "LLM API error" means the language model API failed — NOT the recon tool.
+            Do NOT blame whois/dns_lookup/osint_harvester for LLM API errors; report the LLM issue to the user instead.
 
             IMPORTANT: When asked about past actions or tools used, DO NOT call the tool again. Refer to your context memory and describe what you already did.
 

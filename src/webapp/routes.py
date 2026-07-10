@@ -135,30 +135,62 @@ def get_session_trace(session_id: str):
 # --- Findings ---
 
 @router.get("/findings")
-def list_findings(asset_id: Optional[int] = None):
+def list_findings(
+    asset_id: Optional[int] = None,
+    run_id: Optional[str] = None,
+    exclude_superseded: bool = Query(True),
+):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        if asset_id:
-            cursor.execute(
+        if run_id:
+            sql = (
                 "SELECT f.id, f.asset_id, f.title, f.severity, f.confidence, "
-                "f.evidence_path, f.recommended_fix, f.created_at, a.name, a.value "
-                "FROM findings f JOIN assets a ON f.asset_id = a.id "
-                "WHERE f.asset_id = ? ORDER BY f.created_at DESC",
-                (asset_id,),
+                "COALESCE(o.evidence_path, f.evidence_path), f.recommended_fix, "
+                "COALESCE(o.observed_at, f.created_at), "
+                "COALESCE(o.description, f.description), "
+                "a.name, a.value, o.run_id "
+                "FROM finding_observations o "
+                "JOIN findings f ON f.id = o.finding_id "
+                "JOIN assets a ON f.asset_id = a.id "
+                "WHERE o.run_id = ? "
             )
+            params: list = [run_id]
+            if exclude_superseded:
+                sql += " AND f.verification_state != 'superseded' "
+            sql += " ORDER BY o.observed_at DESC"
+            cursor.execute(sql, params)
+        elif asset_id:
+            sql = (
+                "SELECT f.id, f.asset_id, f.title, f.severity, f.confidence, "
+                "f.evidence_path, f.recommended_fix, f.created_at, f.description, "
+                "a.name, a.value, f.run_id "
+                "FROM findings f JOIN assets a ON f.asset_id = a.id "
+                "WHERE f.asset_id = ? "
+            )
+            params = [asset_id]
+            if exclude_superseded:
+                sql += " AND f.verification_state != 'superseded' "
+            sql += " ORDER BY f.created_at DESC"
+            cursor.execute(sql, params)
         else:
-            cursor.execute(
+            sql = (
                 "SELECT f.id, f.asset_id, f.title, f.severity, f.confidence, "
-                "f.evidence_path, f.recommended_fix, f.created_at, a.name, a.value "
+                "f.evidence_path, f.recommended_fix, f.created_at, f.description, "
+                "a.name, a.value, f.run_id "
                 "FROM findings f JOIN assets a ON f.asset_id = a.id "
-                "ORDER BY f.created_at DESC"
             )
+            params = []
+            if exclude_superseded:
+                sql += " WHERE f.verification_state != 'superseded' "
+            sql += " ORDER BY f.created_at DESC"
+            cursor.execute(sql, params)
         findings = [
             {
                 "id": r[0], "asset_id": r[1], "title": r[2], "severity": r[3],
                 "confidence": r[4], "evidence_path": r[5], "recommended_fix": r[6],
-                "created_at": r[7], "asset_name": r[8], "asset_value": r[9],
+                "created_at": r[7], "description": r[8],
+                "asset_name": r[9], "asset_value": r[10], "run_id": r[11],
             }
             for r in cursor.fetchall()
         ]

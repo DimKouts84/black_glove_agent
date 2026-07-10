@@ -142,7 +142,18 @@ async def create_researcher_worker(
             require_approval=require_approval,
             safe_tools=safe_tools,
             approval_callback=worker_ctx.approval_callback,
-            on_activity=lambda e: worker_ctx.emit(e.get("type", "activity"), e.get("content")),
+            on_activity=lambda e: worker_ctx.emit(
+                e.get("type", "activity"),
+                e.get("content"),
+                agent=e.get("agent"),
+                params=e.get("params"),
+                tool=e.get("tool"),
+                status=e.get("status"),
+                evidence_paths=e.get("evidence_paths"),
+                warnings=e.get("warnings"),
+                coverage=e.get("coverage"),
+                result_digest=e.get("result_digest"),
+            ),
         )
         params = dict(task.parameters)
         params.setdefault("target", task.target)
@@ -181,7 +192,18 @@ async def create_analyst_worker(llm_factory, task, worker_ctx):
             agent_definition=ANALYST_AGENT,
             llm_client=client,
             tool_registry=registry,
-            on_activity=lambda e: worker_ctx.emit(e.get("type", "activity"), e.get("content")),
+            on_activity=lambda e: worker_ctx.emit(
+                e.get("type", "activity"),
+                e.get("content"),
+                agent=e.get("agent"),
+                params=e.get("params"),
+                tool=e.get("tool"),
+                status=e.get("status"),
+                evidence_paths=e.get("evidence_paths"),
+                warnings=e.get("warnings"),
+                coverage=e.get("coverage"),
+                result_digest=e.get("result_digest"),
+            ),
         )
         params = dict(task.parameters)
         params.setdefault("target", task.target)

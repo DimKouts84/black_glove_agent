@@ -210,6 +210,8 @@ class Finding:
     verification_state: str = "indicator"
     fingerprint: Optional[str] = None
     observation_count: int = 1
+    run_id: Optional[str] = None
+    step_id: Optional[str] = None
     recommended_fix: str = ""
     references: List[str] = None
     cvss_score: Optional[float] = None
@@ -490,6 +492,45 @@ class FindingsNormalizer:
         }
         return mapping.get(str(severity_str).lower(), SeverityLevel.MEDIUM)
 
+    def reconcile_cross_tool_conflicts(self, findings: List[Finding]) -> List[Finding]:
+        """
+        Reconcile contradictory observations from different tools on the same asset.
+        Mutates findings in place and returns the list.
+        """
+        by_asset: Dict[int, List[Finding]] = {}
+        for finding in findings:
+            if finding.asset_id is None:
+                continue
+            by_asset.setdefault(finding.asset_id, []).append(finding)
+
+        for asset_findings in by_asset.values():
+            wappalyzer_hsts = [
+                f for f in asset_findings
+                if f.source_tool == "wappalyzer"
+                and f.title == "Technology detected: HSTS"
+            ]
+            missing_hsts = [
+                f for f in asset_findings
+                if f.source_tool == "web_server_scanner"
+                and f.title == "Missing Strict-Transport-Security"
+            ]
+            if not wappalyzer_hsts or not missing_hsts:
+                continue
+
+            for finding in missing_hsts:
+                finding.severity = SeverityLevel.INFO
+                finding.verification_state = "conflicted"
+                finding.description = (
+                    "HSTS inferred by fingerprinting but absent in direct response headers; "
+                    "verify redirect chain and preload configuration."
+                )
+                finding.recommended_fix = (
+                    "Confirm whether HSTS is enforced via HTTPS redirect, CDN, or preload; "
+                    "add Strict-Transport-Security on origin if missing."
+                )
+
+        return findings
+
     def _normalize_web_scan_output(
         self,
         tool_name: str,
@@ -513,6 +554,9 @@ class FindingsNormalizer:
 
                 title = item.get("title", "Web server finding")
                 detail = item.get("detail", "")
+                note = item.get("note")
+                if note:
+                    detail = f"{detail} ({note})"
                 confidence = float(item.get("confidence", 0.75))
 
                 findings.append(Finding(
@@ -524,6 +568,7 @@ class FindingsNormalizer:
                     asset_name=asset.name,
                     evidence_path=evidence_metadata["path"],
                     evidence_hash=evidence_metadata["hash"],
+                    source_tool=tool_name,
                     recommended_fix="Review and remediate the identified web server misconfiguration.",
                 ))
         else:
@@ -567,6 +612,9 @@ class FindingsNormalizer:
                 ))
 
         if not findings:
+            coverage = output.get("coverage") or {}
+            if output.get("not_applicable") or coverage.get("untested"):
+                return findings
             findings.append(Finding(
                 title=f"{tool_name} scan completed on {asset.name}",
                 description=(
@@ -579,6 +627,7 @@ class FindingsNormalizer:
                 asset_name=asset.name,
                 evidence_path=evidence_metadata["path"],
                 evidence_hash=evidence_metadata["hash"],
+                source_tool=tool_name,
                 recommended_fix="No immediate action required based on automated scan.",
             ))
 
@@ -689,6 +738,10 @@ class FindingsNormalizer:
 
         if not findings:
             description = output.get("interpretation") or f"No actionable issues from {tool_name}."
+            coverage = output.get("coverage") or {}
+            errors = output.get("errors") or {}
+            if tool == "passive_recon" and errors and not coverage.get("crt_sh_ok") and not coverage.get("wayback_ok"):
+                return findings
             findings.append(Finding(
                 title=f"{tool_name} scan completed on {asset.name}",
                 description=description,
@@ -779,6 +832,28 @@ class FindingsNormalizer:
 
         elif tool == "whois":
             domain = output.get("domain", asset.name)
+            registrar = output.get("registrar")
+            if isinstance(registrar, list):
+                registrar = registrar[0]
+            if not registrar and not output.get("creation_date") and not output.get("expiration_date"):
+                warnings = output.get("warnings") or []
+                desc = "No registration data returned"
+                if warnings:
+                    desc += f"; {'; '.join(warnings[:3])}"
+                findings.append(Finding(
+                    title=f"WHOIS/RDAP lookup incomplete for {domain}",
+                    description=desc,
+                    severity=SeverityLevel.LOW,
+                    confidence=0.6,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    source_tool="whois",
+                    recommended_fix="Verify RDAP connectivity and parser coverage for this TLD.",
+                ))
+                return findings
+
             expiry = output.get("expiration_date")
             expires_in = output.get("expires_in_days")
             if expires_in is None and expiry:
@@ -808,6 +883,7 @@ class FindingsNormalizer:
                 asset_name=asset.name,
                 evidence_path=evidence_metadata["path"],
                 evidence_hash=evidence_metadata["hash"],
+                source_tool="whois",
                 recommended_fix="Monitor domain expiration and registrar accuracy.",
             ))
 
@@ -943,6 +1019,10 @@ class FindingsNormalizer:
 
         if not findings:
             description = output.get("interpretation") or f"No actionable issues from {tool_name}."
+            if tool == "sublist3r":
+                subs = output.get("subdomains") or []
+                if not subs or "no subdomains" in description.lower():
+                    return findings
             findings.append(Finding(
                 title=f"{tool_name} scan completed on {asset.name}",
                 description=description,
@@ -1392,7 +1472,13 @@ class ReportGenerator:
             ))
 
         # 3. Create Executive Summary
-        severity_counts = self._count_findings_by_severity(findings)
+        active_findings = [
+            f for f in findings if f.verification_state != "conflicted"
+        ]
+        conflicted_findings = [
+            f for f in findings if f.verification_state == "conflicted"
+        ]
+        severity_counts = self._count_findings_by_severity(active_findings)
         risk_score = 10.0
         if severity_counts.get("critical", 0) > 0:
             risk_score = 2.0
@@ -1403,14 +1489,29 @@ class ReportGenerator:
         elif severity_counts.get("low", 0) > 0:
             risk_score = 8.0
             
-        # Get top 5 critical/high findings for summary
+        # Get top 5 critical/high findings for summary (exclude reconciled conflicts)
+        conflicted_titles = {f.title for f in conflicted_findings}
         key_findings = sorted(
-            [f for f in report_findings if f.severity in [ReportSeverity.CRITICAL, ReportSeverity.HIGH]],
+            [
+                rf for rf in report_findings
+                if rf.severity in [ReportSeverity.CRITICAL, ReportSeverity.HIGH]
+                and rf.title not in conflicted_titles
+            ],
             key=lambda x: x.severity.value
         )[:5]
 
+        overview = (
+            f"Security assessment conducted on {len(assets)} assets. "
+            f"Found {len(active_findings)} issues."
+        )
+        if conflicted_findings:
+            overview += (
+                f" {len(conflicted_findings)} reconciled cross-tool observation(s) "
+                "documented separately."
+            )
+
         exec_summary = ExecutiveSummary(
-            overview=f"Security assessment conducted on {len(assets)} assets. Found {len(findings)} issues.",
+            overview=overview,
             risk_score=risk_score,
             key_findings=key_findings,
             recommendations=[
@@ -1420,11 +1521,28 @@ class ReportGenerator:
         )
 
         # 4. Build Full Report Model
+        target = metadata.get("primary_target")
+        if not target and assets:
+            target = assets[0].value or assets[0].name
+        if not target:
+            target = "Unknown Target"
+
         full_report = FullReport(
-            target=assets[0].name if assets else "Unknown Target",
+            target=target,
             executive_summary=exec_summary,
             assets=asset_reports,
-            all_findings=report_findings
+            all_findings=report_findings,
+            reconciled_findings=[
+                ReportFinding(
+                    title=f.title,
+                    severity=severity_map.get(f.severity.value, ReportSeverity.INFO),
+                    description=f.description,
+                    remediation=f.recommended_fix,
+                    evidence=[f.evidence_path] if f.evidence_path else [],
+                    affected_assets=[f.asset_name] if f.asset_name else [],
+                )
+                for f in conflicted_findings
+            ],
         )
         
         # 5. Render Template
@@ -1472,25 +1590,51 @@ class ReportingManager:
             finally:
                 conn.close()
     
-    def get_findings_from_database(self) -> List[Finding]:
+    def get_findings_from_database(
+        self,
+        *,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> List[Finding]:
         """
         Retrieve findings from database.
-        
-        Returns:
-            List of findings from database
+
+        When run_id is provided, only findings tagged with that run are returned.
         """
         findings = []
         try:
             with self._connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, title, severity, confidence, asset_id, evidence_path,
-                           recommended_fix, created_at, description, evidence_hash,
-                           source_tool, verification_state, fingerprint, observation_count
-                    FROM findings
-                    ORDER BY severity, created_at DESC
-                """)
-                
+                if run_id:
+                    cursor.execute(
+                        """
+                        SELECT f.id, f.title, f.severity, f.confidence, f.asset_id,
+                               COALESCE(o.evidence_path, f.evidence_path),
+                               f.recommended_fix,
+                               COALESCE(o.observed_at, f.created_at),
+                               COALESCE(o.description, f.description),
+                               COALESCE(o.evidence_hash, f.evidence_hash),
+                               f.source_tool, f.verification_state, f.fingerprint,
+                               f.observation_count, o.run_id, o.step_id
+                        FROM finding_observations o
+                        JOIN findings f ON f.id = o.finding_id
+                        WHERE o.run_id = ?
+                        ORDER BY f.severity, o.observed_at DESC
+                        """,
+                        (run_id,),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT id, title, severity, confidence, asset_id, evidence_path,
+                               recommended_fix, created_at, description, evidence_hash,
+                               source_tool, verification_state, fingerprint, observation_count,
+                               run_id, step_id
+                        FROM findings
+                        ORDER BY severity, created_at DESC
+                        """
+                    )
+
                 rows = cursor.fetchall()
                 for row in rows:
                     finding = Finding(
@@ -1508,14 +1652,64 @@ class ReportingManager:
                         verification_state=row[11] or "indicator",
                         fingerprint=row[12],
                         observation_count=row[13] or 1,
+                        run_id=row[14],
+                        step_id=row[15],
                     )
                     findings.append(finding)
-                
+
                 self.logger.debug(f"Retrieved {len(findings)} findings from database")
-            
+
         except Exception as e:
             self.logger.error(f"Error retrieving findings from database: {e}")
-        
+
+        return findings
+
+    def get_findings_for_asset(
+        self,
+        asset_id: int,
+        *,
+        exclude_superseded: bool = True,
+    ) -> List[Finding]:
+        """Load canonical findings for an asset (used for cross-tool reconciliation)."""
+        findings: List[Finding] = []
+        try:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                sql = """
+                    SELECT id, title, severity, confidence, asset_id, evidence_path,
+                           recommended_fix, created_at, description, evidence_hash,
+                           source_tool, verification_state, fingerprint, observation_count,
+                           run_id, step_id
+                    FROM findings
+                    WHERE asset_id = ?
+                """
+                if exclude_superseded:
+                    sql += " AND verification_state != 'superseded'"
+                sql += " ORDER BY created_at DESC"
+                cursor.execute(sql, (asset_id,))
+                for row in cursor.fetchall():
+                    findings.append(
+                        Finding(
+                            id=row[0],
+                            title=row[1],
+                            severity=SeverityLevel(row[2]) if row[2] else SeverityLevel.MEDIUM,
+                            confidence=row[3] or 0.8,
+                            asset_id=row[4],
+                            evidence_path=row[5],
+                            recommended_fix=row[6] or "",
+                            created_at=row[7],
+                            description=row[8] or "",
+                            evidence_hash=row[9],
+                            source_tool=row[10] or "",
+                            verification_state=row[11] or "indicator",
+                            fingerprint=row[12],
+                            observation_count=row[13] or 1,
+                            run_id=row[14],
+                            step_id=row[15],
+                        )
+                    )
+        except Exception as e:
+            self.logger.error(f"Error loading findings for asset {asset_id}: {e}")
         return findings
     
     def get_assets_from_database(self) -> List[AssetModel]:
@@ -1547,14 +1741,68 @@ class ReportingManager:
             self.logger.error(f"Error retrieving assets from database: {e}")
         
         return assets
+
+    def get_assets_for_findings(self, findings: List[Finding]) -> List[AssetModel]:
+        """
+        Retrieve assets referenced by the given findings (run-scoped reporting).
+        """
+        asset_ids = sorted({f.asset_id for f in findings if f.asset_id})
+        if not asset_ids:
+            return []
+
+        assets: List[AssetModel] = []
+        try:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                placeholders = ",".join("?" * len(asset_ids))
+                cursor.execute(
+                    f"SELECT id, name, type, value FROM assets WHERE id IN ({placeholders}) ORDER BY name",
+                    asset_ids,
+                )
+                for row in cursor.fetchall():
+                    assets.append(
+                        AssetModel(
+                            id=row[0],
+                            name=row[1],
+                            type=row[2],
+                            value=row[3],
+                        )
+                    )
+        except Exception as e:
+            self.logger.error(f"Error retrieving assets for findings: {e}")
+
+        return assets
+
+    @staticmethod
+    def _primary_report_target(assets: List[AssetModel], findings: List[Finding]) -> str:
+        """Pick the best report target label from scoped assets and findings."""
+        if not assets:
+            return "Unknown Target"
+
+        counts: Dict[int, int] = {}
+        for finding in findings:
+            if finding.asset_id:
+                counts[finding.asset_id] = counts.get(finding.asset_id, 0) + 1
+
+        if counts:
+            primary_id = max(counts, key=lambda aid: (counts[aid], -aid))
+            primary = next((a for a in assets if a.id == primary_id), assets[0])
+        else:
+            primary = assets[0]
+
+        return primary.value or primary.name
     
     def save_findings_to_database(self, findings: List[Finding]) -> None:
         """
         Save findings to database with deduplication by fingerprint.
+        Appends a finding_observations row for every save (run-scoped history).
         """
+        if not findings:
+            return
         try:
             with self._connection() as conn:
                 cursor = conn.cursor()
+                observed_at = datetime.now().isoformat()
 
                 for finding in findings:
                     fingerprint = finding.fingerprint or self._finding_fingerprint(finding)
@@ -1565,11 +1813,17 @@ class ReportingManager:
                         INSERT INTO findings
                         (asset_id, title, severity, confidence, evidence_path,
                          recommended_fix, description, evidence_hash, source_tool,
-                         verification_state, fingerprint, observation_count)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         verification_state, fingerprint, observation_count, run_id, step_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(fingerprint) DO UPDATE SET
                             observation_count = observation_count + 1,
-                            confidence = MAX(findings.confidence, excluded.confidence)
+                            confidence = MAX(findings.confidence, excluded.confidence),
+                            evidence_path = excluded.evidence_path,
+                            evidence_hash = excluded.evidence_hash,
+                            description = excluded.description,
+                            verification_state = excluded.verification_state,
+                            run_id = COALESCE(excluded.run_id, findings.run_id),
+                            step_id = COALESCE(excluded.step_id, findings.step_id)
                         """,
                         (
                             finding.asset_id,
@@ -1584,6 +1838,36 @@ class ReportingManager:
                             finding.verification_state,
                             fingerprint,
                             finding.observation_count,
+                            finding.run_id,
+                            finding.step_id,
+                        ),
+                    )
+
+                    cursor.execute(
+                        "SELECT id FROM findings WHERE fingerprint = ?",
+                        (fingerprint,),
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        continue
+                    finding_id = row[0]
+                    finding.id = finding_id
+
+                    cursor.execute(
+                        """
+                        INSERT INTO finding_observations
+                        (finding_id, run_id, step_id, evidence_path, evidence_hash,
+                         description, observed_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            finding_id,
+                            finding.run_id,
+                            finding.step_id,
+                            finding.evidence_path,
+                            finding.evidence_hash,
+                            finding.description,
+                            observed_at,
                         ),
                     )
 
@@ -1605,29 +1889,29 @@ class ReportingManager:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
     
     def generate_assessment_report(self, format_type: ReportFormat = ReportFormat.JSON,
-                                 include_evidence: bool = True) -> str:
+                                 include_evidence: bool = True,
+                                 run_id: Optional[str] = None) -> str:
         """
         Generate comprehensive security assessment report.
-        
-        Args:
-            format_type: Desired report format
-            include_evidence: Whether to include evidence files
-            
-        Returns:
-            Generated report content
         """
         self.logger.info(f"Generating assessment report in {format_type.value} format")
-        
-        # Get data from database
-        findings = self.get_findings_from_database()
-        assets = self.get_assets_from_database()
-        
-        # Generate metadata
+
+        findings = self.get_findings_from_database(run_id=run_id)
+        if run_id:
+            assets = self.get_assets_for_findings(findings)
+        else:
+            assets = self.get_assets_from_database()
+
+        primary_target = self._primary_report_target(assets, findings)
+
         metadata = {
-            "scan_duration": "N/A",  # Would be calculated from orchestrator
+            "scan_duration": "N/A",
             "total_scans": len(findings),
             "report_format": format_type.value,
-            "include_evidence": include_evidence
+            "include_evidence": include_evidence,
+            "run_id": run_id,
+            "primary_target": primary_target,
+            "scoped_to_run": bool(run_id),
         }
         
         # Generate report

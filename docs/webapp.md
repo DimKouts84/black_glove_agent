@@ -79,6 +79,10 @@ During a chat turn, orchestration events stream over the WebSocket in real time:
 - **Sub-agents:** Events from `planner_agent`, `researcher_agent`, and `analyst_agent` are forwarded alongside `root_agent` activity
 - **Sidebar:** Desktop (`lg+`) shows a persistent LIVE ORCHESTRATION panel with newest events at the top; hidden on mobile/tablet
 - **Persistence:** Every event is stored in SQLite (`agent_events`). On return to a session, the UI hydrates from `GET /api/sessions/{id}/trace` and polls trace every 2s while a run is active
+- **Tool results:** The timeline shows the persisted summary text (including errors), not a generic success label. `tool_result` events include structured metadata when available: `tool`, `status` (`success` / `partial` / `error` / `not_applicable`), `warnings`, `coverage`, and `evidence_paths` (rendered in the Activity Timeline with status-aware styling)
+- **Findings:** `GET /api/findings` includes `description` and supports `?run_id=` (observation ledger) plus `?exclude_superseded=true` (default) to hide legacy false-positive rows
+- **Reports:** `POST /api/reports` scopes to the current run when `run_id` is supplied by the runtime; historical findings are not mixed into the default assessment report
+- **Run lifecycle:** `agent_runs.status` is `running` during a turn, then `completed`, `failed`, or `cancelled` (e.g. if the WebSocket disconnects mid-run)
 
 
 All settings editable from the web UI Settings page map to `ConfigModel` fields in `~/.homepentest/config.yaml`, managed by `ConfigService`.
@@ -91,7 +95,6 @@ All settings editable from the web UI Settings page map to `ConfigModel` fields 
 Key fields:
 - `llm_provider`, `llm_endpoint`, `llm_model`, `llm_api_key`
 - `require_approval` — toggle human-in-the-loop for risky tools
-- `authorized_networks`, `authorized_domains`, `blocked_targets`
 - `adapters` — per-adapter settings (e.g. nmap timeout)
 
 ## Security

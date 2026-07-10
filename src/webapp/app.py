@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent.db import init_db, run_migrations
+from agent.run_recovery import recover_stale_runs
 from webapp.routes import router as api_router
 from webapp.websocket import ws_router
 
@@ -19,6 +20,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 def create_app() -> FastAPI:
     init_db()
     run_migrations()
+    recover_stale_runs()
 
     app = FastAPI(
         title="Black Glove",

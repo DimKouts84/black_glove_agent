@@ -21,6 +21,8 @@ DISCOVERY_SKIP_MODULES = frozenset({
     "base",
     "domain_params",
     "url_params",
+    "rdap_client",
+    "crt_sh_client",
 })
 
 
@@ -240,14 +242,13 @@ class PluginManager:
     validation, and execution of adapters with proper error handling.
     """
     
-    def __init__(self, adapters_path: str = None, config: Dict[str, Any] = None, policy_engine = None):
+    def __init__(self, adapters_path: str = None, config: Dict[str, Any] = None):
         """
         Initialize the plugin manager.
         
         Args:
             adapters_path: Path to adapters directory (defaults to src/adapters)
             config: Plugin manager configuration
-            policy_engine: Optional policy engine for safety enforcement
         """
         self.logger = logging.getLogger("black_glove.plugin.manager")
         
@@ -258,7 +259,6 @@ class PluginManager:
             self.adapters_path = Path(adapters_path)
         
         self.config = config or {}
-        self.policy_engine = policy_engine  # NEW: Store policy engine for centralized enforcement
         self.adapter_manager = AdapterManager()
         self._discovered_adapters: Set[str] = set()
         
@@ -318,8 +318,7 @@ class PluginManager:
         """
         Execute an adapter with given parameters.
         
-        This method enforces safety policy checks (target validation and rate limiting)
-        before executing the adapter, ensuring consistent security across all execution paths.
+        Enforces exploit gating via tool_risk before executing the adapter.
         
         Args:
             adapter_name: Name of the adapter to execute
@@ -338,10 +337,6 @@ class PluginManager:
         exploit_err = check_exploit_gate(
             adapter_name,
             enable_exploit_adapters=bool(self.config.get("enable_exploit_adapters", False)),
-            require_lab_mode_for_exploits=bool(
-                self.config.get("require_lab_mode_for_exploits", True)
-            ),
-            lab_mode=bool(params.get("lab_mode", False)),
         )
         if exploit_err:
             from adapters.interface import AdapterResultStatus
@@ -358,62 +353,6 @@ class PluginManager:
                 error_message=f"BLOCKED: {exploit_err}",
             )
 
-        # CENTRALIZED POLICY ENFORCEMENT
-        if self.policy_engine:
-            # 1. Extract target from parameters (try multiple common keys)
-            target = (
-                params.get("target") or 
-                params.get("domain") or 
-                params.get("host") or 
-                params.get("url") or
-                params.get("target_url")
-            )
-            
-            # 2. Validate target if present
-            if target:
-                from .models import Asset
-                from agent.audit import write_audit
-
-                asset = Asset(target=target, tool_name=adapter_name, parameters=params)
-                
-                if not self.policy_engine.validate_asset(asset):
-                    self.logger.warning(f"BLOCKED: Policy violation for target {target}")
-                    write_audit(
-                        "policy_block",
-                        {
-                            "adapter": adapter_name,
-                            "target": target,
-                            "reason": "unauthorized_target",
-                        },
-                    )
-                    from adapters.interface import AdapterResultStatus
-                    return AdapterResult(
-                        status=AdapterResultStatus.ERROR,
-                        data=None,
-                        metadata={"error": "Policy violation"},
-                        error_message=f"BLOCKED: Target '{target}' is not authorized."
-                    )
-            
-            # 3. Check rate limits (atomic acquire)
-            if not self.policy_engine.rate_limiter.acquire_and_record(adapter_name):
-                self.logger.warning(f"BLOCKED: Rate limit exceeded for {adapter_name}")
-                from agent.audit import write_audit
-
-                write_audit(
-                    "policy_block",
-                    {
-                        "adapter": adapter_name,
-                        "reason": "rate_limit_exceeded",
-                    },
-                )
-                from adapters.interface import AdapterResultStatus
-                return AdapterResult(
-                    status=AdapterResultStatus.ERROR,
-                    data=None,
-                    metadata={"error": "Rate limit exceeded"},
-                    error_message=f"BLOCKED: Rate limit exceeded for '{adapter_name}'."
-                )
-
         # Load adapter if not already loaded
         if adapter_name not in self.adapter_manager.list_loaded_adapters():
             self.load_adapter(adapter_name, self._get_adapter_config(adapter_name))
@@ -425,8 +364,6 @@ class PluginManager:
             adapter.validate_params(params)
         except Exception as e:
             raise ValueError(f"Invalid parameters for adapter {adapter_name}: {e}")
-
-        # Rate limit already recorded atomically at admission
 
         # Execute adapter
         try:
@@ -635,19 +572,18 @@ class PluginManager:
 
 
 # Factory function for creating plugin manager instances
-def create_plugin_manager(adapters_path: str = None, config: Dict[str, Any] = None, policy_engine = None) -> PluginManager:
+def create_plugin_manager(adapters_path: str = None, config: Dict[str, Any] = None) -> PluginManager:
     """
     Factory function to create a plugin manager instance.
     
     Args:
         adapters_path: Optional path to adapters directory
         config: Optional configuration dictionary
-        policy_engine: Optional policy engine for safety enforcement
         
     Returns:
         PluginManager: Configured plugin manager instance
     """
-    return PluginManager(adapters_path, config, policy_engine)
+    return PluginManager(adapters_path, config)
 
 
 # Context manager for plugin manager

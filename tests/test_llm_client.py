@@ -138,6 +138,8 @@ class TestLLMClient:
         # Check that headers were set
         assert "Authorization" in client.session.headers
         assert client.session.headers["Authorization"] == "Bearer test-key"
+        assert client.session.headers["HTTP-Referer"] == "https://github.com/DimKouts84/black_glove_agent"
+        assert client.session.headers["X-Title"] == "Black Glove Pentest Agent"
     
     def test_prepare_messages(self):
         """Test message preparation for API calls."""
@@ -220,9 +222,34 @@ class TestLLMClient:
         with pytest.raises(LLMResponseError, match="Unsupported response format"):
             client._parse_response({"invalid": "format"})
         
-        # Test missing required fields
-        with pytest.raises(LLMResponseError, match="Failed to parse response"):
+        # Test OpenRouter/API error object
+        with pytest.raises(LLMResponseError, match="API error: Rate limited"):
+            client._parse_response({"error": {"message": "Rate limited", "code": 429}})
+        
+        # Test empty choices array
+        with pytest.raises(LLMResponseError, match="empty choices array"):
             client._parse_response({"choices": []})
+
+    def test_parse_null_content_reasoning_model(self):
+        """Reasoning models may return message.content=null; normalize to empty string."""
+        config = LLMConfig(
+            provider=LLMProvider.OPENROUTER,
+            endpoint="https://openrouter.ai/api/v1",
+            model="moonshotai/kimi-k2.5",
+        )
+        client = LLMClient(config)
+
+        response_data = {
+            "choices": [{
+                "message": {"role": "assistant", "content": None},
+                "finish_reason": "stop",
+            }],
+            "model": "moonshotai/kimi-k2.5",
+        }
+
+        result = client._parse_response(response_data)
+        assert result.content == ""
+        assert result.finish_reason == "stop"
 
 
 class TestLLMClientAPI:

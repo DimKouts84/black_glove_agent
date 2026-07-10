@@ -392,7 +392,7 @@ def run_guided_setup():
             validator = create_asset_validator(config)
             validation_result = validator.validate_asset(asset)
             
-            if not validation_result.is_authorized:
+            if validation_result.status != ValidationStatus.VALID:
                 console.print(f"[red]❌ Asset validation failed: {validation_result.message}[/red]")
                 if validation_result.suggestions:
                     console.print("[yellow]💡 Suggestions:[/yellow]")
@@ -587,7 +587,7 @@ def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, ada
             console.print("[red]❌ No assets found. Add assets first using 'agent add-asset'[/red]")
             return
     
-    # Add assets to orchestrator - THIS IS CRITICAL FOR ACTIVE/LAB MODES
+    # Add assets to orchestrator - THIS IS CRITICAL FOR ACTIVE MODE
     for asset_model in assets:
         from .models import Asset
         agent_asset = Asset(
@@ -609,8 +609,8 @@ def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, ada
                 from .orchestrator import ScanMode as _ScanMode
             except Exception:
                 _ScanMode = None  # type: ignore
-            if mode_lower == "lab" and _ScanMode is not None:
-                steps = orchestrator.plan_active_scans(_ScanMode.LAB)
+            if mode_lower == "active" and _ScanMode is not None:
+                steps = orchestrator.plan_active_scans(_ScanMode.ACTIVE)
             else:
                 steps = orchestrator.plan_active_scans()
             if adapters:
@@ -700,54 +700,8 @@ def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, ada
                 progress.advance(task)
         
         console.print(f"[green]✅ Active scanning completed with {executed_count} successful steps[/green]")
-    
-    elif mode.lower() == "lab":
-        console.print("[purple]🧪 Starting lab mode reconnaissance (enhanced scanning)...[/purple]")
-        # In lab mode, more comprehensive scanning
-        steps = orchestrator.plan_active_scans(ScanMode.LAB)
-        if adapters:
-            _filters = [s.strip().lower() for s in adapters.split(",") if s.strip()]
-            steps = [
-                s for s in steps
-                if (
-                    (str(s.get("tool", "")).lower() if hasattr(s, "get") else str(getattr(s, "tool", "")).lower())
-                ) in _filters
-            ]
-        console.print(f"[blue]📋 Planned {len(steps)} lab scanning steps[/blue]")
-        
-        executed_count = 0
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("Executing lab scans...", total=len(steps))
-            
-            for i, step in enumerate(steps, 1):
-                step_tool_display = (str(step.get("tool", "unknown")) if hasattr(step, "get") else str(getattr(step, "tool", "unknown")))
-                progress.update(task, description=f"Executing lab step {i}/{len(steps)}: {step_tool_display}")
-                # Normalize dict-step into WorkflowStep when needed
-                if hasattr(step, "get"):
-                    step_obj = WorkflowStep(
-                        name=step.get("name") or f"lab_step_{i}",
-                        description=step.get("description", ""),
-                        tool=step.get("tool"),
-                        target=step.get("target"),
-                        parameters=step.get("params") or step.get("parameters") or {},
-                        priority=step.get("priority", i)
-                    )
-                else:
-                    step_obj = step
-                result = orchestrator.execute_scan_step(step_obj, approval_required=False)
-                if result:
-                    executed_count += 1
-                progress.advance(task)
-        
-        console.print(f"[green]✅ Lab scanning completed with {executed_count} successful steps[/green]")
     else:
-        console.print(f"[red]❌ Invalid recon mode: {mode}. Use 'passive', 'active', or 'lab'[/red]")
+        console.print(f"[red]❌ Invalid recon mode: {mode}. Use 'passive' or 'active'[/red]")
         return
     
     # Generate report with progress
@@ -796,11 +750,11 @@ def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, ada
 @app.command()
 @global_exception_handler
 def recon(
-    mode: str = typer.Argument(..., help="Recon mode: passive, active, or lab"),
+    mode: str = typer.Argument(..., help="Recon mode: passive or active"),
     asset: str = typer.Option(None, "--asset", "-a", help="Asset name to scan"),
     preset: str = typer.Option("default", "--preset", "-p", help="Scan preset to use"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Plan/validate only; do not execute"),
-    adapters: Optional[str] = typer.Option(None, "--adapters", "-A", help="Comma-separated adapter names to execute (active/lab only)")
+    adapters: Optional[str] = typer.Option(None, "--adapters", "-A", help="Comma-separated adapter names to execute (active only)")
 ):
     """
     Run reconnaissance on specified assets.
@@ -882,7 +836,7 @@ def _add_asset_impl(name: str, type: str, value: str):
     valid_types = ["host", "domain", "vm"]
     if type not in valid_types:
         console.print(f"[red]❌ Invalid asset type. Must be one of: {', '.join(valid_types)}[/red]")
-        return
+        raise typer.Exit(1)
     
     # Add asset to database with validation
     try:
@@ -901,13 +855,13 @@ def _add_asset_impl(name: str, type: str, value: str):
         validator = create_asset_validator(config)
         validation_result = validator.validate_asset(asset)
         
-        if not validation_result.is_authorized:
+        if validation_result.status != ValidationStatus.VALID:
             console.print(f"[red]❌ Asset validation failed: {validation_result.message}[/red]")
             if validation_result.suggestions:
                 console.print("[yellow]💡 Suggestions:[/yellow]")
                 for suggestion in validation_result.suggestions:
                     console.print(f"   • {suggestion}")
-            return
+            raise typer.Exit(1)
         
         console.print(f"[green]✅ {validation_result.message}[/green]")
         
@@ -917,8 +871,11 @@ def _add_asset_impl(name: str, type: str, value: str):
         
         console.print(f"[green]✅ Asset added successfully with ID: {asset_id}[/green]")
         
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]❌ Failed to add asset: {e}[/red]")
+        raise typer.Exit(1)
 
 @app.command()
 @global_exception_handler

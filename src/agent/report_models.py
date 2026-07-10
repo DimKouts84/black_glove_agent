@@ -48,3 +48,4 @@ class FullReport(BaseModel):
     executive_summary: ExecutiveSummary
     assets: List[AssetReport]
     all_findings: List[Finding]
+    reconciled_findings: List[Finding] = Field(default_factory=list)

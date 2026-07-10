@@ -65,22 +65,23 @@ The demo script provides detailed output showing each component's functionality 
    agent approve --id <scan-id>
    ```
 
-## Lab Testing Workflow
+## Exploit Tool Workflow
 
-1. **Enable lab mode for exploit testing:**
+1. **Enable exploit adapters in config:**
    ```bash
-   export LAB_MODE=true
-   agent init  # Reinitialize with lab mode enabled
+   # Edit ~/.homepentest/config.yaml or use the web Settings UI
+   enable_exploit_adapters: true
    ```
 
-2. **Add lab VM as asset:**
+2. **Add target as asset:**
    ```bash
    agent add-asset --name lab-vm --type vm --value 192.168.1.100
    ```
 
-3. **Run vulnerability scan:**
+3. **Run vulnerability scan via chat or active recon:**
    ```bash
-   agent scan vuln --asset lab-vm --lab-mode
+   black-glove chat
+   # or: black-glove recon active
    ```
 
 ## Configuration Management
@@ -127,7 +128,7 @@ The demo script provides detailed output showing each component's functionality 
 - **Legal Notice**: Always displayed on first run
 - **Human Approval**: Required for all active scans
 - **Rate Limiting**: Configurable per-tool limits
-- **Lab Mode**: Required for exploit tools
+- **Exploit adapters**: Opt-in via `enable_exploit_adapters` in config
 - **Audit Logging**: All actions are logged
 - **Container Sandboxing**: Tools run in isolated containers
 

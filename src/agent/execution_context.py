@@ -27,6 +27,14 @@ class ActivityEvent:
     worker_instance_id: Optional[str] = None
     parallel_group: Optional[str] = None
     params: Optional[Dict[str, Any]] = None
+    tool: Optional[str] = None
+    status: Optional[str] = None
+    evidence_paths: Optional[list] = None
+    warnings: Optional[list] = None
+    coverage: Optional[Dict[str, Any]] = None
+    metrics: Optional[Dict[str, Any]] = None
+    result_digest: Optional[str] = None
+    error: Optional[str] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -43,6 +51,14 @@ class ActivityEvent:
             "worker_instance_id",
             "parallel_group",
             "params",
+            "tool",
+            "status",
+            "evidence_paths",
+            "warnings",
+            "coverage",
+            "metrics",
+            "result_digest",
+            "error",
         ):
             value = getattr(self, key)
             if value is not None:

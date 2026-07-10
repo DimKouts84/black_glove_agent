@@ -12,6 +12,12 @@ export interface ActivityEvent {
   approval_id?: string;
   run_id?: string;
   ts?: string;
+  status?: string;
+  evidence_paths?: string[];
+  warnings?: string[];
+  coverage?: Record<string, unknown>;
+  result_digest?: string;
+  error?: string;
 }
 
 export interface ChatMessage {
@@ -19,10 +25,25 @@ export interface ChatMessage {
   content: string;
 }
 
-function eventKey(e: ActivityEvent): string {
-  return e.id != null
-    ? `id:${e.id}`
-    : `${e.run_id || ''}-${e.ts || ''}-${e.type}-${e.agent}-${e.content}`;
+const TOOL_RESULT_FALLBACK = 'Tool execution completed';
+
+export function normalizeActivityContent(e: ActivityEvent): string {
+  if (e.type === 'tool_result' && !e.content) {
+    return TOOL_RESULT_FALLBACK;
+  }
+  return e.content || '';
+}
+
+function semanticKey(e: ActivityEvent): string {
+  return `${e.run_id || ''}-${e.type}-${e.agent || ''}-${normalizeActivityContent(e)}`;
+}
+
+export function shouldPollTraceWhileActing(
+  acting: boolean,
+  connected: boolean,
+  sessionId: string | null,
+): boolean {
+  return !!(acting && sessionId && !connected);
 }
 
 export function traceToActivities(runs: RunTrace[]): ActivityEvent[] {
@@ -44,27 +65,54 @@ function traceEventToActivity(e: TraceEvent, runId: string): ActivityEvent {
     params: e.params,
     ts: e.ts,
     run_id: runId,
-    tool: e.type === 'tool_call' ? e.content : undefined,
+    tool: e.tool ?? (e.type === 'tool_call' ? e.content : undefined),
+    status: e.status,
+    evidence_paths: e.evidence_paths,
+    warnings: e.warnings,
+    coverage: e.coverage,
+    result_digest: e.result_digest,
+    error: e.error,
   };
 }
 
 export function mergeActivities(existing: ActivityEvent[], incoming: ActivityEvent[]): ActivityEvent[] {
-  const seen = new Set(existing.map(eventKey));
-  const merged = [...existing];
-  for (const e of incoming) {
-    const key = eventKey(e);
-    if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(e);
+  const bySemantic = new Map<string, ActivityEvent>();
+
+  for (const e of [...existing, ...incoming]) {
+    const key = semanticKey(e);
+    const prev = bySemantic.get(key);
+    if (!prev || (e.id != null && prev.id == null)) {
+      bySemantic.set(key, e);
     }
   }
-  return merged.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+
+  return [...bySemantic.values()].sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
 }
+
+export function dedupeActivities(events: ActivityEvent[]): ActivityEvent[] {
+  return mergeActivities([], events);
+}
+
+function filterByRunId(events: ActivityEvent[], runId: string | null): ActivityEvent[] {
+  if (!runId) return events;
+  return events.filter((e) => !e.run_id || e.run_id === runId);
+}
+
+const ORCHESTRATION_TYPES = [
+  'thinking',
+  'tool_call',
+  'tool_result',
+  'answer',
+  'warning',
+  'approval_resolved',
+] as const;
 
 export function useChatSocket(sessionId: string | null) {
   const wsRef = useRef<WebSocket | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const loadTraceRef = useRef<(() => Promise<void>) | null>(null);
+  const connectedRef = useRef(false);
+  const activeRunIdRef = useRef<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [acting, setActing] = useState(false);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
@@ -75,13 +123,25 @@ export function useChatSocket(sessionId: string | null) {
     if (!sessionId) return;
     try {
       const trace = await api.getTrace(sessionId);
-      const fromTrace = traceToActivities(trace.runs || []);
-      setActivities((prev) => mergeActivities(prev, fromTrace));
-      const hasRunning = (trace.runs || []).some((r) => r.status === 'running');
+      const runs = trace.runs || [];
+      let fromTrace = traceToActivities(runs);
+      const runningRun = runs.find((r) => r.status === 'running');
+      const hasRunning = !!runningRun;
+
+      if (!activeRunIdRef.current && runningRun) {
+        activeRunIdRef.current = runningRun.id;
+      }
+      fromTrace = filterByRunId(fromTrace, activeRunIdRef.current);
+
       if (hasRunning) {
         setActing(true);
+        if (!connectedRef.current) {
+          setActivities((prev) => mergeActivities(prev, fromTrace));
+        }
       } else {
         setActing(false);
+        activeRunIdRef.current = null;
+        setActivities(dedupeActivities(fromTrace));
         const history = await api.getMessages(sessionId);
         setMessages(
           history.messages.map((m) => ({
@@ -109,17 +169,25 @@ export function useChatSocket(sessionId: string | null) {
     const ws = new WebSocket(`${proto}://${host}/ws/chat/${sessionId}`);
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
+    ws.onopen = () => {
+      connectedRef.current = true;
+      setConnected(true);
+    };
+    ws.onclose = () => {
+      connectedRef.current = false;
+      setConnected(false);
+    };
     ws.onmessage = (ev) => {
       const data = JSON.parse(ev.data) as ActivityEvent & { type: string; content?: string };
       if (data.type === 'status' && data.content === 'acting') {
+        activeRunIdRef.current = null;
         setActing(true);
         setActivities([]);
         return;
       }
       if (data.type === 'assistant_message') {
         setActing(false);
+        activeRunIdRef.current = null;
         setMessages((prev) => [...prev, { role: 'assistant', content: data.content || '' }]);
         void loadTraceRef.current?.();
         return;
@@ -130,11 +198,15 @@ export function useChatSocket(sessionId: string | null) {
       }
       if (data.type === 'error') {
         setActing(false);
+        activeRunIdRef.current = null;
         setMessages((prev) => [...prev, { role: 'system', content: `Error: ${data.content}` }]);
         void loadTraceRef.current?.();
         return;
       }
-      if (['thinking', 'tool_call', 'tool_result', 'answer', 'warning', 'approval_resolved'].includes(data.type)) {
+      if (ORCHESTRATION_TYPES.includes(data.type as (typeof ORCHESTRATION_TYPES)[number])) {
+        if (data.run_id && !activeRunIdRef.current) {
+          activeRunIdRef.current = data.run_id;
+        }
         setActivities((prev) => mergeActivities(prev, [data]));
       }
     };
@@ -142,7 +214,7 @@ export function useChatSocket(sessionId: string | null) {
   }, [sessionId]);
 
   useEffect(() => {
-    if (acting && sessionId) {
+    if (shouldPollTraceWhileActing(acting, connected, sessionId)) {
       pollRef.current = setInterval(() => {
         void loadTraceRef.current?.();
       }, 2000);
@@ -156,7 +228,7 @@ export function useChatSocket(sessionId: string | null) {
         pollRef.current = null;
       }
     };
-  }, [acting, sessionId]);
+  }, [acting, connected, sessionId]);
 
   const sendMessage = useCallback((content: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;

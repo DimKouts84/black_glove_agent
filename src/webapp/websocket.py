@@ -15,6 +15,16 @@ from webapp.deps import get_deps_runtime, get_deps_session_manager
 logger = logging.getLogger("black_glove.webapp.ws")
 ws_router = APIRouter()
 
+# Keep background turn tasks alive after WebSocket handler exits
+_detached_turns: set[asyncio.Task] = set()
+
+
+def _spawn_detached(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _detached_turns.add(task)
+    task.add_done_callback(_detached_turns.discard)
+    return task
+
 
 def _format_output(output: Any) -> str:
     if isinstance(output, str):
@@ -42,6 +52,7 @@ def _format_output(output: Any) -> str:
 
 def _activity_payload(event: Dict[str, Any]) -> Dict[str, Any]:
     return {
+        "id": event.get("id"),
         "type": event.get("type", "activity"),
         "agent": event.get("agent"),
         "content": event.get("content"),
@@ -49,6 +60,7 @@ def _activity_payload(event: Dict[str, Any]) -> Dict[str, Any]:
         "tool": event.get("tool"),
         "approved": event.get("approved"),
         "run_id": event.get("run_id"),
+        "ts": event.get("ts"),
     }
 
 
@@ -102,6 +114,7 @@ async def chat_websocket(websocket: WebSocket, session_id: str):
     pending_approval: Dict[str, asyncio.Future] = {}
     activity_queue: asyncio.Queue = asyncio.Queue()
     sender_task: Optional[asyncio.Task] = None
+    active_turn_task: Optional[asyncio.Task] = None
 
     async def activity_sender() -> None:
         while True:
@@ -121,9 +134,75 @@ async def chat_websocket(websocket: WebSocket, session_id: str):
     sender_task = asyncio.create_task(activity_sender())
 
     def on_activity(event: Dict[str, Any]) -> None:
-        if not connected.is_set():
-            return
         activity_queue.put_nowait(_activity_payload(event))
+
+    async def approval_callback(tool_name: str, params: dict) -> bool:
+        approval_id = f"{tool_name}_{id(params)}"
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        pending_approval[approval_id] = future
+        sent = await _safe_send_json(websocket, {
+            "type": "approval_request",
+            "approval_id": approval_id,
+            "tool": tool_name,
+            "params": params,
+            "content": f"Approve execution of {tool_name}?",
+        }, connected)
+        if not sent:
+            pending_approval.pop(approval_id, None)
+            return False
+        try:
+            result = await asyncio.wait_for(future, timeout=300.0)
+            return bool(result)
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            pending_approval.pop(approval_id, None)
+
+    async def _run_turn(content: str, history) -> None:
+        nonlocal active_turn_task
+        try:
+            result = await runtime.run_turn(
+                session_id,
+                content,
+                history=history,
+                on_activity=on_activity,
+                approval_callback=approval_callback,
+            )
+            await activity_queue.join()
+            final_output = result.get("final_answer", result)
+            answer_text = _format_output(final_output)
+            if not answer_text.strip():
+                answer_text = "No response generated."
+
+            sm.save_message(
+                session_id,
+                "assistant",
+                answer_text,
+                metadata={"type": "response", "is_final": True},
+            )
+            if connected.is_set():
+                await _safe_send_json(websocket, {
+                    "type": "assistant_message",
+                    "content": answer_text,
+                }, connected)
+            else:
+                logger.info(
+                    "Client disconnected before assistant reply for session %s; "
+                    "message persisted",
+                    session_id,
+                )
+        except asyncio.CancelledError:
+            logger.info("Chat turn cancelled for session %s", session_id)
+            raise
+        except Exception as exc:
+            logger.exception("Chat turn failed")
+            if connected.is_set():
+                await _safe_send_json(
+                    websocket, {"type": "error", "content": str(exc)}, connected
+                )
+        finally:
+            active_turn_task = None
 
     try:
         while True:
@@ -155,83 +234,51 @@ async def chat_websocket(websocket: WebSocket, session_id: str):
                 if not content:
                     continue
 
+                if active_turn_task is not None and not active_turn_task.done():
+                    await _safe_send_json(
+                        websocket,
+                        {
+                            "type": "error",
+                            "content": "A scan is already in progress for this session.",
+                        },
+                        connected,
+                    )
+                    continue
+
                 sm.update_session_activity(session_id)
                 history = sm.load_session(session_id)
-                sm.save_message(session_id, "user", content, metadata={"type": "user_input"})
+                sm.save_message(
+                    session_id, "user", content, metadata={"type": "user_input"}
+                )
 
                 await _safe_send_json(
                     websocket, {"type": "status", "content": "acting"}, connected
                 )
 
-                async def approval_callback(tool_name: str, params: dict) -> bool:
-                    approval_id = f"{tool_name}_{id(params)}"
-                    loop = asyncio.get_event_loop()
-                    future: asyncio.Future = loop.create_future()
-                    pending_approval[approval_id] = future
-                    sent = await _safe_send_json(websocket, {
-                        "type": "approval_request",
-                        "approval_id": approval_id,
-                        "tool": tool_name,
-                        "params": params,
-                        "content": f"Approve execution of {tool_name}?",
-                    }, connected)
-                    if not sent:
-                        pending_approval.pop(approval_id, None)
-                        return False
-                    try:
-                        result = await asyncio.wait_for(future, timeout=300.0)
-                        return bool(result)
-                    except asyncio.TimeoutError:
-                        return False
-                    finally:
-                        pending_approval.pop(approval_id, None)
-
-                try:
-                    result = await runtime.run_turn(
-                        session_id,
-                        content,
-                        history=history,
-                        on_activity=on_activity,
-                        approval_callback=approval_callback,
-                    )
-                    await activity_queue.join()
-                    final_output = result.get("final_answer", result)
-                    answer_text = _format_output(final_output)
-                    if not answer_text.strip():
-                        answer_text = "No response generated."
-
-                    sm.save_message(
-                        session_id, "assistant", answer_text,
-                        metadata={"type": "response", "is_final": True},
-                    )
-                    if connected.is_set():
-                        await _safe_send_json(websocket, {
-                            "type": "assistant_message",
-                            "content": answer_text,
-                        }, connected)
-                    else:
-                        logger.info(
-                            "Client disconnected before assistant reply for session %s",
-                            session_id,
-                        )
-                except Exception as exc:
-                    logger.exception("Chat turn failed")
-                    if connected.is_set():
-                        await _safe_send_json(
-                            websocket, {"type": "error", "content": str(exc)}, connected
-                        )
+                active_turn_task = _spawn_detached(_run_turn(content, history))
 
     except WebSocketDisconnect:
         connected.clear()
-        logger.info("WebSocket disconnected for session %s", session_id)
-    except Exception as exc:
+        logger.info(
+            "WebSocket disconnected for session %s; background turn continues if active",
+            session_id,
+        )
+    except Exception:
         logger.exception("WebSocket error")
         if connected.is_set():
             await _safe_send_json(
-                websocket, {"type": "error", "content": str(exc)}, connected
+                websocket, {"type": "error", "content": "WebSocket error"}, connected
             )
     finally:
         connected.clear()
+        if active_turn_task is not None and not active_turn_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(active_turn_task), timeout=300.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.info(
+                    "Background turn for session %s did not finish before handler exit",
+                    session_id,
+                )
         if sender_task is not None:
             await activity_queue.join()
             activity_queue.put_nowait(None)

@@ -40,7 +40,6 @@ class BoundedWorkerPool:
         safe_tools: Optional[Set[str]] = None,
         llm_factory: Optional[LLMClientFactory] = None,
         enable_exploit_adapters: bool = False,
-        require_lab_mode_for_exploits: bool = True,
     ):
         self.plugin_manager = plugin_manager
         self.limits = limits
@@ -48,7 +47,6 @@ class BoundedWorkerPool:
         self.safe_tools = safe_tools or set()
         self.llm_factory = llm_factory
         self.enable_exploit_adapters = enable_exploit_adapters
-        self.require_lab_mode_for_exploits = require_lab_mode_for_exploits
 
         self._global_sem = asyncio.Semaphore(limits.max_concurrent_global)
         self._phase_sems: Dict[str, asyncio.Semaphore] = {
@@ -113,8 +111,6 @@ class BoundedWorkerPool:
         self,
         task: WorkerTask,
         ctx: ExecutionContext,
-        *,
-        lab_mode: bool = False,
     ) -> WorkerResult:
         worker_ctx = WorkerContext.create(
             ctx,
@@ -163,7 +159,7 @@ class BoundedWorkerPool:
         async with self._acquire_slots(task):
             try:
                 envelope, structured = await asyncio.wait_for(
-                    self._run_worker(task, worker_ctx, lab_mode=lab_mode),
+                    self._run_worker(task, worker_ctx),
                     timeout=task.max_wall_seconds,
                 )
                 status = "success" if envelope.status == "success" else "error"
@@ -223,8 +219,6 @@ class BoundedWorkerPool:
         self,
         task: WorkerTask,
         worker_ctx: WorkerContext,
-        *,
-        lab_mode: bool,
     ) -> tuple[ToolResultEnvelope, Optional[Dict[str, Any]]]:
         if task.kind == WorkerKind.RESEARCHER and self.llm_factory:
             return await create_researcher_worker(

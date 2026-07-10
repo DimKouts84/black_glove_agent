@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -193,6 +194,16 @@ class TestWebAPI:
                 assert turn_started.wait(timeout=2.0)
                 ws.close()
                 assert turn_finished.wait(timeout=5.0)
+
+        deadline = time.time() + 3.0
+        roles: list = []
+        while time.time() < deadline:
+            r = client.get(f"/api/sessions/{sid}/messages")
+            assert r.status_code == 200
+            roles = [m["role"] for m in r.json()["messages"]]
+            if "assistant" in roles:
+                break
+            time.sleep(0.05)
 
         r = client.get(f"/api/sessions/{sid}/messages")
         assert r.status_code == 200

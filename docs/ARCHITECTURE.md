@@ -44,7 +44,6 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 ### 2. Agent Runtime (`src/agent/runtime.py`)
 - **Purpose**: Shared assembly layer for CLI and Web UI
 - **Responsibilities**:
-  - Wire `PolicyEngine` into `PluginManager` on every path
   - Build `ToolRegistry`, sub-agents, and root `AgentExecutor`
   - Expose `WorkGraphExecutor` for governed multi-step scans
   - Persist run traces (`agent_runs` / `agent_events`) and step summaries
@@ -56,14 +55,14 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 - **Purpose**: Deterministic execution engine for pentest steps
 - **Responsibilities**:
   - Enforce phase gating (`passive → active → credential/exploit`)
-  - Apply policy, exploit gates, and approval before adapter calls
+  - Apply exploit gates and approval before adapter calls
   - Checkpoint graphs to SQLite (`engagements`, `work_graphs`)
   - Write append-only audit events and cross-turn step summaries
 - **Related modules**:
   - `work_graph.py`: Pydantic models (`Engagement`, `WorkGraph`, `WorkStep`)
   - `engagement_store.py`: persistence and history reload
   - `tool_risk.py`: risk classification and phase rules
-  - `target_scope.py`: fail-closed target authorization
+  - `target_scope.py`: host/domain normalization utilities
   - `audit.py`: `audit_log` writer
   - `tool_result.py`: structured `ToolResultEnvelope` for agent context
 
@@ -131,7 +130,6 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - JSON schema for inputs/outputs
   - Two-layer input sanitization
   - Local process execution with `ProcessRunner`
-  - Rate limiting enforcement
 - **Implemented Base Classes**:
   - `AdapterInterface`: Abstract base class defining adapter contract
   - `BaseAdapter`: Common functionality for all adapters
@@ -159,25 +157,12 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - **Persistence**: Stores vector data locally (default: `~/.homepentest/chroma_db` or configured `rag_db_path`)
   - **Collection Management**: Manages document collections for different contexts
 
-### 8. Policy Engine (`src/agent/policy_engine.py`)
-- **Purpose**: Enforce safety and compliance rules
+### 8. Safety Controls (`src/agent/tool_risk.py`, `src/agent/executor.py`)
+- **Purpose**: Enforce phase, exploit, and approval gates before adapter execution
 - **Controls**:
-  - Rate limiting per adapter
-  - Private IP range restrictions
-  - Exploit tool gating
-  - Lab mode enforcement
-  - Human approval requirements
-- **Key Components**:
-  - `RateLimiter`: Implements per-adapter and global rate limiting
-  - `TargetValidator`: Validates scan targets against asset lists
-  - `PolicyRule`: Configurable safety policy definitions
-  - `PolicyViolation`: Standardized violation reporting
-- **Features**:
-  - Configurable rate limiting windows and thresholds
-  - IP network and domain authorization validation
-  - Exploit permission management with lab mode
-  - Comprehensive audit logging of violations
-  - Real-time rate monitoring and reporting
+  - Exploit tool gating via `check_exploit_gate` (`enable_exploit_adapters`)
+  - Human approval requirements (`require_approval`)
+  - Phase rules (`phase_allows_tool`)
 
 ### 9. Evidence Store (`src/utils/evidence_store.py`)
 - **Purpose**: Manage raw tool output storage
@@ -197,13 +182,13 @@ User → CLI → Orchestrator → Database → Confirmation
 ### 2. Agentic Chat Workflow
 ```
 User → CLI/Web → AgentRuntime → Root Executor → LLM →
-Tool Registry → PolicyEngine → Adapter → Findings DB
+Tool Registry → tool_risk / approval → Adapter → Findings DB
 ```
 
 ### 3. Governed Scan Workflow
 ```
 Planner → ScanPlan → PlanValidator → WorkGraph → WorkGraphExecutor →
-BoundedWorkerPool → Policy/Approval → Adapter/Researcher/Analyst workers →
+BoundedWorkerPool → Approval/exploit gates → Adapter/Researcher/Analyst workers →
 Reducer (fan-in) → Evidence/Findings → audit_log
 ```
 
@@ -239,10 +224,10 @@ Policy/Tool/Approval events → audit.write_audit() → audit_log table
 ### Process Isolation
 Adapters execute as local subprocesses via `ProcessRunner` (`shell=False`, argument sanitization, timeouts). Docker is optional metadata only; containers are not required for the default execution path.
 
-### Lab Mode
-- **When**: Exploit tools and high-risk operations
-- **What**: Requires explicit lab environment flag
-- **Implementation**: Environment variable and config setting
+### Exploit Adapter Gating
+- **When**: Exploit and credential-class tools (`sqli_scanner`, `web_vuln_scanner`, `credential_tester`)
+- **What**: Requires `enable_exploit_adapters: true` in config
+- **Implementation**: `check_exploit_gate` in `tool_risk.py` and `PluginManager.run_adapter`
 
 ## Configuration Management
 
@@ -286,7 +271,7 @@ Adapters execute as local subprocesses via `ProcessRunner` (`shell=False`, argum
 ### Access Controls
 - **File permissions**: User-only read/write
 - **Database access**: Application-only
-- **Network access**: Controlled by policy engine
+- **Network access**: User is responsible for legal authorization of targets
 
 ## Extensibility
 
@@ -302,7 +287,7 @@ Adapters execute as local subprocesses via `ProcessRunner` (`shell=False`, argum
 3. Test with sample inputs
 
 ### New Safety Controls
-1. Add rules to policy engine
+1. Add rules to `tool_risk.py` or approval callbacks
 2. Update configuration options
 3. Implement in orchestrator workflow
 

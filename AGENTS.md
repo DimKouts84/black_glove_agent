@@ -65,7 +65,7 @@ Black Glove now supports both **CLI** (`black-glove chat`) and **Web UI** (`blac
 
 | Component | File | Role |
 |-----------|------|------|
-| **AgentRuntime** | `src/agent/runtime.py` | Assembles ToolRegistry, policy engine, sub-agents, root executor, work-graph kernel |
+| **AgentRuntime** | `src/agent/runtime.py` | Assembles ToolRegistry, sub-agents, root executor, work-graph kernel |
 | **WorkGraphExecutor** | `src/agent/work_graph_executor.py` | DAG scheduler with optional bounded parallelism (`enable_parallel_workers`) |
 | **BoundedWorkerPool** | `src/agent/worker_pool.py` | Phase/target/LLM/approval-gated concurrent workers |
 | **PlanValidator** | `src/agent/plan_validator.py` | DAG validation, dependency resolution, scope checks |

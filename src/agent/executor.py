@@ -7,12 +7,28 @@ import datetime
 import inspect
 
 from agent.definitions import AgentDefinition, AgentInput
-from agent.llm_client import LLMClient, LLMMessage
+from agent.llm_client import LLMClient, LLMMessage, LLMError, LLMResponseError
 from agent.tools.registry import ToolRegistry
 from agent.tool_result import ToolResultEnvelope
 from pydantic import ValidationError
 
 ApprovalCallback = Callable[[str, Dict[str, Any]], Awaitable[bool]]
+
+SCAN_TOOL_NAMES = frozenset({
+    "nmap",
+    "gobuster",
+    "passive_recon",
+    "osint_harvester",
+    "web_server_scanner",
+    "web_vuln_scanner",
+    "sqli_scanner",
+    "wappalyzer",
+    "ssl_check",
+    "sublist3r",
+    "dns_recon",
+    "credential_tester",
+    "camera_security",
+})
 
 class AgentExecutor:
     def __init__(
@@ -162,6 +178,7 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                 "agent": self.definition.name,
                 "type": event_type,
                 "content": content,
+                "ts": datetime.datetime.now().isoformat(),
                 **kwargs
             })
 
@@ -198,14 +215,28 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
         
         # 3. Execution Loop
         intermediate_results = []
+        executed_tools: set = set()
         for turn in range(self.max_turns):
             self.logger.info(f"Turn {turn+1}/{self.max_turns}")
             # self._emit("thinking", f"Reasoning (Turn {turn+1})")
             
             # Generate response (thread pool keeps asyncio event loop free for WS activity)
-            response = await asyncio.to_thread(
-                self.llm.generate, conversation_history, add_to_memory=False
-            )
+            try:
+                response = await asyncio.to_thread(
+                    self.llm.generate, conversation_history, add_to_memory=False
+                )
+            except LLMResponseError as exc:
+                msg = f"LLM API error (not a tool failure): {exc}"
+                self.logger.error(msg)
+                self._emit("llm_error", str(exc))
+                conversation_history.append(LLMMessage(role="user", content=msg))
+                continue
+            except LLMError as exc:
+                msg = f"LLM error (not a tool failure): {exc}"
+                self.logger.error(msg)
+                self._emit("llm_error", str(exc))
+                conversation_history.append(LLMMessage(role="user", content=msg))
+                continue
             content = response.content
             
             # Parse response
@@ -372,17 +403,17 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
 
                 envelope = ToolResultEnvelope.from_raw(tool_name, result)
                 result_str = envelope.to_llm_context(max_len=8000)
+                trace_details = envelope.to_trace_details()
 
                 self._emit(
                     "tool_result",
                     envelope.summary[:500] or "Tool execution completed",
-                    tool=tool_name,
-                    status=envelope.status,
-                    evidence_paths=envelope.evidence_paths,
-                    result_digest=envelope.raw_digest,
+                    **trace_details,
                 )
                 
                 conversation_history.append(LLMMessage(role="user", content=f"Tool Result ({tool_name}): {result_str}"))
+
+                executed_tools.add(tool_name)
 
                 # Track for partial return if we timeout (Issue B fix)
                 intermediate_results.append({
@@ -396,6 +427,13 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                 conversation_history.append(LLMMessage(role="user", content=f"Error executing {tool_name}: {str(e)}"))
 
         # Graceful degradation: auto-generate structured report from DB findings
+        scan_tools_run = executed_tools & SCAN_TOOL_NAMES
+        if scan_tools_run and "generate_report" not in executed_tools:
+            self._emit(
+                "warning",
+                "Scan tools ran without generate_report. Auto-generating report...",
+            )
+
         self.logger.warning(f"Max turns ({self.max_turns}) exceeded. Auto-generating report.")
         self._emit("warning", f"Max turns exceeded after {len(intermediate_results)} tool calls. Generating report...")
         

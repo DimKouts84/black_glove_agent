@@ -21,7 +21,7 @@ from src.agent.orchestrator import (
     create_orchestrator, OrchestratorContext
 )
 from src.agent.models import Asset, ScanResult, WorkflowStep
-from src.adapters.interface import AdapterResult, AdapterResultStatus
+from adapters.interface import AdapterResult, AdapterResultStatus
 
 
 class TestWorkflowState:
@@ -44,7 +44,6 @@ class TestScanMode:
         """Test scan mode enumeration values."""
         assert ScanMode.PASSIVE.value == "passive"
         assert ScanMode.ACTIVE.value == "active"
-        assert ScanMode.LAB.value == "lab"
 
 
 class TestWorkflowManager:
@@ -134,7 +133,6 @@ class TestOrchestrator:
         assert orchestrator.completed_steps == set()
         
         # Check that core components were initialized
-        assert orchestrator.policy_engine is not None
         assert orchestrator.plugin_manager is not None
         assert orchestrator.llm_client is not None
         assert orchestrator.workflow_manager is not None
@@ -151,8 +149,7 @@ class TestOrchestrator:
     
     def test_add_asset_success(self):
         """Test adding asset successfully."""
-        config = {"policy": {"target_validation": {"authorized_networks": ["192.168.1.0/24"]}}}
-        orchestrator = Orchestrator(config)
+        orchestrator = Orchestrator({})
         
         asset = Asset(
             target="192.168.1.100",
@@ -160,31 +157,11 @@ class TestOrchestrator:
             parameters={"port": 80}
         )
         
-        # Mock policy engine to allow the asset
-        with patch.object(orchestrator.policy_engine, 'validate_asset', return_value=True):
-            result = orchestrator.add_asset(asset)
-            
-            assert result is True
-            assert len(orchestrator.assets) == 1
-            assert orchestrator.assets[0] == asset
-    
-    def test_add_asset_rejected_by_policy(self):
-        """Test adding asset rejected by policy."""
-        config = {"policy": {"target_validation": {"authorized_networks": ["10.0.0.0/8"]}}}
-        orchestrator = Orchestrator(config)
+        result = orchestrator.add_asset(asset)
         
-        asset = Asset(
-            target="192.168.1.100",
-            tool_name="nmap",
-            parameters={"port": 80}
-        )
-        
-        # Mock policy engine to reject the asset
-        with patch.object(orchestrator.policy_engine, 'validate_asset', return_value=False):
-            result = orchestrator.add_asset(asset)
-            
-            assert result is False
-            assert len(orchestrator.assets) == 0
+        assert result is True
+        assert len(orchestrator.assets) == 1
+        assert orchestrator.assets[0] == asset
     
     def test_cleanup(self):
         """Test orchestrator cleanup."""
@@ -213,10 +190,9 @@ class TestOrchestrator:
 class TestOrchestratorWorkflow:
     """Test cases for orchestrator workflow methods."""
     
+    @patch('src.agent.orchestrator.Orchestrator._analyze_findings', return_value=[])
     @patch('src.agent.orchestrator.PluginManager.run_adapter')
-    @patch('src.agent.orchestrator.PolicyEngine.validate_asset')
-    @patch('src.agent.orchestrator.PolicyEngine.enforce_rate_limits')
-    def test_run_passive_recon_success(self, mock_rate_limits, mock_validate, mock_run_adapter):
+    def test_run_passive_recon_success(self, mock_run_adapter, _mock_analyze):
         """Test successful passive reconnaissance."""
         config = {
             "policy": {"test": "config"},
@@ -227,10 +203,6 @@ class TestOrchestratorWorkflow:
         # Add test asset
         asset = Asset(target="example.com", tool_name="whois", parameters={})
         orchestrator.assets.append(asset)
-        
-        # Mock successful responses
-        mock_validate.return_value = True
-        mock_rate_limits.return_value = True
         
         # Mock adapter results
         adapter_result = AdapterResult(
@@ -291,9 +263,10 @@ class TestOrchestratorWorkflow:
         """Test active scan planning with no results."""
         config = {"policy": {"test": "config"}}
         orchestrator = Orchestrator(config)
-        
-        steps = orchestrator.plan_active_scans(ScanMode.ACTIVE)
-        
+
+        with patch.object(orchestrator, "_load_passive_results_from_evidence", return_value=[]):
+            steps = orchestrator.plan_active_scans(ScanMode.ACTIVE)
+
         assert steps == []
     
     @patch('src.agent.orchestrator.LLMClient.plan_next_steps')
@@ -328,11 +301,9 @@ class TestOrchestratorScanExecution:
     """Test cases for orchestrator scan execution methods."""
     
     @patch('src.agent.orchestrator.PluginManager.run_adapter')
-    @patch('src.agent.orchestrator.PolicyEngine.validate_asset')
-    @patch('src.agent.orchestrator.PolicyEngine.enforce_rate_limits')
-    def test_execute_scan_step_success(self, mock_rate_limits, mock_validate, mock_run_adapter):
+    def test_execute_scan_step_success(self, mock_run_adapter):
         """Test successful scan step execution."""
-        config = {"policy": {"test": "config"}}
+        config = {"policy": {"test": "config"}, "require_approval": False}
         orchestrator = Orchestrator(config)
         
         # Create test step
@@ -344,47 +315,18 @@ class TestOrchestratorScanExecution:
             parameters={"target": "example.com"}
         )
         
-        # Mock successful responses
-        mock_validate.return_value = True
-        mock_rate_limits.return_value = True
-        
         adapter_result = AdapterResult(
             status=AdapterResultStatus.SUCCESS,
             data={"scan": "results"},
             metadata={"tool": "nmap"}
         )
         mock_run_adapter.return_value = adapter_result
-        
-        # Mock user approval
-        with patch.object(orchestrator, '_get_user_approval', return_value=True):
-            result = orchestrator.execute_scan_step(step)
-            
-            assert result is not None
-            assert result.tool_name == "nmap"
-            assert "test_step" in orchestrator.completed_steps
-    
-    @patch('src.agent.orchestrator.PolicyEngine.validate_asset')
-    def test_execute_scan_step_rejected_by_policy(self, mock_validate):
-        """Test scan step execution rejected by policy."""
-        config = {"policy": {"test": "config"}}
-        orchestrator = Orchestrator(config)
-        
-        # Create test step
-        step = WorkflowStep(
-            name="test_step",
-            description="Test scan step",
-            tool="nmap",
-            target="unauthorized.com",
-            parameters={"target": "unauthorized.com"}
-        )
-        
-        # Mock policy rejection
-        mock_validate.return_value = False
-        
-        result = orchestrator.execute_scan_step(step)
-        
-        assert result is None
-        assert "test_step" not in orchestrator.completed_steps
+
+        result = orchestrator.execute_scan_step(step, approval_required=False)
+
+        assert result is not None
+        assert result.tool_name == "nmap"
+        assert "test_step" in orchestrator.completed_steps
     
     def test_execute_scan_step_user_cancellation(self):
         """Test scan step execution cancelled by user."""
@@ -440,8 +382,6 @@ class TestOrchestratorReporting:
         assert "assets" in report
         assert "results" in report
         assert "findings" in report
-        assert "violations" in report
-        assert "rates" in report
         
         assert report["summary"]["total_assets"] == 1
         assert report["summary"]["total_scans"] == 1
@@ -467,7 +407,6 @@ class TestOrchestratorFactory:
         orchestrator = create_orchestrator()
         
         assert isinstance(orchestrator, Orchestrator)
-        assert "policy" in orchestrator.config
         assert "passive_tools" in orchestrator.config
     
     def test_create_orchestrator_custom(self):
@@ -503,10 +442,6 @@ class TestOrchestratorIntegration:
     def test_complete_workflow_lifecycle(self):
         """Test complete workflow lifecycle."""
         config = {
-            "policy": {
-                "target_validation": {"authorized_networks": ["192.168.1.0/24"]},
-                "rate_limiting": {"window_size": 60, "max_requests": 10}
-            },
             "passive_tools": ["whois"]
         }
         
@@ -516,7 +451,8 @@ class TestOrchestratorIntegration:
             assert orchestrator.add_asset(asset) is True
             
             # 2. Run passive recon (mocked)
-            with patch('src.agent.orchestrator.PluginManager.run_adapter') as mock_run:
+            with patch('src.agent.orchestrator.Orchestrator._analyze_findings', return_value=[]), \
+                 patch('src.agent.orchestrator.PluginManager.run_adapter') as mock_run:
                 adapter_result = AdapterResult(
                     status=AdapterResultStatus.SUCCESS,
                     data={"domain": "test.com"},
@@ -526,10 +462,14 @@ class TestOrchestratorIntegration:
                 
                 results = orchestrator.run_passive_recon()
                 assert len(results) >= 0  # May be 0 due to mocking
-            
-            # 3. Plan active scans
-            steps = orchestrator.plan_active_scans(ScanMode.PASSIVE)
-            # Should get default plan since no real results
+
+            # 3. Plan active scans (mock LLM)
+            with patch('src.agent.orchestrator.LLMClient.plan_next_steps') as mock_plan:
+                mock_response = Mock()
+                mock_response.content = '{"scan_plan": []}'
+                mock_plan.return_value = mock_response
+                steps = orchestrator.plan_active_scans(ScanMode.PASSIVE)
+                assert isinstance(steps, list)
             
             # 4. Generate report
             report = orchestrator.generate_report("json")
@@ -540,21 +480,21 @@ class TestOrchestratorIntegration:
         """Test consistent error handling across methods."""
         config = {"policy": {"test": "config"}}
         orchestrator = Orchestrator(config)
-        
-        # All major methods should handle errors gracefully
-        methods = [
-            (orchestrator.run_passive_recon, []),
-            (orchestrator.plan_active_scans, [ScanMode.PASSIVE]),
-            (orchestrator.generate_report, ["json"])
-        ]
-        
-        for method, args in methods:
-            try:
-                result = method(*args)
-                # Should not raise exceptions for basic operations
-            except Exception as e:
-                # If exceptions occur, they should be handled appropriately
-                assert True  # Exception handling is tested elsewhere
+
+        with patch.object(orchestrator, "_load_passive_results_from_evidence", return_value=[]), \
+             patch('src.agent.orchestrator.LLMClient.plan_next_steps', side_effect=Exception("LLM unavailable")):
+            # All major methods should handle errors gracefully
+            methods = [
+                (orchestrator.run_passive_recon, []),
+                (orchestrator.plan_active_scans, [ScanMode.PASSIVE]),
+                (orchestrator.generate_report, ["json"])
+            ]
+
+            for method, args in methods:
+                try:
+                    method(*args)
+                except Exception:
+                    assert True
 
 
 if __name__ == "__main__":

@@ -125,6 +125,28 @@ def test_passive_recon_failure_when_both_fail(monkeypatch: pytest.MonkeyPatch):
     assert result.data["crt_sh"]["count"] == 0
     assert result.data["wayback"]["count"] == 0
     assert "crt_sh" in result.data["errors"] or "wayback" in result.data["errors"]
+    assert result.error_message is not None
+    assert "crt_sh" in result.error_message or "wayback" in result.error_message
+
+
+def test_passive_recon_crt_sh_404_returns_empty(monkeypatch: pytest.MonkeyPatch):
+    adapter = create_passive_recon_adapter({})
+
+    def fake_http_get(self, url: str, timeout: float) -> str:
+        if "crt.sh" in url:
+            raise Exception("HTTPError 404 for https://crt.sh/?q=example.com&output=json")
+        if "web.archive.org" in url:
+            return _wayback_json_many()
+        return "[]"
+
+    _patch_passive_http_get(monkeypatch, fake_http_get)
+
+    result = adapter.execute({"domain": "example.com", "max_results": 5})
+
+    assert result.status.value in ("success", "partial")
+    assert result.data["crt_sh"]["count"] == 0
+    assert "crt_sh" not in result.data.get("errors", {})
+    assert result.data["wayback"]["count"] > 0
 
 
 def test_passive_recon_get_info():

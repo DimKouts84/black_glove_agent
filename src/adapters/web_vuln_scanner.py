@@ -56,6 +56,11 @@ class WebVulnScannerAdapter(BaseAdapter):
         exploitable = [v for v in vulns if v.get("type") in EXPLOITABLE_TYPES]
 
         if not exploitable:
+            if scanned_count == 0:
+                return (
+                    f"Web Vuln Scanner: no URL query parameters to test on {data.get('target_url', 'target')} "
+                    "(scan not applicable - static page or parameterless URL)."
+                )
             return (
                 f"Web Vuln Scanner checked {scanned_count} parameters and found "
                 "NO exploitable vulnerabilities."
@@ -251,6 +256,24 @@ class WebVulnScannerAdapter(BaseAdapter):
         if params_to_test:
             scan_params = [p for p in scan_params if p in params_to_test]
 
+        if not scan_params:
+            return AdapterResult(
+                status=AdapterResultStatus.SUCCESS,
+                data={
+                    "target_url": target_url,
+                    "vulnerabilities": [],
+                    "scanned_params": [],
+                    "not_applicable": True,
+                    "message": "No URL query parameters available to test",
+                    "coverage": {
+                        "scanned_params": 0,
+                        "untested": True,
+                        "reason": "no_query_parameters",
+                    },
+                },
+                metadata={},
+            )
+
         for param in scan_params:
             if "xss" in scans:
                 res = self._check_xss(target_url, param, baseline_text)
@@ -273,6 +296,10 @@ class WebVulnScannerAdapter(BaseAdapter):
                 "target_url": target_url,
                 "vulnerabilities": findings,
                 "scanned_params": scan_params,
+                "coverage": {
+                    "scanned_params": len(scan_params),
+                    "untested": False,
+                },
             },
             metadata={},
         )
