@@ -280,7 +280,10 @@ class TestWorkGraphExecutor:
             parameters={"domain": "8.8.8.8"},
             phase=WorkPhase.PASSIVE,
         )
-        envelope = asyncio.run(executor.execute_step(step, engagement))
+        from agent.execution_context import ExecutionContext
+
+        ctx = ExecutionContext(session_id="", run_id="test")
+        envelope = asyncio.run(executor.execute_step(step, engagement, ctx))
         assert envelope.status in {"blocked", "error"}
         assert "BLOCKED" in (envelope.error or envelope.summary or "").upper()
 

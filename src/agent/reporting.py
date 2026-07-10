@@ -1561,35 +1561,15 @@ class ReportingManager:
                     finding.fingerprint = fingerprint
 
                     cursor.execute(
-                        "SELECT id, observation_count FROM findings WHERE fingerprint = ?",
-                        (fingerprint,),
-                    )
-                    existing = cursor.fetchone()
-                    if existing:
-                        new_count = existing[1] + 1
-                        cursor.execute(
-                            "SELECT confidence FROM findings WHERE id = ?",
-                            (existing[0],),
-                        )
-                        prev_conf = cursor.fetchone()[0] or 0.0
-                        new_conf = max(prev_conf, finding.confidence)
-                        cursor.execute(
-                            """
-                            UPDATE findings
-                            SET observation_count = ?, confidence = ?
-                            WHERE id = ?
-                            """,
-                            (new_count, new_conf, existing[0]),
-                        )
-                        continue
-
-                    cursor.execute(
                         """
                         INSERT INTO findings
                         (asset_id, title, severity, confidence, evidence_path,
                          recommended_fix, description, evidence_hash, source_tool,
                          verification_state, fingerprint, observation_count)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(fingerprint) DO UPDATE SET
+                            observation_count = observation_count + 1,
+                            confidence = MAX(findings.confidence, excluded.confidence)
                         """,
                         (
                             finding.asset_id,
@@ -1617,9 +1597,10 @@ class ReportingManager:
 
     @staticmethod
     def _finding_fingerprint(finding: Finding) -> str:
+        location = (finding.description or "").strip().lower()[:200]
         raw = (
             f"{finding.asset_id}|{finding.source_tool}|"
-            f"{finding.title.strip().lower()}|{finding.evidence_path or ''}"
+            f"{finding.title.strip().lower()}|{location}"
         )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
     

@@ -119,6 +119,17 @@ class ConfigModel(BaseModel):
     # Additional settings
     extra_settings: Optional[Dict[str, Any]] = Field(default=None, description="Additional configuration settings")
 
+    # Parallel orchestration (default off for safe rollout)
+    enable_parallel_workers: bool = Field(
+        default=False,
+        description="Enable bounded parallel work-graph scheduling",
+    )
+    max_concurrent_global: int = Field(default=4, ge=1, le=32)
+    max_concurrent_passive: int = Field(default=3, ge=1, le=32)
+    max_concurrent_active: int = Field(default=2, ge=1, le=32)
+    max_concurrent_active_per_target: int = Field(default=1, ge=1, le=8)
+    max_concurrent_llm_workers: int = Field(default=2, ge=1, le=16)
+
 @dataclass
 class Asset:
     """

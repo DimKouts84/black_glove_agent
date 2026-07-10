@@ -38,6 +38,7 @@ def init_db() -> None:
             create_agent_events_table(conn)
             create_engagement_tables(conn)
             _migrate_findings_columns(conn)
+            _create_worker_tables(conn)
     finally:
         conn.close()
 
@@ -99,6 +100,9 @@ def _migrate_findings_columns(conn: sqlite3.Connection) -> None:
     for column, definition in migrations.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE findings ADD COLUMN {column} {definition}")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_fingerprint ON findings(fingerprint)"
+    )
 
 
 def create_engagement_tables(conn: sqlite3.Connection) -> None:
@@ -132,6 +136,10 @@ def create_engagement_tables(conn: sqlite3.Connection) -> None:
             steps_json TEXT NOT NULL,
             completed_step_ids_json TEXT,
             revision INTEGER NOT NULL DEFAULT 1,
+            strict_sequential INTEGER NOT NULL DEFAULT 0,
+            failure_policy TEXT NOT NULL DEFAULT 'block_downstream',
+            concurrency_limits_json TEXT,
+            cancelled INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY(engagement_id) REFERENCES engagements(id)
@@ -153,6 +161,71 @@ def create_engagement_tables(conn: sqlite3.Connection) -> None:
             ts TEXT NOT NULL
         )
         """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_work_graphs_engagement ON work_graphs(engagement_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_work_graphs_status ON work_graphs(status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_run_step_summaries_session ON run_step_summaries(session_id)"
+    )
+    _create_worker_tables(conn)
+
+
+def _create_worker_tables(conn: sqlite3.Connection) -> None:
+    """Worker task persistence for parallel orchestration."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS worker_tasks (
+            task_id TEXT PRIMARY KEY,
+            graph_id TEXT NOT NULL,
+            step_id TEXT NOT NULL,
+            engagement_id TEXT NOT NULL,
+            run_id TEXT,
+            kind TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            target TEXT,
+            status TEXT NOT NULL,
+            attempt INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS worker_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            worker_instance_id TEXT NOT NULL,
+            attempt INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            FOREIGN KEY(task_id) REFERENCES worker_tasks(task_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS worker_results (
+            task_id TEXT PRIMARY KEY,
+            step_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            summary TEXT,
+            evidence_paths_json TEXT,
+            finding_ids_json TEXT,
+            structured_json TEXT,
+            finished_at TEXT NOT NULL,
+            FOREIGN KEY(task_id) REFERENCES worker_tasks(task_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_worker_tasks_graph ON worker_tasks(graph_id)"
     )
 
 def create_audit_log_table(conn: sqlite3.Connection) -> None:
@@ -253,12 +326,13 @@ def create_agent_events_table(conn: sqlite3.Connection) -> None:
 
 def get_db_connection() -> sqlite3.Connection:
     """
-    Get a database connection.
-    
-    Returns:
-        sqlite3.Connection: Database connection object
+    Get a database connection with WAL mode and busy timeout.
     """
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
 
 def remove_asset(conn: sqlite3.Connection, asset_id: int) -> bool:
     """
@@ -313,6 +387,7 @@ def run_migrations() -> None:
             create_agent_events_table(conn)
             create_engagement_tables(conn)
             _migrate_findings_columns(conn)
+            _create_worker_tables(conn)
     finally:
         conn.close()
 

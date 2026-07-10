@@ -116,3 +116,93 @@ class SubagentTool:
         # Run it
         result = await executor.run(params)
         return result
+
+
+async def create_researcher_worker(
+    llm_factory,
+    task,
+    worker_ctx,
+    *,
+    require_approval: bool = False,
+    safe_tools=None,
+):
+    """Stateless researcher worker for parallel orchestration."""
+    from agent.agent_library.researcher import RESEARCHER_AGENT
+    from agent.executor import AgentExecutor
+    from agent.tool_result import ToolResultEnvelope
+    from agent.tools.registry import ToolRegistry
+
+    client = await llm_factory.acquire_and_create()
+    try:
+        registry = ToolRegistry()
+        executor = AgentExecutor(
+            agent_definition=RESEARCHER_AGENT,
+            llm_client=client,
+            tool_registry=registry,
+            require_approval=require_approval,
+            safe_tools=safe_tools,
+            approval_callback=worker_ctx.approval_callback,
+            on_activity=lambda e: worker_ctx.emit(e.get("type", "activity"), e.get("content")),
+        )
+        params = dict(task.parameters)
+        params.setdefault("target", task.target)
+        result = await executor.run(params)
+        summary = str(result)[:2000]
+        return (
+            ToolResultEnvelope(status="success", tool_name=task.tool_name, summary=summary, structured=result),
+            result if isinstance(result, dict) else {"result": result},
+        )
+    except Exception as exc:
+        return (
+            ToolResultEnvelope(
+                status="error",
+                tool_name=task.tool_name,
+                summary=str(exc),
+                error=str(exc),
+                retryable=True,
+            ),
+            None,
+        )
+    finally:
+        llm_factory.release()
+
+
+async def create_analyst_worker(llm_factory, task, worker_ctx):
+    """Stateless analyst worker for parallel evidence shards."""
+    from agent.agent_library.analyst import ANALYST_AGENT
+    from agent.executor import AgentExecutor
+    from agent.tool_result import ToolResultEnvelope
+    from agent.tools.registry import ToolRegistry
+
+    client = await llm_factory.acquire_and_create()
+    try:
+        registry = ToolRegistry()
+        executor = AgentExecutor(
+            agent_definition=ANALYST_AGENT,
+            llm_client=client,
+            tool_registry=registry,
+            on_activity=lambda e: worker_ctx.emit(e.get("type", "activity"), e.get("content")),
+        )
+        params = dict(task.parameters)
+        params.setdefault("target", task.target)
+        if task.shard_key:
+            params.setdefault("shard_key", task.shard_key)
+        result = await executor.run(params)
+        summary = str(result)[:2000]
+        return (
+            ToolResultEnvelope(status="success", tool_name=task.tool_name, summary=summary, structured=result),
+            result if isinstance(result, dict) else {"result": result},
+        )
+    except Exception as exc:
+        return (
+            ToolResultEnvelope(
+                status="error",
+                tool_name=task.tool_name,
+                summary=str(exc),
+                error=str(exc),
+                retryable=True,
+            ),
+            None,
+        )
+    finally:
+        llm_factory.release()

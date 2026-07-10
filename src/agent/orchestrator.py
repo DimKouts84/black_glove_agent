@@ -305,7 +305,10 @@ class Orchestrator:
             parameters=step.parameters,
             phase=WorkPhase.ACTIVE,
         )
-        envelope = await self.work_graph_executor.execute_step(work_step, engagement)
+        from agent.execution_context import ExecutionContext
+
+        ctx = ExecutionContext(session_id=engagement.session_id or "", run_id="")
+        envelope = await self.work_graph_executor.execute_step(work_step, engagement, ctx)
         if envelope.status in {"blocked", "error"}:
             self.logger.warning("Step %s blocked/failed: %s", step.name, envelope.error)
             return None

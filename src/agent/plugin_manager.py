@@ -394,8 +394,8 @@ class PluginManager:
                         error_message=f"BLOCKED: Target '{target}' is not authorized."
                     )
             
-            # 3. Check rate limits
-            if not self.policy_engine.enforce_rate_limits(adapter_name):
+            # 3. Check rate limits (atomic acquire)
+            if not self.policy_engine.rate_limiter.acquire_and_record(adapter_name):
                 self.logger.warning(f"BLOCKED: Rate limit exceeded for {adapter_name}")
                 from agent.audit import write_audit
 
@@ -413,7 +413,7 @@ class PluginManager:
                     metadata={"error": "Rate limit exceeded"},
                     error_message=f"BLOCKED: Rate limit exceeded for '{adapter_name}'."
                 )
-        
+
         # Load adapter if not already loaded
         if adapter_name not in self.adapter_manager.list_loaded_adapters():
             self.load_adapter(adapter_name, self._get_adapter_config(adapter_name))
@@ -426,9 +426,8 @@ class PluginManager:
         except Exception as e:
             raise ValueError(f"Invalid parameters for adapter {adapter_name}: {e}")
 
-        if self.policy_engine:
-            self.policy_engine.rate_limiter.record_request(adapter_name)
-        
+        # Rate limit already recorded atomically at admission
+
         # Execute adapter
         try:
             result = adapter.execute(params)

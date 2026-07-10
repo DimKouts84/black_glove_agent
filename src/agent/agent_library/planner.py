@@ -1,17 +1,28 @@
-from typing import List, Dict, Any
-from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
 from agent.definitions import AgentDefinition, AgentInput, AgentOutput, AgentToolConfig, AgentPromptConfig
 
 class ScanStep(BaseModel):
+    step_key: Optional[str] = None
     tool: str
     target: str
-    parameters: Dict[str, Any]
-    rationale: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    rationale: str = ""
+    depends_on: List[str] = Field(default_factory=list)
+    phase: Optional[str] = None
+    worker_kind: str = "adapter"
+    parallel_group: Optional[str] = None
+    analysis_shard_key: Optional[str] = None
+    timeout_seconds: float = 600.0
+    max_retries: int = 1
+    continue_on_failure: bool = False
 
 class ScanPlan(BaseModel):
     goal: str
     steps: List[ScanStep]
     reasoning: str
+    strict_sequential: bool = False
+    failure_policy: str = "block_downstream"
 
 PLANNER_AGENT = AgentDefinition(
     name="planner_agent",

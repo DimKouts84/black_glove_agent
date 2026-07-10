@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import time
 import shutil
-from typing import List, Dict, Optional, TypedDict, Literal
+from typing import Dict, List, Literal, Optional, TypedDict
+
+_active_processes: Dict[str, subprocess.Popen] = {}
+
 
 class ProcessRunSpec(TypedDict, total=False):
     command: str
@@ -11,40 +16,49 @@ class ProcessRunSpec(TypedDict, total=False):
     env: Dict[str, str]
     cwd: Optional[str]
     timeout: float
+    task_id: Optional[str]
+
 
 class ProcessRunResult(TypedDict):
-    status: Literal["success", "timeout", "error"]
+    status: Literal["success", "timeout", "error", "cancelled"]
     exit_code: Optional[int]
     stdout: str
     stderr: str
     duration: float
 
+
+def register_process(task_id: str, proc: subprocess.Popen) -> None:
+    _active_processes[task_id] = proc
+
+
+def cancel_process(task_id: str) -> bool:
+    proc = _active_processes.pop(task_id, None)
+    if not proc:
+        return False
+    try:
+        if os.name == "nt":
+            proc.terminate()
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    return True
+
+
 class ProcessRunner:
-    """
-    Execute a local process with timeouts and sanitization.
-    """
+    """Execute a local process with timeouts, cancellation, and sanitization."""
 
     def run(self, spec: ProcessRunSpec) -> ProcessRunResult:
-        """
-        Run a process according to the provided spec.
-
-        Args:
-            spec: ProcessRunSpec including command, args, env, cwd, timeout
-
-        Returns:
-            ProcessRunResult with status, exit_code, stdout, stderr, duration
-
-        Raises:
-            ValueError: If the spec is invalid or arguments fail sanitization.
-        """
         start = time.time()
         command = spec.get("command")
         if not command or not isinstance(command, str):
             raise ValueError("ProcessRunSpec.command must be a non-empty string")
 
-        # Check if command exists
         if not shutil.which(command):
-             raise ValueError(f"Command not found: {command}")
+            raise ValueError(f"Command not found: {command}")
 
         args = spec.get("args", [])
         if args is not None and not isinstance(args, list):
@@ -54,9 +68,7 @@ class ProcessRunner:
         env = spec.get("env", {}) or {}
         if not isinstance(env, dict):
             raise ValueError("ProcessRunSpec.env must be a dict[str, str]")
-        
-        # Merge with system environment to ensure tools work correctly
-        import os
+
         full_env = os.environ.copy()
         full_env.update(env)
 
@@ -65,41 +77,60 @@ class ProcessRunner:
             raise ValueError("ProcessRunSpec.cwd must be a string or None")
 
         timeout = float(spec.get("timeout", 300.0))
-
-        # Sanitize args defensively
+        task_id = spec.get("task_id")
         safe_args = self._sanitize_args(args)
-
         cmd_list = [command] + safe_args
 
+        popen_kwargs: Dict = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "env": full_env,
+            "cwd": cwd,
+        }
+        if os.name != "nt":
+            popen_kwargs["start_new_session"] = True
+
+        proc = subprocess.Popen(cmd_list, **popen_kwargs)
+        if task_id:
+            register_process(task_id, proc)
+
         try:
-            cp = subprocess.run(
-                cmd_list,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=full_env,
-                cwd=cwd
-            )
+            stdout, stderr = proc.communicate(timeout=timeout)
             duration = time.time() - start
-            status: Literal["success", "error"] = "success" if cp.returncode == 0 else "error"
+            if task_id:
+                _active_processes.pop(task_id, None)
+            status: Literal["success", "error"] = "success" if proc.returncode == 0 else "error"
             return ProcessRunResult(
                 status=status,
-                exit_code=cp.returncode,
-                stdout=cp.stdout or "",
-                stderr=cp.stderr or "",
+                exit_code=proc.returncode,
+                stdout=stdout or "",
+                stderr=stderr or "",
                 duration=duration,
             )
-        except subprocess.TimeoutExpired as te:
+        except subprocess.TimeoutExpired:
             duration = time.time() - start
+            if task_id:
+                cancel_process(task_id)
+            else:
+                proc.kill()
+                proc.communicate()
             return ProcessRunResult(
                 status="timeout",
                 exit_code=None,
-                stdout=te.stdout.decode() if isinstance(te.stdout, bytes) else (te.stdout or ""),
-                stderr=te.stderr.decode() if isinstance(te.stderr, bytes) else (te.stderr or "Execution timed out"),
+                stdout="",
+                stderr="Execution timed out",
                 duration=duration,
             )
         except Exception as e:
             duration = time.time() - start
+            if task_id:
+                cancel_process(task_id)
+            else:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
             return ProcessRunResult(
                 status="error",
                 exit_code=None,
@@ -109,11 +140,6 @@ class ProcessRunner:
             )
 
     def _sanitize_args(self, args: List[str]) -> List[str]:
-        """
-        Basic sanitization to disallow obvious shell metacharacters.
-        
-        We execute with shell=False, so this is an extra layer of defense.
-        """
         prohibited = set(";&|`$()><\n\r")
         for a in args:
             if any(ch in a for ch in prohibited):

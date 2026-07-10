@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
+import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -13,9 +15,12 @@ from agent.db import get_db_connection
 
 logger = logging.getLogger("black_glove.audit")
 
+_MAX_RETRIES = 5
+_RETRY_DELAY = 0.05
+
 
 class AuditWriter:
-    """Persist immutable audit events."""
+    """Persist immutable audit events with retry on lock contention."""
 
     def __init__(self, actor: str = "black_glove"):
         self.actor = actor
@@ -34,11 +39,18 @@ class AuditWriter:
         if own_conn:
             conn = get_db_connection()
         try:
-            conn.execute(
-                "INSERT INTO audit_log (ts, actor, event_type, data) VALUES (?, ?, ?, ?)",
-                (ts, actor or self.actor, event_type, payload),
-            )
-            conn.commit()
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    conn.execute(
+                        "INSERT INTO audit_log (ts, actor, event_type, data) VALUES (?, ?, ?, ?)",
+                        (ts, actor or self.actor, event_type, payload),
+                    )
+                    conn.commit()
+                    return
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).lower() or attempt == _MAX_RETRIES - 1:
+                        raise
+                    time.sleep(_RETRY_DELAY * (attempt + 1))
         except Exception as exc:
             logger.error("Failed to write audit event %s: %s", event_type, exc)
         finally:

@@ -202,9 +202,14 @@ Tool Registry → PolicyEngine → Adapter → Findings DB
 
 ### 3. Governed Scan Workflow
 ```
-Planner → ScanPlan → WorkGraphExecutor → Policy/Approval →
-Adapter → Evidence/Findings → audit_log
+Planner → ScanPlan → PlanValidator → WorkGraph → WorkGraphExecutor →
+BoundedWorkerPool → Policy/Approval → Adapter/Researcher/Analyst workers →
+Reducer (fan-in) → Evidence/Findings → audit_log
 ```
+
+When `enable_parallel_workers: true`, `WorkGraphExecutor` schedules a DAG ready-set with
+phase barriers, per-target locks, and CAS checkpointing. Interactive `run_turn()` chat
+remains sequential; only `execute_scan_plan()` uses the parallel kernel.
 
 ### 4. Subagent Delegation
 ```

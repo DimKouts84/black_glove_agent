@@ -66,12 +66,14 @@ Black Glove now supports both **CLI** (`black-glove chat`) and **Web UI** (`blac
 | Component | File | Role |
 |-----------|------|------|
 | **AgentRuntime** | `src/agent/runtime.py` | Assembles ToolRegistry, policy engine, sub-agents, root executor, work-graph kernel |
-| **WorkGraphExecutor** | `src/agent/work_graph_executor.py` | Deterministic scan execution with policy, approval, budgets, checkpointing |
+| **WorkGraphExecutor** | `src/agent/work_graph_executor.py` | DAG scheduler with optional bounded parallelism (`enable_parallel_workers`) |
+| **BoundedWorkerPool** | `src/agent/worker_pool.py` | Phase/target/LLM/approval-gated concurrent workers |
+| **PlanValidator** | `src/agent/plan_validator.py` | DAG validation, dependency resolution, scope checks |
 | **ConfigService** | `src/agent/config_service.py` | Single source of truth for `config.yaml` (CLI + web settings) |
 | **Web API** | `src/webapp/` | FastAPI REST + WebSocket; never imports adapters directly |
 | **React UI** | `frontend/` | Terminal-themed SPA; tools loaded dynamically from `/api/tools` |
 
-**Approval gating**: `require_approval` (default `true`) toggles human-in-the-loop via `AgentExecutor.approval_callback`. Sub-agents inherit the same approval context. Planner output can be executed deterministically via `AgentRuntime.execute_scan_plan()` and `WorkGraphExecutor`.
+**Approval gating**: `require_approval` (default `true`) toggles human-in-the-loop via `AgentExecutor.approval_callback`. Sub-agents inherit the same approval context. Planner output can be executed deterministically via `AgentRuntime.execute_scan_plan()` and `WorkGraphExecutor`. Set `enable_parallel_workers: true` in config to fan out independent passive/active steps under bounded concurrency limits.
 
 ---
 

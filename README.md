@@ -15,7 +15,9 @@
 
 ## 🎯 Purpose
 
-Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent designed for authorized security testing of home-hosted services and small business networks. It helps you safely discover and prioritize vulnerabilities while maintaining full auditability and human oversight.
+Black Glove is a local-first, both Web UI *and* CLI-driven, LLM-assisted penetration testing agent designed for authorized security testing of home-hosted services and small business networks. It helps you safely discover and prioritize vulnerabilities while maintaining full auditability and human oversight.
+
+---
 
 <p align="center">
   <img src="assets/black_glove_main_image_banner.png" alt="Black Glove Logo" width="700"/>
@@ -23,10 +25,18 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 
 <br>
 
+---
+
+### CLI Demo
+
+Demo of the CLI interface:
+
 <p align="center">
    <img src="assets/V0_1_demo_gif_mvp.gif" alt="Black Glove Demo" width="1200" style="max-width:100%;height:auto;" />
 </p>
 
+
+### Legal Notice
 
 > **⚠️ Legal Notice**: 
 > <br>This tool is designed exclusively for authorized security testing of systems you own or have explicit written permission to test.
@@ -101,6 +111,7 @@ flowchart TD
 ### 🔒 Safety First
 - **Mandatory Legal Notice**: First-run acknowledgment of responsible use
 - **Human-in-the-Loop**: Approval required by default (`require_approval: true`); fail-closed without callback
+- **Parallel scans (opt-in)**: `enable_parallel_workers: false` by default; bounded DAG scheduling for `execute_scan_plan()`
 - **Policy Engine**: Mandatory on chat/web/recon paths; fail-closed target allowlists
 - **Work Graph Kernel**: Deterministic scan execution with phase gating and checkpointing
 - **Rate Limiting**: Configurable traffic throttling to prevent accidental DoS

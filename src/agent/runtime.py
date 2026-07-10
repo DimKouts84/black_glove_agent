@@ -30,7 +30,7 @@ from agent.target_scope import build_policy_target_config
 from agent.tools.adapter_wrapper import AdapterToolWrapper
 from agent.tools.registry import ToolRegistry
 from agent.tools.report_tool import ReportTool
-from agent.work_graph import Engagement, EngagementStatus
+from agent.work_graph import ConcurrencyLimits, Engagement, EngagementStatus
 from agent.work_graph_executor import WorkGraphExecutor
 
 logger = logging.getLogger("black_glove.runtime")
@@ -66,7 +66,8 @@ class AgentRuntime:
         self._root_executor: Optional[AgentExecutor] = None
         self._work_graph_executor: Optional[WorkGraphExecutor] = None
         self._engagement_store: Optional[EngagementStore] = None
-        self._active_sessions: set = set()
+        self._session_locks: Dict[str, asyncio.Lock] = {}
+        self._engagement_sem = asyncio.Semaphore(2)
         self._build()
 
     def _build_policy_engine(self, cfg: Dict[str, Any]) -> PolicyEngine:
@@ -133,6 +134,22 @@ class AgentRuntime:
             safe_tools=self.SAFE_TOOLS,
             enable_exploit_adapters=self._config.enable_exploit_adapters,
             require_lab_mode_for_exploits=self._config.require_lab_mode_for_exploits,
+            enable_parallel_workers=self._config.enable_parallel_workers,
+            config=self._config,
+        )
+
+    def _session_lock(self, session_id: str) -> asyncio.Lock:
+        if session_id not in self._session_locks:
+            self._session_locks[session_id] = asyncio.Lock()
+        return self._session_locks[session_id]
+
+    def _server_concurrency_limits(self) -> ConcurrencyLimits:
+        return ConcurrencyLimits(
+            max_concurrent_global=self._config.max_concurrent_global,
+            max_concurrent_passive=self._config.max_concurrent_passive,
+            max_concurrent_active=self._config.max_concurrent_active,
+            max_concurrent_active_per_target=self._config.max_concurrent_active_per_target,
+            max_concurrent_llm_workers=self._config.max_concurrent_llm_workers,
         )
 
     def reload_config(self) -> ConfigModel:
@@ -179,40 +196,68 @@ class AgentRuntime:
         approval_callback: Optional[ApprovalCallback] = None,
     ) -> Dict[str, Any]:
         """Execute a planner-produced scan plan through the work-graph kernel."""
-        engagement = Engagement(
-            name=scan_plan.get("goal", "scan"),
-            targets=targets or [
+        async with self._engagement_sem:
+            engagement_targets = targets or [
                 s.get("target") for s in scan_plan.get("steps", []) if s.get("target")
-            ],
-            session_id=session_id,
-            lab_mode=lab_mode,
-            status=EngagementStatus.PENDING,
-        )
-        self.engagement_store.save_engagement(engagement)
-        graph = WorkGraphExecutor.from_scan_plan(
-            scan_plan,
-            engagement.id,
-            session_id=session_id,
+            ]
+            engagement = Engagement(
+                name=scan_plan.get("goal", "scan"),
+                targets=engagement_targets,
+                session_id=session_id,
+                lab_mode=lab_mode,
+                status=EngagementStatus.PENDING,
+            )
+            self.engagement_store.save_engagement(engagement)
+            graph = WorkGraphExecutor.from_scan_plan(
+                scan_plan,
+                engagement.id,
+                session_id=session_id,
+                run_id=run_id,
+                engagement_targets=engagement_targets,
+            )
+            graph.concurrency_limits = self._server_concurrency_limits()
+            completed = await self.work_graph_executor.run_graph(
+                graph,
+                engagement,
+                run_id=run_id,
+                session_id=session_id,
+                on_activity=on_activity,
+                approval_callback=approval_callback,
+            )
+            return {
+                "engagement_id": engagement.id,
+                "graph_id": completed.id,
+                "status": completed.status.value,
+                "completed_steps": len(completed.completed_step_ids),
+                "total_steps": len(completed.steps),
+                "steps": [s.model_dump() for s in completed.steps],
+            }
+
+    async def resume_scan(
+        self,
+        graph_id: str,
+        *,
+        session_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        on_activity: Optional[ActivityCallback] = None,
+        approval_callback: Optional[ApprovalCallback] = None,
+    ) -> Dict[str, Any]:
+        completed = await self.work_graph_executor.resume_graph(
+            graph_id,
             run_id=run_id,
-        )
-        if on_activity:
-            self.work_graph_executor.on_activity = on_activity
-        if approval_callback:
-            self.work_graph_executor.approval_callback = approval_callback
-        completed = await self.work_graph_executor.run_graph(
-            graph,
-            engagement,
-            run_id=run_id,
             session_id=session_id,
+            on_activity=on_activity,
+            approval_callback=approval_callback,
         )
         return {
-            "engagement_id": engagement.id,
             "graph_id": completed.id,
             "status": completed.status.value,
             "completed_steps": len(completed.completed_step_ids),
             "total_steps": len(completed.steps),
-            "steps": [s.model_dump() for s in completed.steps],
         }
+
+    def cancel_scan(self, graph_id: str) -> None:
+        self.work_graph_executor.cancel(graph_id)
 
     @property
     def plugin_manager(self) -> PluginManager:
@@ -272,54 +317,52 @@ class AgentRuntime:
 
         Persists orchestration trace to agent_runs/agent_events tables.
         """
-        if session_id in self._active_sessions:
+        lock = self._session_lock(session_id)
+        if lock.locked():
             raise RuntimeError(
                 f"Session {session_id} already has an active run. Wait for completion."
             )
 
-        self._active_sessions.add(session_id)
-        run_id = str(uuid.uuid4())
-        started_at = datetime.now().isoformat()
-        conn = get_db_connection()
+        async with lock:
+            run_id = str(uuid.uuid4())
+            started_at = datetime.now().isoformat()
+            conn = get_db_connection()
 
-        try:
-            self._create_run(conn, run_id, session_id, user_query, started_at)
+            try:
+                self._create_run(conn, run_id, session_id, user_query, started_at)
 
-            def combined_activity(event: Dict[str, Any]) -> None:
-                enriched = {**event, "run_id": run_id}
-                self._persist_event(conn, run_id, event)
-                if on_activity:
-                    on_activity(enriched)
+                def combined_activity(event: Dict[str, Any]) -> None:
+                    enriched = {**event, "run_id": run_id}
+                    self._persist_event(conn, run_id, event)
+                    if on_activity:
+                        on_activity(enriched)
 
-            self.root_executor.on_activity = combined_activity
-            self.root_executor.approval_callback = approval_callback
-            self.work_graph_executor.on_activity = combined_activity
-            self.work_graph_executor.approval_callback = approval_callback
+                turn_executor = AgentExecutor(
+                    agent_definition=ROOT_AGENT,
+                    llm_client=self.llm_client,
+                    tool_registry=self._tool_registry,
+                    require_approval=self._config.require_approval,
+                    safe_tools=self.SAFE_TOOLS,
+                    on_activity=combined_activity,
+                    approval_callback=approval_callback,
+                )
 
-            for tool_name in ("planner_agent", "researcher_agent", "analyst_agent"):
-                tool = self._tool_registry.get_tool(tool_name)
-                if hasattr(tool, "approval_callback"):
-                    tool.approval_callback = approval_callback
-                if hasattr(tool, "on_activity"):
-                    tool.on_activity = combined_activity
+                enriched_history = self._enrich_history(session_id, history)
 
-            enriched_history = self._enrich_history(session_id, history)
+                result = await turn_executor.run(
+                    {"user_query": user_query},
+                    conversation_history=enriched_history,
+                )
 
-            result = await self.root_executor.run(
-                {"user_query": user_query},
-                conversation_history=enriched_history,
-            )
+                final_answer = json.dumps(result, default=str)
+                self._finish_run(conn, run_id, "completed", final_answer)
+                return result
 
-            final_answer = json.dumps(result, default=str)
-            self._finish_run(conn, run_id, "completed", final_answer)
-            return result
-
-        except Exception as exc:
-            self._finish_run(conn, run_id, "failed", str(exc))
-            raise
-        finally:
-            self._active_sessions.discard(session_id)
-            conn.close()
+            except Exception as exc:
+                self._finish_run(conn, run_id, "failed", str(exc))
+                raise
+            finally:
+                conn.close()
 
     def _create_run(
         self, conn, run_id: str, session_id: str, query: str, started_at: str

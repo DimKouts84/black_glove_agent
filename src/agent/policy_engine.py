@@ -6,6 +6,7 @@ that ensures all operations adhere to defined security policies and constraints.
 """
 
 import logging
+import threading
 import time
 from typing import Any, Dict, List, Optional, Set
 from dataclasses import dataclass, field
@@ -89,8 +90,21 @@ class RateLimiter:
         self.logger = logging.getLogger("black_glove.policy.rate_limiter")
         self._request_counts: Dict[str, List[float]] = {}
         self._global_requests: List[float] = []
+        self._lock = threading.RLock()
     
+    def acquire_and_record(self, adapter_name: str = None) -> bool:
+        """Atomically check and record a rate-limited request."""
+        with self._lock:
+            if not self._check_rate_limit_unlocked(adapter_name):
+                return False
+            self._record_request_unlocked(adapter_name)
+            return True
+
     def check_rate_limit(self, adapter_name: str = None) -> bool:
+        with self._lock:
+            return self._check_rate_limit_unlocked(adapter_name)
+
+    def _check_rate_limit_unlocked(self, adapter_name: str = None) -> bool:
         """
         Check if rate limit would be exceeded for an adapter.
         
@@ -121,6 +135,10 @@ class RateLimiter:
         return len(requests) < max_requests
     
     def record_request(self, adapter_name: str = None) -> None:
+        with self._lock:
+            self._record_request_unlocked(adapter_name)
+
+    def _record_request_unlocked(self, adapter_name: str = None) -> None:
         """
         Record a request for rate limiting purposes.
         
@@ -382,22 +400,12 @@ class PolicyEngine:
         return True
     
     def enforce_rate_limits(self, adapter_name: str = None) -> bool:
-        """
-        Apply rate limiting to scans.
-        
-        Args:
-            adapter_name: Name of the adapter to check limits for
-            
-        Returns:
-            bool: True if request is allowed, False if rate limited
-        """
-        allowed = self.rate_limiter.check_rate_limit(adapter_name)
-        
+        """Apply rate limiting; atomically records admission when allowed."""
+        allowed = self.rate_limiter.acquire_and_record(adapter_name)
         if not allowed:
             self.logger.warning(
                 f"Rate limit exceeded for adapter: {adapter_name or 'global'}"
             )
-        
         return allowed
     
     def check_exploit_permissions(self, exploit_name: str, lab_mode: bool = False) -> bool:

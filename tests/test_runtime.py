@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, "src")
 
+from agent.executor import AgentExecutor
 from agent.models import ConfigModel
 from agent.runtime import AgentRuntime, reset_agent_runtime
 
@@ -82,7 +83,7 @@ class TestAgentRuntime:
 
         async def _run():
             with patch.object(
-                runtime.root_executor, "run", new_callable=AsyncMock, return_value=mock_result
+                AgentExecutor, "run", new_callable=AsyncMock, return_value=mock_result
             ):
                 result = await runtime.run_turn(
                     "test-session",
@@ -141,15 +142,16 @@ class TestAgentRuntime:
         mock_result = {"final_answer": {"answer": "test response"}}
 
         async def _run_with_emit():
-            async def fake_run(*args, **kwargs):
-                runtime.root_executor.on_activity({
-                    "agent": "root_agent",
-                    "type": "thinking",
-                    "content": "test",
-                })
+            async def fake_run(self, *args, **kwargs):
+                if self.on_activity:
+                    self.on_activity({
+                        "agent": "root_agent",
+                        "type": "thinking",
+                        "content": "test",
+                    })
                 return mock_result
 
-            with patch.object(runtime.root_executor, "run", side_effect=fake_run):
+            with patch.object(AgentExecutor, "run", new=fake_run):
                 def on_activity(event):
                     captured.append(event)
 
