@@ -6,7 +6,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -275,6 +275,22 @@ class TestAnalystContext:
 
 
 class TestPlanRules:
+    def test_web_tools_without_nmap_are_unchanged(self):
+        plan = {
+            "goal": "ssl only",
+            "steps": [
+                {
+                    "step_key": "ssl",
+                    "tool": "ssl_check",
+                    "target": "example.com",
+                    "parameters": {},
+                    "rationale": "ssl",
+                }
+            ],
+        }
+        _, steps = validate_scan_plan(plan, engagement_targets=["example.com"])
+        assert steps[0].depends_on == []
+
     def test_web_tools_auto_wire_after_nmap(self):
         plan = {
             "goal": "website assessment",
@@ -575,6 +591,397 @@ class TestGraphScheduling:
         assert len(completed) >= 1
 
 
+class TestPlanRunnerErrors:
+    def test_plan_validation_error_is_returned_to_root(self):
+        registry = ToolRegistry()
+        sub = SubagentTool(PLANNER_AGENT, Mock(), registry, require_approval=False)
+        sub.execute = AsyncMock(
+            return_value={
+                "scan_plan": {
+                    "goal": "bad",
+                    "reasoning": "x",
+                    "steps": [{"tool": "nmap", "target": "x"}],
+                }
+            }
+        )
+        registry.register(sub)
+        root = _simple_agent(name="root", tools=["planner_agent"])
+        llm = Mock()
+        llm.generate = Mock(
+            side_effect=[
+                Mock(
+                    content=json.dumps(
+                        {
+                            "tool": "planner_agent",
+                            "parameters": {"goal": "scan"},
+                            "rationale": "plan",
+                        }
+                    )
+                ),
+                Mock(
+                    content=json.dumps(
+                        {
+                            "tool": "complete_task",
+                            "parameters": {"final_answer": {"answer": "ok"}},
+                            "rationale": "done",
+                        }
+                    )
+                ),
+            ]
+        )
+        executor = AgentExecutor(
+            agent_definition=root,
+            llm_client=llm,
+            tool_registry=registry,
+            require_approval=False,
+        )
+
+        async def bad_runner(plan):
+            raise PlanValidationError("invalid plan shape")
+
+        executor.plan_runner = bad_runner
+        result = asyncio.run(executor.run({"q": "full scan"}))
+        assert "final_answer" in result
+        history_blob = " ".join(
+            str(c) for c in llm.generate.call_args_list
+        )
+        # Second LLM call history includes the rejected-plan tool result
+        second_messages = llm.generate.call_args_list[1].args[0]
+        joined = " ".join(m.content for m in second_messages if hasattr(m, "content"))
+        assert "rejected" in joined.lower() or "invalid plan" in joined.lower()
+
+
+class TestContinueOnFailureAndCancel:
+    def test_continue_on_failure_runs_after_failed_parent(self, temp_db):
+        pm = MagicMock()
+        store = EngagementStore()
+        executor = WorkGraphExecutor(pm, store=store, require_approval=False)
+        engagement = Engagement(name="e", targets=["example.com"])
+        store.save_engagement(engagement)
+        parent = WorkStep(
+            name="parent",
+            tool="nmap",
+            target="example.com",
+            phase=WorkPhase.ACTIVE,
+            plan_index=0,
+        )
+        child = WorkStep(
+            name="child",
+            tool="gobuster",
+            target="example.com",
+            phase=WorkPhase.ACTIVE,
+            plan_index=1,
+            depends_on=[parent.id],
+            continue_on_failure=True,
+        )
+        graph = WorkGraph(
+            engagement_id=engagement.id,
+            goal="cof",
+            steps=[parent, child],
+            current_phase=WorkPhase.ACTIVE,
+        )
+
+        from agent.tool_result import ToolResultEnvelope
+
+        async def fake_execute(step, engagement, ctx):
+            if step.id == parent.id:
+                return ToolResultEnvelope(
+                    status="error", tool_name=step.tool, summary="boom", error="boom"
+                )
+            return ToolResultEnvelope(status="success", tool_name=step.tool, summary="ok")
+
+        executor.execute_step = fake_execute  # type: ignore
+        result = asyncio.run(executor.run_graph(graph, engagement, session_id="s", run_id="r"))
+        child_step = next(s for s in result.steps if s.id == child.id)
+        assert child_step.status == StepStatus.COMPLETED
+
+    def test_settle_in_flight_cancels_pending_tasks(self, temp_db):
+        pm = MagicMock()
+        store = EngagementStore()
+        executor = WorkGraphExecutor(pm, store=store, require_approval=False)
+        engagement = Engagement(name="e", targets=["example.com"])
+        store.save_engagement(engagement)
+        step = WorkStep(
+            name="s0",
+            tool="dns_lookup",
+            target="example.com",
+            phase=WorkPhase.PASSIVE,
+            plan_index=0,
+            status=StepStatus.RUNNING,
+        )
+        graph = WorkGraph(engagement_id=engagement.id, goal="settle", steps=[step])
+        from agent.work_graph import EngagementBudget
+        from agent.execution_context import ExecutionContext
+
+        async def run_settle():
+            task = asyncio.create_task(asyncio.sleep(10))
+            await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            in_flight = {task: step}
+            budget = EngagementBudget()
+            ctx = ExecutionContext(session_id="s", run_id="r")
+            await executor._settle_in_flight(
+                in_flight, graph, budget, ctx, cancel_pending=True
+            )
+            return step.status
+
+        status = asyncio.run(run_settle())
+        assert status == StepStatus.CANCELLED
+        assert step.error == "cancelled"
+
+    def test_settle_in_flight_applies_finished_success(self, temp_db):
+        pm = MagicMock()
+        store = EngagementStore()
+        executor = WorkGraphExecutor(pm, store=store, require_approval=False)
+        engagement = Engagement(name="e", targets=["example.com"])
+        store.save_engagement(engagement)
+        step = WorkStep(
+            name="s0",
+            tool="dns_lookup",
+            target="example.com",
+            phase=WorkPhase.PASSIVE,
+            plan_index=0,
+            status=StepStatus.RUNNING,
+        )
+        graph = WorkGraph(engagement_id=engagement.id, goal="settle-ok", steps=[step])
+        from agent.work_graph import EngagementBudget
+        from agent.execution_context import ExecutionContext
+        from agent.tool_result import ToolResultEnvelope
+        from agent.worker_models import WorkerResult
+
+        async def run_settle():
+            async def done():
+                return WorkerResult(
+                    task_id=step.id,
+                    step_id=step.id,
+                    status="success",
+                    envelope=ToolResultEnvelope(
+                        status="success", tool_name=step.tool, summary="ok"
+                    ),
+                )
+
+            task = asyncio.create_task(done())
+            await task
+            in_flight = {task: step}
+            budget = EngagementBudget()
+            ctx = ExecutionContext(session_id="s", run_id="r")
+            await executor._settle_in_flight(
+                in_flight, graph, budget, ctx, cancel_pending=False
+            )
+            return step.status, budget.steps_executed
+
+        status, executed = asyncio.run(run_settle())
+        assert status == StepStatus.COMPLETED
+        assert executed == 1
+
+    def test_sequential_unreachable_blocks_pending(self, temp_db):
+        pm = MagicMock()
+        store = EngagementStore()
+        executor = WorkGraphExecutor(pm, store=store, require_approval=False)
+        engagement = Engagement(name="e", targets=["example.com"])
+        store.save_engagement(engagement)
+        parent = WorkStep(
+            name="parent",
+            tool="nmap",
+            target="example.com",
+            phase=WorkPhase.ACTIVE,
+            plan_index=0,
+        )
+        child = WorkStep(
+            name="child",
+            tool="gobuster",
+            target="example.com",
+            phase=WorkPhase.ACTIVE,
+            plan_index=1,
+            depends_on=[parent.id],
+            continue_on_failure=False,
+        )
+        graph = WorkGraph(
+            engagement_id=engagement.id,
+            goal="seq-block",
+            steps=[parent, child],
+            current_phase=WorkPhase.ACTIVE,
+        )
+
+        from agent.tool_result import ToolResultEnvelope
+
+        async def fail_parent(step, engagement, ctx):
+            return ToolResultEnvelope(
+                status="error", tool_name=step.tool, summary="boom", error="boom"
+            )
+
+        executor.execute_step = fail_parent  # type: ignore
+        result = asyncio.run(executor.run_graph(graph, engagement, session_id="s", run_id="r"))
+        assert result.status == EngagementStatus.FAILED
+        child_step = next(s for s in result.steps if s.id == child.id)
+        assert child_step.status == StepStatus.BLOCKED
+
+    def test_block_unreachable_marks_pending(self):
+        executor = WorkGraphExecutor(MagicMock(), require_approval=False)
+        pending = WorkStep(
+            name="p",
+            tool="dns_lookup",
+            target="t",
+            status=StepStatus.PENDING,
+        )
+        done = WorkStep(
+            name="d",
+            tool="whois",
+            target="t",
+            status=StepStatus.COMPLETED,
+        )
+        graph = WorkGraph(engagement_id="e", goal="g", steps=[pending, done])
+        executor._block_unreachable(graph)
+        assert pending.status == StepStatus.BLOCKED
+        assert pending.error == "unreachable"
+        assert done.status == StepStatus.COMPLETED
+
+
+class TestRuntimePlanRunnerWiring:
+    def test_run_turn_attaches_plan_runner_and_approval_context(self, monkeypatch):
+        from agent.runtime import AgentRuntime
+        from agent.models import ConfigModel
+        from agent.db import (
+            create_agent_events_table,
+            create_agent_runs_table,
+            create_sessions_table,
+            create_chat_messages_table,
+        )
+        import sqlite3
+
+        class _NoClose:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def close(self):
+                return None
+
+        conn = sqlite3.connect(":memory:")
+        create_sessions_table(conn)
+        create_chat_messages_table(conn)
+        create_agent_runs_table(conn)
+        create_agent_events_table(conn)
+        conn.execute(
+            "INSERT INTO sessions (id, title, created_at, last_active) VALUES (?, ?, ?, ?)",
+            ("sess-plan", "t", "2026-01-01", "2026-01-01"),
+        )
+        conn.commit()
+        monkeypatch.setattr("agent.runtime.get_db_connection", lambda: _NoClose(conn))
+
+        runtime = AgentRuntime(config=ConfigModel(require_approval=True))
+        seen = {}
+
+        async def fake_run(self, inputs, conversation_history=None):
+            from agent.execution_provenance import get_turn_approval_callback
+
+            seen["plan_runner"] = self.plan_runner
+            seen["callback"] = get_turn_approval_callback()
+            runtime.execute_scan_plan = AsyncMock(
+                return_value={
+                    "status": "completed",
+                    "steps": [{"tool": "whois", "status": "completed"}],
+                }
+            )
+            seen["summary"] = await self.plan_runner(
+                {
+                    "goal": "g",
+                    "steps": [
+                        {"tool": "whois", "target": "example.com"},
+                        {"tool": "generate_report", "target": "example.com"},
+                    ],
+                }
+            )
+            return {"final_answer": {"answer": "ok"}}
+
+        approve = AsyncMock(return_value=True)
+        with patch.object(AgentExecutor, "run", new=fake_run):
+            result = asyncio.run(
+                runtime.run_turn("sess-plan", "hi", approval_callback=approve)
+            )
+        assert result["final_answer"]["answer"] == "ok"
+        assert callable(seen["plan_runner"])
+        assert seen["callback"] is approve
+        assert seen["summary"]["already_executed"] is True
+        assert "whois" in seen["summary"]["completed_tools"]
+        runtime.execute_scan_plan.assert_awaited()
+        # generate_report stripped before execute_scan_plan
+        called_plan = runtime.execute_scan_plan.await_args.args[0]
+        assert [s["tool"] for s in called_plan["steps"]] == ["whois"]
+        empty = asyncio.run(
+            seen["plan_runner"](
+                {
+                    "goal": "report only",
+                    "steps": [{"tool": "generate_report", "target": "x"}],
+                }
+            )
+        )
+        assert empty["already_executed"] is True
+        assert empty["completed_tools"] == []
+
+
+class TestWorkerPoolStatusMapping:
+    def test_partial_and_not_applicable_map_to_success(self):
+        from agent.worker_pool import BoundedWorkerPool
+        from agent.worker_models import WorkerTask, WorkerKind
+        from agent.execution_context import ExecutionContext
+        from agent.tool_result import ToolResultEnvelope
+
+        pool = BoundedWorkerPool(
+            MagicMock(),
+            limits=ConcurrencyLimits(),
+            require_approval=False,
+        )
+
+        async def fake_run(task, worker_ctx):
+            mapping = {
+                "whois": "partial",
+                "sqli_scanner": "not_applicable",
+                "nmap": "blocked",
+                "gobuster": "error",
+            }
+            status = mapping[task.tool_name]
+            return (
+                ToolResultEnvelope(status=status, tool_name=task.tool_name, summary=status),
+                None,
+            )
+
+        pool._run_worker = fake_run  # type: ignore
+        pool._request_approval = AsyncMock(return_value=True)  # type: ignore
+
+        async def run_all():
+            ctx = ExecutionContext(session_id="s", run_id="r")
+            results = []
+            for tool in ("whois", "sqli_scanner", "nmap", "gobuster"):
+                task = WorkerTask(
+                    graph_id="g",
+                    step_id=tool,
+                    engagement_id="e",
+                    run_id="r",
+                    session_id="s",
+                    kind=WorkerKind.ADAPTER,
+                    tool_name=tool,
+                    target="t",
+                    parameters={},
+                    phase="passive",
+                )
+                results.append(await pool.execute_task(task, ctx))
+            return results
+
+        results = asyncio.run(run_all())
+        by_tool = {r.envelope.tool_name: r.status for r in results}
+        assert by_tool["whois"] == "success"
+        assert by_tool["sqli_scanner"] == "success"
+        assert by_tool["nmap"] == "blocked"
+        assert by_tool["gobuster"] == "error"
+
+
 class TestCliReconHelper:
     def test_execute_recon_plan_forwards_approval(self):
         from agent.cli import execute_recon_plan
@@ -589,3 +996,19 @@ class TestCliReconHelper:
         kwargs = runtime.execute_scan_plan.await_args.kwargs
         assert kwargs["approval_callback"] is approve
         assert kwargs["session_id"] == "t"
+
+    def test_passive_plan_steps_built_from_assets(self):
+        from agent.cli import _passive_plan_steps
+
+        orch = MagicMock()
+        orch.config = {"passive_tools": ["whois", "dns_lookup"]}
+        asset = MagicMock()
+        asset.target = "example.com"
+        asset.parameters = {}
+        orch.assets = [asset]
+        orch._map_asset_to_tool_params.side_effect = (
+            lambda a, tool, t: {"domain": a.target, "tool": tool}
+        )
+        steps = _passive_plan_steps(orch)
+        assert [s["tool"] for s in steps] == ["whois", "dns_lookup"]
+        assert all(s["target"] == "example.com" for s in steps)
