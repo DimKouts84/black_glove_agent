@@ -95,7 +95,9 @@ All settings editable from the web UI Settings page map to `ConfigModel` fields 
 
 Key fields:
 - `llm_provider`, `llm_endpoint`, `llm_model`, `llm_api_key`
-- `require_approval` — toggle human-in-the-loop for risky tools
+- `require_approval` — toggle human-in-the-loop for risky tools (recommended: `true` in production)
+- `enable_exploit_adapters` — keep `false` outside authorized lab assessments
+- `authorized_networks`, `blocked_targets` — warn-only scope auditing (`scope_warning` audit events; scans are not hard-blocked)
 - `adapters` — per-adapter settings (e.g. nmap timeout)
 
 ## Security

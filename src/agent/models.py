@@ -82,6 +82,20 @@ class ConfigModel(BaseModel):
         default=True,
         description="Require human approval before running non-safe tools"
     )
+    require_lab_mode_for_exploits: bool = Field(
+        default=True,
+        description="Require lab mode before exploit adapters may run",
+    )
+    authorized_networks: List[str] = Field(
+        default_factory=list,
+        description="CIDR ranges or IPs considered in-scope (empty = no scope restriction)",
+    )
+    blocked_targets: List[str] = Field(
+        default_factory=list,
+        description="Explicit targets or CIDRs that must not be scanned",
+    )
+    default_rate_limit: int = Field(default=10, ge=1, description="Default requests per second cap")
+    max_rate_limit: int = Field(default=50, ge=1, description="Maximum allowed rate limit")
     
     # Web server settings
     web_host: str = Field(default="127.0.0.1", description="Web UI bind host")
@@ -305,6 +319,35 @@ class DatabaseManager:
                     name=row[1],
                     type=AssetType(row[2]),
                     value=row[3]
+                )
+            return None
+        finally:
+            conn.close()
+
+    def get_asset_by_value(self, value: str) -> Optional[AssetModel]:
+        """
+        Retrieve an asset from the database by its value (IP, domain, etc.).
+
+        Args:
+            value: Normalized asset value to look up
+
+        Returns:
+            AssetModel instance, or None if not found
+        """
+        conn = self.get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, name, type, value FROM assets WHERE value = ?",
+                (value,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return AssetModel(
+                    id=row[0],
+                    name=row[1],
+                    type=AssetType(row[2]),
+                    value=row[3],
                 )
             return None
         finally:

@@ -332,6 +332,8 @@ class PluginManager:
         # Normalize parameters for common aliases (Issue A fix)
         params = self._normalize_params(adapter_name, params)
 
+        self._emit_scope_warning(adapter_name, params)
+
         from agent.tool_risk import check_exploit_gate
 
         exploit_err = check_exploit_gate(
@@ -503,6 +505,27 @@ class PluginManager:
                 normalized["target_url"] = target
 
         return normalized
+
+    def _extract_target_from_params(self, params: Dict[str, Any]) -> Optional[str]:
+        for key in ("target", "target_url", "host", "domain", "url"):
+            value = params.get(key)
+            if value:
+                return str(value)
+        return None
+
+    def _emit_scope_warning(self, adapter_name: str, params: Dict[str, Any]) -> None:
+        target = self._extract_target_from_params(params)
+        if not target:
+            return
+        authorized = self.config.get("authorized_networks") or []
+        blocked = self.config.get("blocked_targets") or []
+        if not authorized and not blocked:
+            return
+        from agent.asset_validator import AssetValidator
+        from agent.models import ConfigModel
+
+        validator = AssetValidator(ConfigModel.model_validate(self.config))
+        validator.warn_scope_if_needed(target, adapter=adapter_name, params=params)
 
     def _get_adapter_config(self, adapter_name: str) -> Dict[str, Any]:
         """Merge per-adapter settings from plugin manager config."""

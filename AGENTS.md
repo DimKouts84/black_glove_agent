@@ -29,8 +29,10 @@ This section adheres to the **Agentic AI Foundation (AAIF)** standards for defin
 *   **Description**: The Root Agent acts as the single point of entry for the user. It assesses the user's request and decides whether to handle it directly (for simple queries) or delegate it to a sub-agent workflow.
 *   **Agentic Processing**:
     *   **Persona**: "Black Glove, an elite penetration testing assistant."
-    *   **Decision Logic**: Delegates to Planner (complex), Researcher (data), or Analyst (interpretation).
-    *   **Key Behavior**: Prioritizes actionable answers and maintains context memory.
+*   **Decision Logic**: Delegates to Planner (complex), Researcher (data), or Analyst (interpretation).
+*   **Key Behavior**: Prioritizes actionable answers and maintains context memory.
+*   **Local-network scope**: Clarifies ambiguity when users request "local network" scans; does not silently substitute `public_ip` WAN output as a LAN gateway without acknowledgement (no LAN-discovery tool).
+*   **Web tool gating**: Runs HTTP/HTTPS scanners only when nmap shows ports 80/443/8080/8443 open.
 
 ### 2. Planner Agent
 *   **Role**: Attack Planner & Strategist.
@@ -39,6 +41,8 @@ This section adheres to the **Agentic AI Foundation (AAIF)** standards for defin
 *   **Agentic Processing**:
     *   **Persona**: "Relentless Investigator."
     *   **Strategy**: Prioritizes passive recon and secret hunting (Wayback Machine) before active scanning.
+*   **Web tool gating**: Plans `web_server_scanner`, `ssl_check`, `wappalyzer`, and vuln scanners only after nmap when HTTP/HTTPS ports may be open.
+*   **Completeness warnings**: `AgentRuntime.warn_planner_completeness()` logs when comprehensive plans omit recommended recon tools.
     *   **Constraint**: Generates plans only; never executes tools directly.
 
 ### 3. Researcher Agent
@@ -74,6 +78,8 @@ Black Glove now supports both **CLI** (`black-glove chat`) and **Web UI** (`blac
 | **React UI** | `frontend/` | Terminal-themed SPA; tools loaded dynamically from `/api/tools` |
 
 **Approval gating**: `require_approval` (default `true`) toggles human-in-the-loop via `AgentExecutor.approval_callback`. Sub-agents inherit the same approval context. Planner output can be executed deterministically via `AgentRuntime.execute_scan_plan()` and `WorkGraphExecutor`. Set `enable_parallel_workers: true` in config to fan out independent passive/active steps under bounded concurrency limits.
+
+**Target scope (warn-only)**: `authorized_networks` and `blocked_targets` in `config.yaml` emit `scope_warning` audit events via `AssetValidator`; scans are not hard-blocked.
 
 ---
 

@@ -37,6 +37,83 @@ logger = logging.getLogger("black_glove.runtime")
 ApprovalCallback = Callable[[str, Dict[str, Any]], Awaitable[bool]]
 ActivityCallback = Callable[[Dict[str, Any]], None]
 
+COMPREHENSIVE_GOAL_KEYWORDS = (
+    "full scan",
+    "comprehensive",
+    "all tools",
+    "penetration test",
+    "every tool",
+)
+RECOMMENDED_RECON_TOOLS = frozenset({
+    "whois",
+    "dns_lookup",
+    "passive_recon",
+    "sublist3r",
+    "osint_harvester",
+    "ssl_check",
+})
+WEB_GATED_TOOLS = frozenset({
+    "web_server_scanner",
+    "ssl_check",
+    "wappalyzer",
+    "web_vuln_scanner",
+    "sqli_scanner",
+})
+WEB_SERVICE_PORTS = frozenset({80, 443, 8080, 8443})
+
+
+def warn_planner_completeness(
+    scan_plan: Dict[str, Any],
+    *,
+    on_activity: Optional[ActivityCallback] = None,
+) -> List[str]:
+    """
+  Warn when a planner scan_plan omits recommended recon tools or gates web tools
+  without a prior port-discovery step.
+    """
+    warnings: List[str] = []
+    if not isinstance(scan_plan, dict):
+        return warnings
+
+    steps = scan_plan.get("steps") or []
+    planned_tools = {
+        step.get("tool")
+        for step in steps
+        if isinstance(step, dict) and step.get("tool")
+    }
+    goal = str(scan_plan.get("goal") or "").lower()
+
+    if any(keyword in goal for keyword in COMPREHENSIVE_GOAL_KEYWORDS):
+        missing = sorted(RECOMMENDED_RECON_TOOLS - planned_tools)
+        if missing:
+            warnings.append(
+                "Planner completeness: recommended recon tools missing from plan: "
+                + ", ".join(missing)
+            )
+
+    web_tools_planned = WEB_GATED_TOOLS & planned_tools
+    if web_tools_planned and "nmap" not in planned_tools:
+        warnings.append(
+            "Planner completeness: web/SSL tools planned without nmap port discovery; "
+            "gate HTTP/HTTPS scanners on open ports 80/443/8080/8443."
+        )
+
+    if on_activity:
+        for warning in warnings:
+            on_activity(
+                {
+                    "type": "warning",
+                    "content": warning,
+                    "agent": "runtime",
+                    "warnings": [warning],
+                }
+            )
+    elif warnings:
+        for warning in warnings:
+            logger.warning(warning)
+
+    return warnings
+
 
 class AgentRuntime:
     """Assembles and runs the Black Glove agent stack."""

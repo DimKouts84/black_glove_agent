@@ -115,6 +115,13 @@ class SubagentTool:
         
         # Run it
         result = await executor.run(params)
+
+        if self.name == "planner_agent" and isinstance(result, dict):
+            scan_plan = result.get("scan_plan") or result
+            from agent.runtime import warn_planner_completeness
+
+            warn_planner_completeness(scan_plan, on_activity=self.on_activity)
+
         return result
 
 

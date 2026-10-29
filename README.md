@@ -119,6 +119,7 @@ flowchart TD
 ### 🔒 Safety First
 - **Mandatory Legal Notice**: First-run acknowledgment of responsible use
 - **Human-in-the-Loop**: Approval required by default (`require_approval: true`); fail-closed without callback
+- **Production config (recommended)**: Keep `require_approval: true`, set `enable_exploit_adapters: false` unless in a lab, and define `authorized_networks` / `blocked_targets` for warn-only scope auditing
 - **Parallel scans (opt-in)**: `enable_parallel_workers: false` by default; bounded DAG scheduling for `execute_scan_plan()`
 - **Tool risk gating**: Phase and exploit controls via `tool_risk` (`check_exploit_gate`, `enable_exploit_adapters`)
 - **Work Graph Kernel**: Deterministic scan execution with phase gating and checkpointing

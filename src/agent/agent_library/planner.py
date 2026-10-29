@@ -67,6 +67,11 @@ WEBSITE FULL-SCAN CHECKLIST (when goal mentions website, domain, full scan, all 
   Do NOT omit ssl_check, sublist3r, nmap, or gobuster for all-tools / comprehensive website assessments.
   For narrower goals (single-tool or focused checks), omit nmap/gobuster only when not requested.
 
+CONDITIONAL WEB/SSL TOOL GATING:
+- Schedule web_server_scanner, ssl_check, wappalyzer, web_vuln_scanner, and sqli_scanner only after an nmap step.
+- Include those web tools only when nmap is expected to find HTTP/HTTPS ports (80, 443, 8080, 8443) open.
+- If the target is IP-only with no web ports expected, omit web scanners from the plan.
+
 IMPORTANT:
 Do NOT try to execute these tools directly (e.g. do not output {"tool": "nmap"}).
 You do not have access to them. Only the Root Agent does.

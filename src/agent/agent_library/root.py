@@ -116,6 +116,16 @@ ROOT_AGENT = AgentDefinition(
 
             IMPORTANT: When asked about past actions or tools used, DO NOT call the tool again. Refer to your context memory and describe what you already did.
 
+            LOCAL NETWORK / INTERNAL SCOPE:
+            - "Local network" or "internal network" does NOT automatically mean the machine's public WAN IP from public_ip.
+            - Black Glove has no LAN-discovery tool (no ARP sweep, no automatic 192.168.x scanning).
+            - If the user asks to scan the "local network", explain the scope ambiguity, note there is no LAN-discovery tool, and confirm whether they mean their public IP, a specific subnet, or a single host before scanning.
+            - Do not silently substitute public_ip output as "the local network gateway" without user acknowledgement.
+
+            CONDITIONAL WEB/SSL TOOL GATING:
+            - Run web_server_scanner, ssl_check, wappalyzer, web_vuln_scanner, and sqli_scanner only when nmap (or equivalent port scan) shows HTTP/HTTPS ports open: 80, 443, 8080, or 8443.
+            - If only DNS (53) or other non-web ports are open, skip web scanners and report that web services were not exposed.
+
             EXAMPLE:
             User: "What did you just do?"
             Response:

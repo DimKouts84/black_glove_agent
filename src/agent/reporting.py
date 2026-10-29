@@ -358,8 +358,8 @@ class FindingsNormalizer:
         """Normalize port scan tool output."""
         findings = []
         
-        # Example: Check for common high-risk ports
-        high_risk_ports = [21, 22, 23, 25, 53, 110, 143, 445, 1433, 3306, 3389, 5432, 5900]
+        # Common high-risk ports (DNS/53 excluded — covered by open-ports inventory note)
+        high_risk_ports = [21, 22, 23, 25, 110, 143, 445, 1433, 3306, 3389, 5432, 5900]
         open_ports = self._extract_open_ports(output)
         port_services = self._extract_port_services(output)
         
@@ -505,14 +505,36 @@ class FindingsNormalizer:
         
         return findings
 
+    @staticmethod
+    def _is_benign_camera_finding(text: str) -> bool:
+        """Return True when camera output describes absence of risk, not a vulnerability."""
+        lowered = text.strip().lower()
+        benign_phrases = (
+            "no common camera ports",
+            "no specific vulnerability",
+            "none successful",
+            "no critical camera",
+        )
+        return any(phrase in lowered for phrase in benign_phrases)
+
+    @staticmethod
+    def _is_connection_failure_finding(item: Dict[str, Any]) -> bool:
+        title = str(item.get("title", "")).strip().lower()
+        detail = str(item.get("detail", "")).strip().lower()
+        return (
+            title == "connection failed"
+            or "could not connect" in detail
+            or "connection refused" in detail
+        )
+
     def _map_severity(self, severity_str: str) -> SeverityLevel:
         mapping = {
             "critical": SeverityLevel.CRITICAL,
             "high": SeverityLevel.HIGH,
             "medium": SeverityLevel.MEDIUM,
             "low": SeverityLevel.LOW,
-            "info": SeverityLevel.LOW,
-            "error": SeverityLevel.HIGH,
+            "info": SeverityLevel.INFO,
+            "error": SeverityLevel.INFO,
         }
         return mapping.get(str(severity_str).lower(), SeverityLevel.MEDIUM)
 
@@ -656,10 +678,12 @@ class FindingsNormalizer:
 
         if tool_name.lower() == "web_server_scanner":
             items = output.get("findings", [])
-            skip_severities = {"OK", "INFO"}
+            skip_severities = {"OK", "INFO", "ERROR"}
             for item in items:
                 sev_str = str(item.get("severity", "MEDIUM")).upper()
                 if sev_str in skip_severities:
+                    continue
+                if self._is_connection_failure_finding(item):
                     continue
 
                 title = item.get("title", "Web server finding")
@@ -824,6 +848,8 @@ class FindingsNormalizer:
                     continue
                 if finding_text.startswith("✓"):
                     continue
+                if self._is_benign_camera_finding(finding_text):
+                    continue
                 if "CRITICAL" in finding_text:
                     sev = SeverityLevel.CRITICAL
                 elif "VULNERABILITY" in finding_text or "RISK" in finding_text:
@@ -865,7 +891,7 @@ class FindingsNormalizer:
                     findings.append(subdomain_finding)
 
         if not findings:
-            if tool == "passive_recon":
+            if tool in ("passive_recon", "camera_security"):
                 return findings
             description = output.get("interpretation") or f"No actionable issues from {tool_name}."
             findings.append(Finding(
@@ -1059,13 +1085,15 @@ class FindingsNormalizer:
                 findings.append(Finding(
                     title="Public IP addresses detected",
                     description="; ".join(parts),
-                    severity=SeverityLevel.LOW,
+                    severity=SeverityLevel.INFO,
                     confidence=0.95,
                     asset_id=asset.id,
                     asset_name=asset.name,
                     evidence_path=evidence_metadata["path"],
                     evidence_hash=evidence_metadata["hash"],
                     recommended_fix="No action required for IP detection.",
+                    verification_state="informational",
+                    source_tool=tool_name,
                 ))
 
         if not findings:

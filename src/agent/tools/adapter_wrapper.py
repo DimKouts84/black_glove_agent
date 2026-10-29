@@ -12,6 +12,8 @@ from agent.db import init_db
 
 from agent.models import DatabaseManager, AssetModel, AssetType
 
+from agent.target_scope import is_valid_ip, strip_host
+
 from agent.execution_provenance import get_run_context
 
 from agent.tool_result import ToolResultEnvelope
@@ -142,15 +144,29 @@ class AdapterToolWrapper:
 
 
 
-        target_val = target.replace("https://", "").replace("http://", "").strip("/")
+        target_val = strip_host(
+            target.replace("https://", "").replace("http://", "").strip("/")
+        )
 
         asset = self.db_manager.get_asset_by_name(target_val)
 
         if not asset:
 
+            asset = self.db_manager.get_asset_by_value(target_val)
+
+        if not asset:
+
             asset_type = AssetType.HOST
 
-            if "http" in target or "www" in target_val or "." in target_val:
+            if is_valid_ip(target_val):
+
+                asset_type = AssetType.HOST
+
+            elif "http" in target or "www" in target_val:
+
+                asset_type = AssetType.DOMAIN
+
+            elif "." in target_val:
 
                 asset_type = AssetType.DOMAIN
 
