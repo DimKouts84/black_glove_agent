@@ -7,7 +7,9 @@ import datetime
 import inspect
 
 from agent.definitions import AgentDefinition, AgentInput
+from agent.execution_provenance import get_turn_approval_callback
 from agent.llm_client import LLMClient, LLMMessage, LLMError, LLMResponseError
+from agent.plan_validator import PlanValidationError
 from agent.tools.registry import ToolRegistry
 from agent.tool_result import ToolResultEnvelope
 from pydantic import ValidationError
@@ -50,6 +52,7 @@ class AgentExecutor:
         self.require_approval = require_approval
         self.safe_tools = safe_tools or {"complete_task"}
         self.approval_callback = approval_callback
+        self.plan_runner = None
         self.logger = logging.getLogger(f"black_glove.executor.{agent_definition.name}")
         
         # Inject the mandatory complete_task tool
@@ -81,7 +84,7 @@ class AgentExecutor:
         query = self.definition.prompt_config.initial_query_template
         for key, value in inputs.items():
             query = query.replace(f"${{{key}}}", str(value))
-        return query
+        return re.sub(r"\$\{[^}]+\}", "", query)
 
     def _build_system_prompt(self) -> str:
         """Constructs the system prompt including tool definitions."""
@@ -146,7 +149,37 @@ EXAMPLE 1 - User asks "What is my public IP?":
     "rationale": "Using public_ip tool to detect the user's IP address"
 }}
 
-EXAMPLE 2 - User says "Hello":
+{self._complete_task_examples(output_name)}
+
+IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if you have a tool that can do it. USE YOUR TOOLS.
+"""
+        return system_prompt
+
+    def _complete_task_example(self, output_name: str) -> str:
+        """Show complete_task fields that match this agent's output schema."""
+        body: Dict[str, Any] = {"answer": "Your public IP address is 1.2.3.4"}
+        if output_name in {"scan_plan", "analysis"} and self.definition.output_config:
+            schema = self.definition.output_config.schema_model.model_json_schema()
+            required = list(schema.get("required") or [])
+            properties = schema.get("properties") or {}
+            fields = required or list(properties.keys())
+            body = {field: f"<{field}>" for field in fields}
+        return json.dumps(
+            {
+                "tool": "complete_task",
+                "parameters": {output_name: body},
+                "rationale": "Submitting the required output",
+            },
+            indent=4,
+        )
+
+    def _complete_task_examples(self, output_name: str) -> str:
+        if output_name in {"scan_plan", "analysis"}:
+            return (
+                "EXAMPLE 2 - Submit the required output with complete_task:\n"
+                + self._complete_task_example(output_name)
+            )
+        return f"""EXAMPLE 2 - User says "Hello":
 {{
     "tool": "complete_task",
     "parameters": {{
@@ -166,11 +199,7 @@ EXAMPLE 3 - After receiving tool results, provide the answer:
         }}
     }},
     "rationale": "Providing the IP address from tool results"
-}}
-
-IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if you have a tool that can do it. USE YOUR TOOLS.
-"""
-        return system_prompt
+}}"""
 
     def _emit(self, event_type: str, content: Any, **kwargs):
         if self.on_activity:
@@ -361,8 +390,9 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                         params=tool_params,
                     )
                     approved = False
-                    if self.approval_callback:
-                        approved = await self.approval_callback(tool_name, tool_params)
+                    approval_callback = self.approval_callback or get_turn_approval_callback()
+                    if approval_callback:
+                        approved = await approval_callback(tool_name, tool_params)
                     else:
                         self.logger.warning(
                             "Approval required for %s but no callback configured; denying.",
@@ -396,6 +426,20 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                         result = await tool_instance.execute(tool_params)
                     else:
                         result = tool_instance.execute(tool_params)
+                    if (
+                        tool_name == "planner_agent"
+                        and self.plan_runner
+                        and isinstance(result, dict)
+                    ):
+                        scan_plan = result.get("scan_plan")
+                        if isinstance(scan_plan, dict) and scan_plan.get("steps"):
+                            try:
+                                result = await self.plan_runner(scan_plan)
+                            except PlanValidationError as exc:
+                                result = {
+                                    "error": str(exc),
+                                    "message": "Scan plan was rejected and was not executed.",
+                                }
                 else:
                     # Fallback
                      conversation_history.append(LLMMessage(role="user", content=f"Error: Tool '{tool_name}' not found."))
@@ -433,6 +477,23 @@ IMPORTANT: NEVER tell users to "visit a website" or "use an external tool" if yo
                 "warning",
                 "Scan tools ran without generate_report. Auto-generating report...",
             )
+
+        output_name = None
+        if self.definition.output_config:
+            output_name = self.definition.output_config.output_name
+        if not scan_tools_run and output_name in {"scan_plan", "analysis"}:
+            self.logger.warning(
+                "Max turns (%s) exceeded before a valid %s was submitted.",
+                self.max_turns,
+                output_name,
+            )
+            return {
+                output_name: {
+                    "error": (
+                        f"Max turns exceeded before a valid {output_name} was submitted."
+                    )
+                }
+            }
 
         self.logger.warning(f"Max turns ({self.max_turns}) exceeded. Auto-generating report.")
         self._emit("warning", f"Max turns exceeded after {len(intermediate_results)} tool calls. Generating report...")

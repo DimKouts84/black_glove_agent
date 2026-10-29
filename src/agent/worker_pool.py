@@ -162,9 +162,12 @@ class BoundedWorkerPool:
                     self._run_worker(task, worker_ctx),
                     timeout=task.max_wall_seconds,
                 )
-                status = "success" if envelope.status == "success" else "error"
-                if envelope.status == "blocked":
+                if envelope.status in {"success", "partial", "not_applicable"}:
+                    status = "success"
+                elif envelope.status == "blocked":
                     status = "blocked"
+                else:
+                    status = "error"
                 result = WorkerResult(
                     task_id=task.task_id,
                     step_id=task.step_id,

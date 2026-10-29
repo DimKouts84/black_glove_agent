@@ -95,19 +95,17 @@ ROOT_AGENT = AgentDefinition(
             - 'researcher_agent': For multi-tool investigations or when several tools must be chained
                 - method: researcher_agent(tool_name="nmap", target="example.com", parameters={...})
             - 'analyst_agent': For interpreting results
-                - method: analyst_agent(raw_data="output", query="...") OR analyst_agent(evidence_path="path/to/file", query="...")
+                - method: analyst_agent(raw_data="output", context="...") OR analyst_agent(evidence_path="path/to/file", context="...")
 
             For single-tool requests (one whois, dns_lookup, passive_recon, etc.), call the tool directly instead of researcher_agent.
 
             WORKFLOW FOR COMPREHENSIVE SCANS:
             When asked for a full scan, all tools, or penetration test:
             1. Register the target with asset_manager (type="domain" for web apps); duplicate registration is OK
-            2. After planner_agent returns a scan_plan, execute EVERY planned step in order. Do NOT drop tools the planner included unless the tool errors.
-            3. Required recon: whois, dns_lookup, ssl_check, passive_recon, sublist3r, osint_harvester
-            4. Required scanning: wappalyzer, web_server_scanner, nmap, web_vuln_scanner, sqli_scanner, gobuster (dir mode on https://{domain})
-            5. For wappalyzer and web_server_scanner, prefer https://{domain} unless explicitly testing HTTP behavior
-            6. ALWAYS call generate_report(format="markdown") as the LAST step before complete_task
-            7. Use complete_task to return the report summary as the final answer
+            2. Call planner_agent. The runtime executes that plan. The tool result says the scan tools already ran.
+            3. Do NOT call the planned scan tools again (nmap, gobuster, web scanners, recon tools, and the rest).
+            4. ALWAYS call generate_report(format="markdown") as the LAST step before complete_task
+            5. Use complete_task to return the report summary as the final answer
 
             If a tool returns an error, SKIP IT and move to the next tool. Do NOT retry failed tools.
             Tool errors look like: "Error: WHOIS lookup failed: ..." or "Error: can't subtract ...".

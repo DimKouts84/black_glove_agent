@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 _run_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar("run_context", default=None)
+_turn_approval_callback: ContextVar[Any] = ContextVar("turn_approval_callback", default=None)
 
 
 def set_run_context(
@@ -31,3 +32,16 @@ def clear_run_context() -> None:
 
 def get_run_context() -> Dict[str, Any]:
     return dict(_run_context.get() or {})
+
+
+def set_turn_approval_callback(callback: Any):
+    """Remember the approval callback for this turn, including nested agents."""
+    return _turn_approval_callback.set(callback)
+
+
+def reset_turn_approval_callback(token) -> None:
+    _turn_approval_callback.reset(token)
+
+
+def get_turn_approval_callback():
+    return _turn_approval_callback.get()

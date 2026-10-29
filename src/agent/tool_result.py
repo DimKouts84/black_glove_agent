@@ -110,6 +110,17 @@ class ToolResultEnvelope(BaseModel):
             inner = data["scan_plan"]
             goal = str(inner.get("goal", "Scan plan ready"))[:500]
             return "success", goal
+        if "analysis" in data and isinstance(data["analysis"], dict):
+            inner = data["analysis"]
+            summary = str(inner.get("summary") or "Analysis ready")
+            titles = [
+                str(item.get("title"))
+                for item in (inner.get("findings") or [])
+                if isinstance(item, dict) and item.get("title")
+            ]
+            if titles:
+                summary = summary + " Findings: " + "; ".join(titles)
+            return "success", summary[:500]
         if "final_answer" in data:
             inner = data["final_answer"]
             if isinstance(inner, dict) and "answer" in inner:
@@ -173,7 +184,7 @@ class ToolResultEnvelope(BaseModel):
         if subagent:
             status, summary = subagent
             digest = json.dumps(data, default=str)
-            if len(digest) > 2000:
+            if "analysis" not in data and len(digest) > 2000:
                 digest = digest[:2000] + "...[digest_truncated]"
             return cls(
                 status=status,

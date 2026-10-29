@@ -41,3 +41,11 @@ Audit baseline for the Web Application Intelligence adapter group (2026-07-09).
 | `gobuster` | Done | `entries[]` normalizer; post-parse `status_codes` filter |
 | `wappalyzer` | Done | Wrapper normalizer + confidence gating |
 | `sublist3r` | Done | Config `threads` via `PluginManager`; import guard |
+
+## Live check (2026-10-29, https://dimkouts.dev)
+
+- `web_vuln_scanner` and `sqli_scanner`: homepage has no query string. Envelope status `not_applicable`, `coverage.reason = no_query_parameters`, zero vulnerabilities, zero findings. No payloads were sent.
+- `web_server_scanner`: success. Header findings (missing CSP, HSTS, X-Frame-Options, and the low header notes) are saved. File probes did not confirm a real `/.env`. When a stored Wappalyzer HSTS row exists for the same asset, the missing-HSTS finding is `conflicted` and the interpretation appends "Reconciled observations".
+- `gobuster` dir: success, 7 paths, with a soft-404 length excluded. Saved finding is informational "Paths discovered (7)" only. Non-sensitive HTTP 200/307 paths are not high findings.
+- `wappalyzer`: success, technologies at confidence >= 50, including HSTS and Cloudflare. Each technology is a low "Technology detected" finding (deduped on repeat runs).
+- `sublist3r`: success, `subdomains` empty. No finding is saved. An empty result is not "scan completed".

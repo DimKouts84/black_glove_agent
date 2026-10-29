@@ -21,7 +21,7 @@ class DNSReconAdapter(BaseAdapter):
     """
 
     def __init__(self, config: Dict[str, Any] = None):
-        super().__init__(config)
+        super().__init__(config or {})
         self.name = "DNSReconAdapter"
         self.description = "Performs advanced DNS reconnaissance (Zone Transfer, Brute-force)"
         self.default_wordlist = Path("bin/wordlists/common.txt")
@@ -40,22 +40,34 @@ class DNSReconAdapter(BaseAdapter):
             
         zone_transfer = data.get("zone_transfer", {})
         brute_force = data.get("brute_force", [])
-        
+        zt_attempted = data.get("zone_transfer_attempted", bool(zone_transfer))
+        bf_attempted = data.get("brute_force_attempted", bool(brute_force))
+
         # Zone Transfer
         zt_found = False
-        for ns, res in zone_transfer.items():
-            if res.get("status") == "success":
-                summary += f"- [CRITICAL] Zone transfer SUCCESSFUL on {ns}!\n"
-                zt_found = True
-                records = res.get("records", [])
-                summary += f"  Retrieved {len(records)} records.\n"
-            else:
-                summary += f"- Zone transfer failed on {ns}.\n"
-        if not zt_found and not zone_transfer:
-            summary += "- No zone transfer attempts were successful or performed.\n"
-        
+        saw_nameserver = False
+        if zt_attempted:
+            for ns, res in zone_transfer.items():
+                if not isinstance(res, dict):
+                    if ns == "error":
+                        summary += f"- Zone transfer lookup failed: {res}\n"
+                        saw_nameserver = True
+                    continue
+                saw_nameserver = True
+                if res.get("status") == "success":
+                    summary += f"- [CRITICAL] Zone transfer SUCCESSFUL on {ns}!\n"
+                    zt_found = True
+                    records = res.get("records", [])
+                    summary += f"  Retrieved {len(records)} records.\n"
+                elif res.get("status") == "denied":
+                    summary += f"- Zone transfer denied by {ns}.\n"
+                else:
+                    summary += f"- Zone transfer failed on {ns}.\n"
+            if not zt_found and not saw_nameserver:
+                summary += "- No zone transfer attempts were successful or performed.\n"
+
         # Brute Force
-        if brute_force:
+        if bf_attempted and brute_force:
             summary += f"- Brute force found {len(brute_force)} subdomains.\n"
             for item in brute_force[:10]:
                 if isinstance(item, str):
@@ -66,7 +78,7 @@ class DNSReconAdapter(BaseAdapter):
                     summary += f"  {name} -> {addr}\n"
             if len(brute_force) > 10:
                 summary += f"  ... ({len(brute_force)-10} more)\n"
-        else:
+        elif bf_attempted:
             summary += "- Brute force found no subdomains.\n"
             
         return summary
@@ -135,7 +147,9 @@ class DNSReconAdapter(BaseAdapter):
             "domain": domain,
             "zone_transfer": {},
             "brute_force": [],
-            "errors": []
+            "errors": [],
+            "zone_transfer_attempted": mode in ["zone_transfer", "all"],
+            "brute_force_attempted": mode in ["brute_force", "all"],
         }
 
         # 1. Zone Transfer
@@ -208,9 +222,9 @@ class DNSReconAdapter(BaseAdapter):
                 logger.info(f"Zone transfer SUCCESS against {ns_clean}")
                 
             except Exception as e:
-                pass
-                # Most servers deny AXFR, so this is expected. We don't populate failures to keep noise down
-                # or we can verify if the user wants verbose failure logs
+                # A refused AXFR is the expected outcome. Keep the nameserver so the
+                # report can say the check ran and was denied.
+                results[ns_clean] = {"status": "denied", "error": str(e)[:200]}
         
         return results
 

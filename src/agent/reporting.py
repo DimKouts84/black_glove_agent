@@ -419,10 +419,12 @@ class FindingsNormalizer:
 
         entries = self._extract_dir_entries(output)
         if entries:
+            discovered = []
             for entry in entries:
                 path = entry.get("path") or entry.get("host", "")
                 if not path:
                     continue
+                discovered.append(str(path))
                 if not any(sensitive in path.lower() for sensitive in sensitive_paths):
                     continue
                 status = entry.get("status")
@@ -458,6 +460,21 @@ class FindingsNormalizer:
                     references=[
                         "https://owasp.org/www-project-web-security-testing-guide/"
                     ]
+                ))
+            if discovered:
+                sample = discovered[:30]
+                findings.append(Finding(
+                    title=f"Paths discovered ({len(discovered)})",
+                    description=", ".join(sample),
+                    severity=SeverityLevel.INFO,
+                    confidence=0.9,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Review discovered paths and restrict anything that should not be public.",
+                    verification_state="informational",
+                    source_tool="gobuster",
                 ))
             return findings
 
@@ -850,6 +867,8 @@ class FindingsNormalizer:
                     continue
                 if self._is_benign_camera_finding(finding_text):
                     continue
+                if not any(tag in finding_text for tag in ("VULNERABILITY", "RISK", "CRITICAL", "WEAK")):
+                    continue
                 if "CRITICAL" in finding_text:
                     sev = SeverityLevel.CRITICAL
                 elif "VULNERABILITY" in finding_text or "RISK" in finding_text:
@@ -988,6 +1007,27 @@ class FindingsNormalizer:
                         evidence_hash=evidence_metadata["hash"],
                         recommended_fix="Review subdomain attack surface.",
                     ))
+            denied_ns = [
+                ns for ns, res in (output.get("zone_transfer") or {}).items()
+                if isinstance(res, dict) and res.get("status") == "denied"
+            ]
+            if denied_ns:
+                findings.append(Finding(
+                    title=f"DNS zone transfer denied ({len(denied_ns)})",
+                    description=(
+                        "AXFR was attempted and refused by "
+                        + ", ".join(denied_ns[:8])
+                    ),
+                    severity=SeverityLevel.INFO,
+                    confidence=0.9,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Keep zone transfers restricted to authorized secondary servers.",
+                    verification_state="informational",
+                    source_tool=tool_name,
+                ))
 
         elif tool == "whois":
             domain = output.get("domain", asset.name)

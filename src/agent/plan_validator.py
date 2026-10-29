@@ -8,12 +8,27 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from agent.tool_risk import get_tool_risk, phase_allows_tool
 from agent.work_graph import (
+    PHASE_ORDER,
     ConcurrencyLimits,
     FailurePolicy,
     WorkGraph,
     WorkPhase,
     WorkStep,
 )
+
+WEB_GATED_TOOLS = frozenset({
+    "web_server_scanner",
+    "ssl_check",
+    "wappalyzer",
+    "web_vuln_scanner",
+    "sqli_scanner",
+})
+NON_ADAPTER_PLAN_TOOLS = frozenset({
+    "generate_report",
+    "planner_agent",
+    "researcher_agent",
+    "analyst_agent",
+})
 
 
 class PlanValidationError(ValueError):
@@ -40,6 +55,61 @@ def _topological_order(step_ids: List[str], deps: Dict[str, List[str]]) -> List[
     for sid in step_ids:
         visit(sid)
     return order
+
+
+def executable_scan_plan(scan_plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop steps the work-graph runner cannot execute as adapters."""
+    steps = [
+        step
+        for step in (scan_plan.get("steps") or [])
+        if isinstance(step, dict) and step.get("tool") not in NON_ADAPTER_PLAN_TOOLS
+    ]
+    return {**scan_plan, "steps": steps}
+
+
+def summarize_plan_execution(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Short result for Root after the work graph has already run the plan."""
+    steps = result.get("steps") or []
+
+    def names(status: str) -> List[str]:
+        found: List[str] = []
+        for step in steps:
+            raw = step.get("status")
+            value = getattr(raw, "value", raw)
+            if value == status and step.get("tool"):
+                found.append(step["tool"])
+        return found
+
+    return {
+        "already_executed": True,
+        "message": (
+            "Scan tools already ran. Do not call them again. "
+            "Call generate_report, then complete_task."
+        ),
+        "status": result.get("status"),
+        "completed_tools": names("completed"),
+        "failed_tools": names("failed"),
+        "blocked_tools": names("blocked"),
+    }
+
+
+def _wire_web_tools_after_nmap(steps: List[WorkStep]) -> None:
+    """Make web and SSL steps wait for nmap and sit no earlier than that phase."""
+    nmap_steps = [step for step in steps if step.tool == "nmap"]
+    if not nmap_steps:
+        return
+    phase_rank = {phase: index for index, phase in enumerate(PHASE_ORDER)}
+    for step in steps:
+        if step.tool not in WEB_GATED_TOOLS:
+            continue
+        matches = [item for item in nmap_steps if item.target == step.target]
+        chosen = matches or [nmap_steps[0]]
+        for nmap_step in chosen:
+            if nmap_step.step_key and nmap_step.step_key not in step.depends_on:
+                step.depends_on.append(nmap_step.step_key)
+        latest = max(chosen, key=lambda item: phase_rank[item.phase])
+        if phase_rank[step.phase] < phase_rank[latest.phase]:
+            step.phase = latest.phase
 
 
 def validate_scan_plan(
@@ -135,6 +205,8 @@ def validate_scan_plan(
         key_to_id[step_key] = step.id
         steps.append(step)
 
+    _wire_web_tools_after_nmap(steps)
+
     for step in steps:
         resolved: List[str] = []
         for dep in step.depends_on:
@@ -145,6 +217,17 @@ def validate_scan_plan(
             resolved.append(key_to_id[dep])
         step.depends_on = resolved
         deps_by_id[step.id] = resolved
+
+    phase_rank = {phase: index for index, phase in enumerate(PHASE_ORDER)}
+    steps_by_id = {step.id: step for step in steps}
+    for step in steps:
+        for dep_id in step.depends_on:
+            dep = steps_by_id[dep_id]
+            if phase_rank[step.phase] < phase_rank[dep.phase]:
+                raise PlanValidationError(
+                    f"Step '{step.step_key}' phase '{step.phase.value}' is earlier than "
+                    f"dependency '{dep.step_key}' phase '{dep.phase.value}'"
+                )
 
     order = _topological_order([s.id for s in steps], deps_by_id)
     index_map = {sid: i for i, sid in enumerate(order)}

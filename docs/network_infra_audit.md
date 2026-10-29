@@ -38,3 +38,15 @@ Audit baseline for the Network & Infrastructure Reconnaissance adapter group.
 | `whois` | Done | RDAP-first via IANA bootstrap + Google Registry (`pubapi.registry.google`); legacy WHOIS fallback; `partial` when core fields missing |
 | `ssl_check` | Done | Timezone-aware expiry; expired cert tests |
 | `viewdns` | Done | PARTIAL on API errors with zero ports; evidence newlines fixed |
+
+## Live check (2026-10-29, dimkouts.dev)
+
+Wrapper path: `AdapterToolWrapper.execute`. Findings below are what the normalizer saved. Repeat runs update the same fingerprint instead of inserting a second row.
+
+- `public_ip`: success. Raw keys `ipv4`, `services_used`. Informational "Public IP addresses detected". No target asset; session asset `local-agent`.
+- `dns_lookup`: success. `records` holds A, AAAA, NS, SOA. Empty MX/TXT/CNAME ("No answer for record type") do not become findings.
+- `whois`: success via RDAP. Core fields present (registrar, creation, expiration). One "WHOIS registration" finding. Not a vulnerability.
+- `ssl_check`: success. Certificate metadata only (`trust_validated` is false). One low/info certificate finding. This does not mean the certificate is trusted.
+- `dns_recon` (`mode: zone_transfer` only): success. Each nameserver is `status: denied`. Saved finding: informational "DNS zone transfer denied (N)". No generic "scan completed" row. Brute force is not described.
+- `nmap` (default `-Pn -sV -T3`): success. Open ports 80, 443, 8080, 8443. Saved finding: informational "Open ports discovered (4)". None of those ports are on the high-risk list, so no high-risk service finding.
+- `viewdns`: not run. No `VIEWDNS_API_KEY` and no `adapters.viewdns.viewdns_api_key`. A missing key is an adapter error, not an empty port list.

@@ -281,13 +281,28 @@ class AdapterToolWrapper:
 
                         self.reporting_manager.save_findings_to_database(to_save)
 
+                    conflicted = [
+                        f.title for f in findings
+                        if getattr(f, "verification_state", None) == "conflicted"
+                    ]
+                    if conflicted and isinstance(result.data, dict):
+                        note = (
+                            "Reconciled observations (not confirmed findings): "
+                            + "; ".join(conflicted)
+                        )
+                        interpretation = ((interpretation or "") + "\n" + note).strip()
+                        result.data["interpretation"] = interpretation
+
             except Exception as exc:
 
-                self.logger.debug("Finding normalization/persistence failed for %s: %s", self.name, exc)
+                self.logger.warning("Finding normalization/persistence failed for %s: %s", self.name, exc)
 
 
 
             payload = dict(result.data) if isinstance(result.data, dict) else {"value": result.data}
+            if isinstance(result.metadata, dict):
+                for key, value in result.metadata.items():
+                    payload.setdefault(key, value)
 
             if result.evidence_path:
 

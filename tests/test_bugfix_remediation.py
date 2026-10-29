@@ -72,6 +72,19 @@ class TestNormalizerRemediation:
             )
         assert findings == []
 
+    def test_camera_open_web_ports_are_not_findings(self):
+        normalizer = FindingsNormalizer()
+        asset = _sample_asset()
+        output = {
+            "findings": [
+                "Open ports detected: 80 (HTTP), 443 (HTTPS), 8080 (HTTP-Alt), 8443 (HTTPS-Alt)"
+            ],
+            "vulnerabilities_detected": False,
+        }
+        with _mock_evidence(normalizer):
+            findings = normalizer.normalize_tool_output("camera_security", output, asset)
+        assert findings == []
+
     def test_port53_dns_not_high_risk_finding(self):
         normalizer = FindingsNormalizer()
         asset = _sample_asset()

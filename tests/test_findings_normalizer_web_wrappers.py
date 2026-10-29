@@ -26,6 +26,25 @@ class TestFindingsNormalizerWebWrappers:
         findings = normalizer.normalize_tool_output("gobuster", output, asset)
         assert any("/.env" in f.title for f in findings)
         assert any(f.severity == SeverityLevel.CRITICAL for f in findings)
+        assert any(f.title.startswith("Paths discovered") for f in findings)
+
+    def test_gobuster_nonsensitive_paths_stay_inventory(self, normalizer, asset, tmp_path, monkeypatch):
+        monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)
+
+        output = {
+            "mode": "dir",
+            "entries": [
+                {"path": "/about", "status": 200, "severity": "high"},
+                {"path": "/blog", "status": 200, "severity": "high"},
+            ],
+        }
+
+        findings = normalizer.normalize_tool_output("gobuster", output, asset)
+        assert len(findings) == 1
+        assert findings[0].title == "Paths discovered (2)"
+        assert findings[0].verification_state == "informational"
+        assert "/about" in findings[0].description
+        assert not any(f.severity == SeverityLevel.HIGH for f in findings)
 
     def test_wappalyzer_confidence_threshold(self, normalizer, asset, tmp_path, monkeypatch):
         monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)

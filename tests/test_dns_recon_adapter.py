@@ -77,6 +77,29 @@ class TestDNSReconExecution:
         assert result.status == AdapterResultStatus.FAILURE or result.status == AdapterResultStatus.PARTIAL
         assert "error" in result.data["zone_transfer"]
 
+    @patch("src.adapters.dns_recon.dns.resolver.resolve")
+    @patch("src.adapters.dns_recon.dns.query.xfr")
+    def test_zone_transfer_denied_is_recorded(self, mock_query_xfr, mock_resolve):
+        adapter = DNSReconAdapter()
+        ns_mock = MagicMock()
+        ns_mock.target = "ns1.example.com."
+        mock_resolve.side_effect = [
+            [ns_mock],
+            [MagicMock(address="1.2.3.4")],
+        ]
+        mock_query_xfr.side_effect = Exception("Refused")
+
+        result = adapter.execute({"target": "example.com", "mode": "zone_transfer"})
+
+        assert result.status == AdapterResultStatus.SUCCESS
+        entry = result.data["zone_transfer"]["ns1.example.com"]
+        assert entry["status"] == "denied"
+        assert result.data["zone_transfer_attempted"] is True
+        assert result.data["brute_force_attempted"] is False
+        text = adapter.interpret_result(result)
+        assert "denied by ns1.example.com" in text
+        assert "Brute force found no subdomains" not in text
+
     @patch("src.adapters.dns_recon.dns.resolver.Resolver")
     def test_brute_force_success(self, mock_resolver_cls, tmp_path):
         adapter = DNSReconAdapter()
@@ -136,6 +159,42 @@ class TestDNSReconExecution:
         )
         text = adapter.interpret_result(result)
         assert "www.example.com" in text
+
+    def test_interpret_zone_transfer_outcomes(self):
+        adapter = DNSReconAdapter()
+        from src.adapters.interface import AdapterResult, AdapterResultStatus
+
+        mixed = AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data={
+                "zone_transfer_attempted": True,
+                "brute_force_attempted": True,
+                "zone_transfer": {
+                    "ns1.example.com": {"status": "success", "records": ["a", "b"]},
+                    "ns2.example.com": {"status": "timeout"},
+                    "error": "lookup failed",
+                },
+                "brute_force": [],
+            },
+            metadata={},
+        )
+        text = adapter.interpret_result(mixed)
+        assert "SUCCESSFUL on ns1.example.com" in text
+        assert "Retrieved 2 records" in text
+        assert "failed on ns2.example.com" in text
+        assert "Zone transfer lookup failed: lookup failed" in text
+        assert "Brute force found no subdomains" in text
+
+        empty = AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data={
+                "zone_transfer_attempted": True,
+                "zone_transfer": {},
+                "brute_force": [],
+            },
+            metadata={},
+        )
+        assert "No zone transfer attempts were successful or performed" in adapter.interpret_result(empty)
 
     @pytest.mark.skip(reason="Test harness path configuration issue preventing 'adapters' module import")
     def test_plugin_manager_load_and_run(self):

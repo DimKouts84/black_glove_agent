@@ -30,7 +30,13 @@ from agent.tools.registry import ToolRegistry
 from agent.tools.report_tool import ReportTool
 from agent.work_graph import ConcurrencyLimits, Engagement, EngagementStatus
 from agent.work_graph_executor import WorkGraphExecutor
-from agent.execution_provenance import set_run_context, clear_run_context
+from agent.execution_provenance import (
+    clear_run_context,
+    reset_turn_approval_callback,
+    set_run_context,
+    set_turn_approval_callback,
+)
+from agent.plan_validator import executable_scan_plan, summarize_plan_execution
 
 logger = logging.getLogger("black_glove.runtime")
 
@@ -43,6 +49,8 @@ COMPREHENSIVE_GOAL_KEYWORDS = (
     "all tools",
     "penetration test",
     "every tool",
+    "website",
+    "domain",
 )
 RECOMMENDED_RECON_TOOLS = frozenset({
     "whois",
@@ -51,6 +59,15 @@ RECOMMENDED_RECON_TOOLS = frozenset({
     "sublist3r",
     "osint_harvester",
     "ssl_check",
+})
+FULL_SCAN_CHECKLIST = RECOMMENDED_RECON_TOOLS | frozenset({
+    "gobuster",
+    "wappalyzer",
+    "web_server_scanner",
+    "web_vuln_scanner",
+    "sqli_scanner",
+    "nmap",
+    "generate_report",
 })
 WEB_GATED_TOOLS = frozenset({
     "web_server_scanner",
@@ -89,6 +106,12 @@ def warn_planner_completeness(
             warnings.append(
                 "Planner completeness: recommended recon tools missing from plan: "
                 + ", ".join(missing)
+            )
+        missing_checklist = sorted((FULL_SCAN_CHECKLIST - RECOMMENDED_RECON_TOOLS) - planned_tools)
+        if missing_checklist:
+            warnings.append(
+                "Planner completeness: checklist tools missing from plan: "
+                + ", ".join(missing_checklist)
             )
 
     web_tools_planned = WEB_GATED_TOOLS & planned_tools
@@ -383,6 +406,7 @@ class AgentRuntime:
             started_at = datetime.now().isoformat()
             conn = get_db_connection()
             finalized = False
+            approval_token = set_turn_approval_callback(approval_callback)
 
             try:
                 self._create_run(conn, run_id, session_id, user_query, started_at)
@@ -403,6 +427,21 @@ class AgentRuntime:
                     on_activity=combined_activity,
                     approval_callback=approval_callback,
                 )
+
+                async def plan_runner(scan_plan: Dict[str, Any]) -> Dict[str, Any]:
+                    filtered = executable_scan_plan(scan_plan)
+                    if not filtered.get("steps"):
+                        return summarize_plan_execution({"status": "completed", "steps": []})
+                    executed = await self.execute_scan_plan(
+                        filtered,
+                        session_id=session_id,
+                        run_id=run_id,
+                        on_activity=combined_activity,
+                        approval_callback=approval_callback,
+                    )
+                    return summarize_plan_execution(executed)
+
+                turn_executor.plan_runner = plan_runner
 
                 enriched_history = self._enrich_history(session_id, history)
 
@@ -425,6 +464,7 @@ class AgentRuntime:
                     self._finish_run(conn, run_id, "failed", str(exc))
                 raise
             finally:
+                reset_turn_approval_callback(approval_token)
                 clear_run_context()
                 if not finalized:
                     row = conn.execute(

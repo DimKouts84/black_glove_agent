@@ -25,6 +25,8 @@ Audit baseline for operational adapters (non-scanner tooling). Verified 2026-07-
 - `asset_manager` manages the `assets` table scope.
 - Scanner adapters persist findings via `AdapterToolWrapper` → `FindingsNormalizer` → `DatabaseManager`.
 - `public_ip` has no target; wrapper creates/uses session asset `local-agent` (`local`).
+- Adapter `data` is often a string. The wrapper copies `metadata` (`action`, `asset_id`, `count`) onto the tool result next to `value`.
+- Live check (2026-10-29): add then remove of a throwaway host returned `action: add` and `action: removed` with the new `asset_id`. No findings are created. The throwaway row was removed.
 
 ## PluginManager adapter config
 

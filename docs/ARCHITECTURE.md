@@ -48,13 +48,15 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
   - Expose `WorkGraphExecutor` for governed multi-step scans
   - Persist run traces (`agent_runs` / `agent_events`) and step summaries
 - **Key APIs**:
-  - `run_turn()`: interactive ReAct chat turn
-  - `execute_scan_plan()`: deterministic execution of planner output
+  - `run_turn()`: interactive ReAct chat turn; after `planner_agent` returns a plan, runs it via `execute_scan_plan` and returns an already-executed summary to Root
+  - `execute_scan_plan()`: deterministic execution of planner output (also used by CLI recon)
 
 ### 3. Work Graph Kernel (`src/agent/work_graph_executor.py`)
 - **Purpose**: Deterministic execution engine for pentest steps
 - **Responsibilities**:
-  - Enforce phase gating (`passive → active → credential/exploit`)
+  - Enforce phase gating (`passive → active → credential/exploit`) on both sequential and parallel runners
+  - Treat `partial` and `not_applicable` tool envelopes as completed for dependency purposes
+  - Drain in-flight parallel work before pause/cancel; mark unreachable pending steps `BLOCKED` instead of leaving the graph `RUNNING`
   - Apply exploit gates and approval before adapter calls
   - Checkpoint graphs to SQLite (`engagements`, `work_graphs`)
   - Write append-only audit events and cross-turn step summaries
@@ -218,8 +220,9 @@ Policy/Tool/Approval events → audit.write_audit() → audit_log table
 - **When**: Active, credential, exploit tools, and sub-agent delegation
 - **Default**: `require_approval: true` in config
 - **Fail-closed**: Missing approval callback denies execution
-- **Propagation**: Sub-agents inherit parent approval settings
-- **Implementation**: `AgentExecutor.approval_callback` and WebSocket approval flow
+- **Propagation**: Nested executors read the turn's approval callback from `execution_provenance` context (not a mutable field on the shared `SubagentTool`)
+- **CLI recon**: Chat and standalone `recon` pass the approval callback into `execute_scan_plan`; they do not set `approval_required=False`
+- **Implementation**: `AgentExecutor.approval_callback`, turn context, and WebSocket approval flow
 
 ### Process Isolation
 Adapters execute as local subprocesses via `ProcessRunner` (`shell=False`, argument sanitization, timeouts). Docker is optional metadata only; containers are not required for the default execution path.

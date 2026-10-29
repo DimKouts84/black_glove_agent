@@ -56,6 +56,26 @@ class TestFindingsNormalizerNetworkInfra:
         findings = normalizer.normalize_tool_output("dns_recon", output, asset)
         assert any(f.severity == SeverityLevel.CRITICAL for f in findings)
 
+    def test_dns_recon_denied_zone_transfer_is_informational(self, normalizer, asset, tmp_path, monkeypatch):
+        monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)
+
+        output = {
+            "zone_transfer": {
+                "cloe.ns.cloudflare.com": {"status": "denied", "error": "Refused"},
+            },
+            "brute_force": [],
+            "zone_transfer_attempted": True,
+            "brute_force_attempted": False,
+            "interpretation": "Zone transfer denied by cloe.ns.cloudflare.com.",
+        }
+
+        findings = normalizer.normalize_tool_output("dns_recon", output, asset)
+        assert len(findings) == 1
+        assert findings[0].title.startswith("DNS zone transfer denied")
+        assert findings[0].severity == SeverityLevel.INFO
+        assert findings[0].verification_state == "informational"
+        assert not any("scan completed" in f.title for f in findings)
+
     def test_ssl_check_expired_high(self, normalizer, asset, tmp_path, monkeypatch):
         monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)
 
@@ -76,7 +96,8 @@ class TestFindingsNormalizerNetworkInfra:
 
         findings = normalizer.normalize_tool_output("public_ip", output, asset)
         assert len(findings) == 1
-        assert findings[0].severity == SeverityLevel.LOW
+        assert findings[0].severity == SeverityLevel.INFO
+        assert findings[0].verification_state == "informational"
         assert "203.0.113.1" in findings[0].description
         assert "api.ipify.org" in findings[0].description
 

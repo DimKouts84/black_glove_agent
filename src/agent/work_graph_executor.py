@@ -94,7 +94,25 @@ class WorkGraphExecutor:
         if not step.depends_on:
             return True
         steps = self._step_map(graph)
-        return all(steps[dep].status == StepStatus.COMPLETED for dep in step.depends_on)
+        terminal_failure = {
+            StepStatus.FAILED,
+            StepStatus.BLOCKED,
+            StepStatus.CANCELLED,
+        }
+        for dep_id in step.depends_on:
+            dep = steps[dep_id]
+            if dep.status == StepStatus.COMPLETED:
+                continue
+            if step.continue_on_failure and dep.status in terminal_failure:
+                continue
+            return False
+        return True
+
+    def _block_unreachable(self, graph: WorkGraph) -> None:
+        for step in graph.steps:
+            if step.status == StepStatus.PENDING:
+                step.status = StepStatus.BLOCKED
+                step.error = step.error or "unreachable"
 
     def _propagate_failures(self, graph: WorkGraph) -> None:
         steps = self._step_map(graph)
@@ -240,11 +258,12 @@ class WorkGraphExecutor:
         step.evidence_paths = result.evidence_paths
         step.finding_ids = result.finding_ids
 
-        if result.status == "success":
+        step.outcome = result.envelope.status
+        if result.envelope.status in {"success", "partial", "not_applicable"} or result.status == "success":
             step.status = StepStatus.COMPLETED
             if step.id not in graph.completed_step_ids:
                 graph.completed_step_ids.append(step.id)
-        elif result.status == "blocked":
+        elif result.status == "blocked" or result.envelope.status == "blocked":
             step.status = StepStatus.BLOCKED
         elif result.status == "cancelled":
             step.status = StepStatus.CANCELLED
@@ -262,7 +281,8 @@ class WorkGraphExecutor:
         step.evidence_paths = envelope.evidence_paths
         step.finding_ids = envelope.finding_ids
 
-        if envelope.status == "success":
+        step.outcome = envelope.status
+        if envelope.status in {"success", "partial", "not_applicable"}:
             step.status = StepStatus.COMPLETED
             if step.id not in graph.completed_step_ids:
                 graph.completed_step_ids.append(step.id)
@@ -295,14 +315,15 @@ class WorkGraphExecutor:
         in_flight: Dict[asyncio.Task, WorkStep] = {}
         graph_lock = asyncio.Lock()
 
+        stop_reason: Optional[str] = None
         while True:
             if graph.cancelled or ctx.is_cancelled():
-                graph.status = EngagementStatus.CANCELLED
+                stop_reason = "cancel"
                 break
 
             budget.wall_seconds = time.monotonic() - start
             if not budget.within_limits(engagement):
-                graph.status = EngagementStatus.PAUSED
+                stop_reason = "pause"
                 break
 
             self._propagate_failures(graph)
@@ -316,7 +337,7 @@ class WorkGraphExecutor:
             if not ready and not in_flight:
                 pending = [s for s in graph.steps if s.status == StepStatus.PENDING]
                 if pending:
-                    raise RuntimeError("Work graph deadlock: pending steps with empty ready set")
+                    self._block_unreachable(graph)
                 break
 
             while ready and len(in_flight) < graph.concurrency_limits.max_concurrent_global:
@@ -392,17 +413,86 @@ class WorkGraphExecutor:
             if graph.failure_policy == FailurePolicy.FAIL_FAST:
                 failed = [s for s in graph.steps if s.status == StepStatus.FAILED]
                 if failed:
+                    stop_reason = "fail_fast"
                     break
 
-        for task in list(in_flight.keys()):
-            task.cancel()
-        if in_flight:
-            await asyncio.gather(*in_flight.keys(), return_exceptions=True)
+        await self._settle_in_flight(
+            in_flight,
+            graph,
+            budget,
+            ctx,
+            cancel_pending=stop_reason == "cancel",
+        )
+        if stop_reason == "cancel":
+            graph.status = EngagementStatus.CANCELLED
+        elif stop_reason == "pause":
+            graph.status = EngagementStatus.PAUSED
 
         analysis_steps = [s for s in graph.steps if s.phase == WorkPhase.ANALYSIS and s.status == StepStatus.PENDING]
         if analysis_steps and not graph.cancelled:
             batch = FanInBatch(graph_id=graph.id, shard_key="default")
             await reducer.reduce(batch)
+
+    async def _settle_in_flight(
+        self,
+        in_flight: Dict[asyncio.Task, WorkStep],
+        graph: WorkGraph,
+        budget: EngagementBudget,
+        ctx: ExecutionContext,
+        *,
+        cancel_pending: bool,
+    ) -> None:
+        """Record work that already finished, then wait or cancel the rest."""
+        if not in_flight:
+            return
+        if cancel_pending:
+            for task in list(in_flight):
+                if not task.done():
+                    task.cancel()
+        pending = [task for task in in_flight if not task.done()]
+        if pending:
+            await asyncio.wait(pending)
+        for task, step in list(in_flight.items()):
+            in_flight.pop(task, None)
+            if task.cancelled():
+                step.status = StepStatus.CANCELLED
+                step.error = "cancelled"
+                step.finished_at = datetime.now().isoformat()
+                continue
+            try:
+                result: WorkerResult = task.result()
+            except asyncio.CancelledError:
+                step.status = StepStatus.CANCELLED
+                step.error = "cancelled"
+                step.finished_at = datetime.now().isoformat()
+                continue
+            except Exception as exc:
+                result = WorkerResult(
+                    task_id=step.id,
+                    step_id=step.id,
+                    status="error",
+                    envelope=ToolResultEnvelope(
+                        status="error",
+                        tool_name=step.tool,
+                        summary=str(exc),
+                        error=str(exc),
+                        retryable=True,
+                    ),
+                    error=str(exc),
+                )
+            self._apply_worker_result(step, graph, result)
+            budget.steps_executed += 1
+            if ctx.session_id:
+                self.store.save_step_summary(
+                    session_id=ctx.session_id,
+                    run_id=ctx.run_id,
+                    tool_name=step.tool,
+                    target=step.target,
+                    status=step.status.value,
+                    summary=result.envelope.summary,
+                    evidence_paths=result.evidence_paths,
+                    finding_ids=result.finding_ids,
+                )
 
     async def _run_sequential(
         self,
@@ -413,46 +503,49 @@ class WorkGraphExecutor:
         start: float,
     ) -> None:
         while True:
-            progressed = False
-            for step in graph.steps:
-                if graph.cancelled or ctx.is_cancelled():
-                    graph.status = EngagementStatus.CANCELLED
-                    return
+            if graph.cancelled or ctx.is_cancelled():
+                graph.status = EngagementStatus.CANCELLED
+                return
 
-                budget.wall_seconds = time.monotonic() - start
-                if not budget.within_limits(engagement):
-                    graph.status = EngagementStatus.PAUSED
-                    return
+            budget.wall_seconds = time.monotonic() - start
+            if not budget.within_limits(engagement):
+                graph.status = EngagementStatus.PAUSED
+                return
 
-                if step.status in TERMINAL:
-                    continue
-                if not self._dependencies_met(step, graph):
-                    continue
+            self._propagate_failures(graph)
 
-                step.status = StepStatus.RUNNING
-                step.started_at = datetime.now().isoformat()
-                self.store.save_work_graph(graph)
+            if self._phase_complete(graph):
+                if not self._advance_phase(graph):
+                    break
+                continue
 
-                envelope = await self.execute_step(step, engagement, ctx)
-                self._apply_envelope(step, graph, envelope)
-                budget.steps_executed += 1
-                self.store.save_work_graph(graph)
-                progressed = True
-
-                if ctx.session_id:
-                    self.store.save_step_summary(
-                        session_id=ctx.session_id,
-                        run_id=ctx.run_id,
-                        tool_name=step.tool,
-                        target=step.target,
-                        status=step.status.value,
-                        summary=envelope.summary,
-                        evidence_paths=envelope.evidence_paths,
-                        finding_ids=envelope.finding_ids,
-                    )
-
-            if not progressed:
+            ready = self._ready_steps(graph)
+            if not ready:
+                if any(step.status == StepStatus.PENDING for step in graph.steps):
+                    self._block_unreachable(graph)
                 break
+
+            step = ready[0]
+            step.status = StepStatus.RUNNING
+            step.started_at = datetime.now().isoformat()
+            self.store.save_work_graph(graph)
+
+            envelope = await self.execute_step(step, engagement, ctx)
+            self._apply_envelope(step, graph, envelope)
+            budget.steps_executed += 1
+            self.store.save_work_graph(graph)
+
+            if ctx.session_id:
+                self.store.save_step_summary(
+                    session_id=ctx.session_id,
+                    run_id=ctx.run_id,
+                    tool_name=step.tool,
+                    target=step.target,
+                    status=step.status.value,
+                    summary=envelope.summary,
+                    evidence_paths=envelope.evidence_paths,
+                    finding_ids=envelope.finding_ids,
+                )
 
     async def run_graph(
         self,

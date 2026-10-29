@@ -57,17 +57,20 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - Empty registrar/dates → `partial` with warnings, never a successful registration finding.
 
 ### `web_vuln_scanner` / `sqli_scanner`
-- URLs without query parameters → `not_applicable` with `coverage.parameters_tested = 0`.
+- URLs without query parameters → envelope status `not_applicable` with `coverage.scanned_params = 0`, `coverage.untested = true`, and `coverage.reason = no_query_parameters`.
+- That result does not create a finding. A parameterless URL is not reported as "no vulnerabilities found".
 
 ### `web_server_scanner`
 - Missing security headers include request URL and HTTP status in evidence.
-- HSTS detected by fingerprinting but absent in direct header checks is flagged as a cross-tool conflict note when scanned over HTTPS in the same run.
+- HSTS detected by Wappalyzer but absent in the direct header check is stored as `verification_state: conflicted` and severity INFO.
+- The tool interpretation then appends `Reconciled observations (not confirmed findings)` for those titles, so the chat summary does not leave the header as a confirmed high finding.
 - Missing HSTS on a plain **HTTP** response is `informational` (not ranked as a high-severity key finding).
 - Connection failures (`ERROR` severity, "Connection failed") are **not** persisted as HIGH findings; they are skipped (coverage only).
 
 ### `camera_security`
 - Benign negative results (e.g. "No common camera ports are open") do **not** create findings.
-- Findings are emitted only when real risk indicators are present (`VULNERABILITY`, `RISK`, `CRITICAL`, `WEAK`) or `vulnerabilities_detected` is true.
+- An open-port inventory line is not a finding. Ordinary web ports (80, 443, 8080, 8443) stay in the raw `open_ports` list only.
+- A finding is saved only when the text contains `VULNERABILITY`, `RISK`, `CRITICAL`, or `WEAK`.
 
 ### `nmap`
 - Port **53/DNS** is not flagged as a high-risk service; open DNS still appears in the informational `Open ports discovered` note.
@@ -102,12 +105,19 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - Benign empty record types (`No answer for record type`, `Domain does not exist`) do **not** create findings.
 - Genuine resolver failures (timeouts, etc.) emit informational `DNS <type> query issue` findings.
 
+### `dns_recon`
+- `mode: zone_transfer` attempts AXFR and records each nameserver as `success` or `denied`. A refusal is an informational `DNS zone transfer denied (N)` finding, not a generic "scan completed" row.
+- A successful AXFR stays CRITICAL.
+- Brute-force text is included only when that mode actually ran. `zone_transfer` mode does not claim that brute force found nothing.
+
 ### `asset_manager`
 - `add` is idempotent: re-registering an existing `value` returns `success` with `action: exists` and the existing `asset_id` (no spurious error trace).
+- The human-readable message stays in `value`. `action` and `asset_id` from adapter metadata are copied onto the tool result so the agent can see them.
 
 ### `gobuster`
 - Bare wordlist filenames (e.g. `common.txt`) and config-relative paths (`bin/wordlists/common.txt`) resolve to the bundled wordlist under `bin/wordlists/`.
 - Omit `wordlist` in tool params to use the bundled default automatically.
 - SPA catch-all HTTP 200 responses (soft-404): pre-probes a random path, retries with `--exclude-length`, and returns `partial` (not hard `error`) when enumeration cannot proceed after exclusion.
+- Every remaining path is listed in one informational `Paths discovered (N)` finding. Only sensitive paths (admin, login, `.env`, `.git`, backups, and similar) also get their own severity finding. A normal page with HTTP 200 is not stored as a high vulnerability.
 
 ### Subdomain findings

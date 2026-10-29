@@ -94,6 +94,7 @@ class WorkStep(BaseModel):
     evidence_paths: List[str] = Field(default_factory=list)
     finding_ids: List[int] = Field(default_factory=list)
     error: Optional[str] = None
+    outcome: Optional[str] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
 

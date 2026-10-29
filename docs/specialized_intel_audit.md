@@ -34,3 +34,10 @@ ote. Valid creds require status change and response fingerprint change vs unauth
 | `osint_harvester` | Done | Specialized normalizer branch |
 | `credential_tester` | Done | HTTP Basic pre-check; CRITICAL cred findings |
 | `camera_security` | Done | String finding interpret + normalizer |
+
+## Live check (2026-10-29, dimkouts.dev)
+
+- `passive_recon`: `partial`. crt.sh returned certificates and names. Wayback returned 0 snapshots with warning `wayback: no snapshots returned` and `coverage.wayback_ok: false`. Subdomain names fold into the shared "Subdomains discovered (N)" fingerprint. No secret indicators. Partial is not a clean pass.
+- `osint_harvester`: success. Emails 0, subdomains 2 (`dimkouts.dev`, `www.dimkouts.dev`). Same subdomain fingerprint as passive recon. No email finding when the list is empty.
+- `camera_security`: success. Raw `open_ports` lists 80, 443, 8080, 8443. The inventory sentence is not a finding. `vulnerabilities_detected` stayed false. No camera finding is saved.
+- `credential_tester`: not pointed at the live site. Valid credentials remain a CRITICAL finding in the normalizer tests. HTTP Basic still requires a 401 challenge before any attempt.

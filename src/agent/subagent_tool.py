@@ -113,6 +113,9 @@ class SubagentTool:
             approval_callback=self.approval_callback,
         )
         
+        if params.get("query") and not params.get("context"):
+            params["context"] = params["query"]
+
         # Run it
         result = await executor.run(params)
 

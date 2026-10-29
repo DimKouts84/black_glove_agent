@@ -71,6 +71,10 @@ result = adapter.execute({
 })
 ```
 
+A refused AXFR is stored per nameserver as `status: denied` and becomes an
+informational finding. It is not reported as a completed scan with no result.
+`mode: zone_transfer` does not run the subdomain wordlist.
+
 ### Web Server Scanner
 
 Nikto-like checks for headers, dangerous files, and server versions. Uses content
@@ -87,7 +91,9 @@ result = adapter.execute({
 
 **Limitations:** File probes require content validation; informational paths
 (e.g. `robots.txt`) are excluded from file checks. HTTP 403 alone is not reported
-as a confirmed finding.
+as a confirmed finding. A missing HSTS header is stored as conflicted, not as a
+confirmed high finding, when Wappalyzer already recorded HSTS for that asset.
+The interpretation string says so.
 
 ### SQL Injection Scanner
 
@@ -105,6 +111,7 @@ result = adapter.execute({
 
 **Limitations:** Not a replacement for sqlmap. Error-based checks ignore patterns
 already present in the baseline response. Time-blind requires a confirmatory delay.
+A URL with no query string returns `not_applicable` and does not create a finding.
 
 ### Web Vulnerability Scanner
 
@@ -169,7 +176,7 @@ Heuristic checks for exposed IP camera services (RTSP/HTTP).
 result = adapter.execute({"target": "192.168.1.100"})
 ```
 
-**Limitations:** TCP/HTTP heuristics only; `findings` are human-readable strings with embedded severity tags.
+**Limitations:** TCP/HTTP heuristics only. The report keeps a camera finding only when the text contains `VULNERABILITY`, `RISK`, `CRITICAL`, or `WEAK`. Open web ports stay in `open_ports` and do not become a medium finding.
 
 ### Credential Tester
 

@@ -2,6 +2,7 @@
 CLI implementation for Black Glove pentest agent.
 Provides the main command-line interface using Typer with Rich formatting.
 """
+import asyncio
 import typer
 import sys
 import os
@@ -546,7 +547,62 @@ def init(
     # Jump to chat
     chat()
 
-def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, adapters: Optional[str], llm_client=None):
+def _step_field(step, name: str, default=""):
+    if hasattr(step, "get"):
+        return step.get(name, default)
+    return getattr(step, name, default)
+
+
+def _step_to_plan_step(step) -> dict:
+    parameters = _step_field(step, "parameters", None)
+    if not parameters:
+        parameters = _step_field(step, "params", None) or {}
+    return {
+        "tool": _step_field(step, "tool", ""),
+        "target": _step_field(step, "target", "") or "",
+        "parameters": parameters or {},
+        "rationale": _step_field(step, "description", "") or _step_field(step, "rationale", "") or "",
+    }
+
+
+def _passive_plan_steps(orchestrator) -> list:
+    tools = orchestrator.config.get("passive_tools", ["whois", "dns_lookup", "ssl_check"])
+    steps = []
+    for asset in orchestrator.assets:
+        target = asset.target
+        asset_type = "domain" if "." in target and not str(target).replace(".", "").isdigit() else "host"
+        for tool_name in tools:
+            params = orchestrator._map_asset_to_tool_params(asset, tool_name, asset_type)
+            steps.append(
+                {
+                    "tool": tool_name,
+                    "target": target,
+                    "parameters": params,
+                    "rationale": "passive recon",
+                }
+            )
+    return steps
+
+
+def _default_cli_approval(config):
+    async def callback(tool_name: str, params: dict) -> bool:
+        if not config.require_approval:
+            return True
+        return typer.confirm(f"Approve execution of '{tool_name}'?", default=False)
+
+    return callback
+
+
+async def execute_recon_plan(runtime, scan_plan, approval_callback, session_id: str = "cli-recon"):
+    """Run a recon plan through the work-graph runner with the turn approval callback."""
+    return await runtime.execute_scan_plan(
+        scan_plan,
+        session_id=session_id,
+        approval_callback=approval_callback,
+    )
+
+
+async def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, adapters: Optional[str], llm_client=None, runtime=None, approval_callback=None):
     """
     Implementation of recon logic.
     """
@@ -601,8 +657,15 @@ def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, ada
     if dry_run:
         mode_lower = mode.lower()
         if mode_lower == "passive":
-            console.print("[yellow]📝 Dry-run:[/yellow] validated assets and permissions for passive recon. No execution performed.")
-            console.print(f"[cyan]Assets to process:[/cyan] {len(assets)}")
+            steps = _passive_plan_steps(orchestrator)
+            table = Table(title="Planned passive steps (dry-run)", show_header=True, header_style="bold magenta")
+            table.add_column("Index", justify="right")
+            table.add_column("Tool")
+            table.add_column("Target", overflow="fold")
+            table.add_column("Params", overflow="fold")
+            for idx, step in enumerate(steps, 1):
+                table.add_row(str(idx), step["tool"], step["target"], str(step.get("parameters", "")))
+            console.print(table)
             return
         else:
             try:
@@ -636,74 +699,69 @@ def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, ada
             console.print(table)
             return
     
-    # Run appropriate recon mode with progress
-    if mode.lower() == "passive":
-        console.print("[yellow]📡 Starting passive reconnaissance...[/yellow]")
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("Running passive scans...", total=None)
-            results = orchestrator.run_passive_recon()
-            progress.update(task, description="Passive reconnaissance completed")
-            progress.stop()
-        
-        console.print(f"[green]✅ Passive reconnaissance completed with {len(results)} results[/green]")
-    
-    elif mode.lower() == "active":
-        console.print("[orange3]⚡ Starting active reconnaissance...[/orange3]")
-        # Plan active scans
-        steps = orchestrator.plan_active_scans()
-        if adapters:
-            _filters = [s.strip().lower() for s in adapters.split(",") if s.strip()]
-            steps = [
-                s for s in steps
-                if (
-                    (str(s.get("tool", "")).lower() if hasattr(s, "get") else str(getattr(s, "tool", "")).lower())
-                ) in _filters
-            ]
-        console.print(f"[blue]📋 Planned {len(steps)} active scanning steps[/blue]")
-        
-        # Execute steps with progress
-        executed_count = 0
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("Executing active scans...", total=len(steps))
-            
-            # Execute steps (in real implementation, this would require user approval)
-            for i, step in enumerate(steps, 1):
-                step_tool_display = (str(step.get("tool", "unknown")) if hasattr(step, "get") else str(getattr(step, "tool", "unknown")))
-                progress.update(task, description=f"Executing step {i}/{len(steps)}: {step_tool_display}")
-                # Ensure we pass a WorkflowStep object to orchestrator.execute_scan_step
-                if hasattr(step, "get"):
-                    step_obj = WorkflowStep(
-                        name=step.get("name") or f"step_{i}",
-                        description=step.get("description", ""),
-                        tool=step.get("tool"),
-                        target=step.get("target"),
-                        parameters=step.get("params") or step.get("parameters") or {},
-                        priority=step.get("priority", i)
-                    )
-                else:
-                    step_obj = step
-                result = orchestrator.execute_scan_step(step_obj, approval_required=False)  # Auto-approve for demo
-                if result:
-                    executed_count += 1
-                progress.advance(task)
-        
-        console.print(f"[green]✅ Active scanning completed with {executed_count} successful steps[/green]")
-    else:
+    mode_lower = mode.lower()
+    if mode_lower not in {"passive", "active"}:
         console.print(f"[red]❌ Invalid recon mode: {mode}. Use 'passive' or 'active'[/red]")
         return
-    
+
+    from .runtime import AgentRuntime
+
+    scan_runtime = runtime or AgentRuntime(config=config)
+    approve = approval_callback or _default_cli_approval(config)
+
+    if mode_lower == "passive":
+        console.print("[yellow]📡 Starting passive reconnaissance...[/yellow]")
+        plan_steps = _passive_plan_steps(orchestrator)
+        goal = "Passive reconnaissance"
+    else:
+        console.print("[orange3]⚡ Starting active reconnaissance...[/orange3]")
+        planned = orchestrator.plan_active_scans()
+        if adapters:
+            _filters = [s.strip().lower() for s in adapters.split(",") if s.strip()]
+            planned = [
+                s for s in planned
+                if str(_step_field(s, "tool", "")).lower() in _filters
+            ]
+        plan_steps = [_step_to_plan_step(step) for step in planned]
+        goal = "Active reconnaissance"
+
+    if not plan_steps:
+        console.print("[yellow]No recon steps to execute.[/yellow]")
+        orchestrator.cleanup()
+        return
+
+    scan_plan = {
+        "goal": goal,
+        "reasoning": "CLI recon",
+        "steps": plan_steps,
+    }
+    console.print(f"[blue]📋 Planned {len(plan_steps)} scanning steps[/blue]")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Executing {mode_lower} scans...", total=None)
+        result = await execute_recon_plan(
+            scan_runtime,
+            scan_plan,
+            approve,
+            session_id="cli-recon",
+        )
+        progress.update(task, description=f"{mode_lower.title()} reconnaissance completed")
+        progress.stop()
+
+    completed = result.get("completed_steps", 0)
+    total = result.get("total_steps", 0)
+    status = result.get("status", "unknown")
+    console.print(
+        f"[green]✅ {mode_lower.title()} reconnaissance finished "
+        f"({completed}/{total} steps, status={status})[/green]"
+    )
+
     # Generate report with progress
     console.print("[cyan]📊 Generating security assessment report...[/cyan]")
     try:
@@ -716,35 +774,33 @@ def _recon_impl(mode: str, asset: Optional[str], preset: str, dry_run: bool, ada
             report_data = orchestrator.generate_report()
             progress.update(task, description="Report generation completed")
             progress.stop()
-        
+
         findings_count = report_data['summary']['total_findings']
         severity_counts = report_data['summary']['findings_by_severity']
-        
-        # Color-coded findings summary
+
         console.print(f"[bold green]📊 Report generated: {findings_count} findings identified[/bold green]")
-        
-        # Create findings summary table
+
         table = Table(title="Findings by Severity", show_header=True, header_style="bold magenta")
         table.add_column("Severity", style="bold")
         table.add_column("Count", justify="right")
-        
+
         severity_colors = {
             'critical': 'red',
-            'high': 'orange3', 
+            'high': 'orange3',
             'medium': 'yellow',
             'low': 'blue',
             'info': 'cyan'
         }
-        
+
         for severity, count in severity_counts.items():
             color = severity_colors.get(severity, 'white')
             table.add_row(f"[{color}]{severity.title()}[/{color}]", str(count))
-        
+
         console.print(table)
-        
+
     except Exception as e:
         console.print(f"[yellow]⚠️  Report generation failed: {e}[/yellow]")
-    
+
     orchestrator.cleanup()
 
 @app.command()
@@ -759,7 +815,7 @@ def recon(
     """
     Run reconnaissance on specified assets.
     """
-    _recon_impl(mode, asset, preset, dry_run, adapters)
+    asyncio.run(_recon_impl(mode, asset, preset, dry_run, adapters))
 
 def _report_impl(asset: Optional[str], format: str, output: Optional[str]):
     """
@@ -1261,7 +1317,16 @@ def chat(
                         try: adapters = parts[parts.index("-A") + 1]
                         except: pass
                         
-                    _recon_impl(mode, asset, preset, dry_run, adapters, llm_client=runtime.llm_client)
+                    await _recon_impl(
+                        mode,
+                        asset,
+                        preset,
+                        dry_run,
+                        adapters,
+                        llm_client=runtime.llm_client,
+                        runtime=runtime,
+                        approval_callback=cli_approval_callback,
+                    )
                     continue
 
                 if cmd == "report":

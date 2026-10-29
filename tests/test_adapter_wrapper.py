@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 
@@ -96,3 +97,82 @@ class TestAdapterToolWrapper:
         assert out.startswith("Error:")
         assert "crt.sh" in out
         assert "None" not in out
+
+    def test_string_result_keeps_metadata(self, isolated_db):
+        stored = AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data="Asset 'lab' already registered",
+            metadata={"action": "exists", "asset_id": 9},
+        )
+        pm = MagicMock()
+        pm.run_adapter.return_value = stored
+        pm.get_adapter_info.return_value = {}
+        pm.load_adapter.return_value = MagicMock(interpret_result=lambda r: "already registered")
+
+        wrapper = AdapterToolWrapper("asset_manager", pm)
+        out = wrapper.execute({})
+
+        assert out["value"] == "Asset 'lab' already registered"
+        assert out["action"] == "exists"
+        assert out["asset_id"] == 9
+
+    def test_conflicted_finding_is_noted_on_interpretation(self, isolated_db):
+        stored = AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data={"ipv4": "203.0.113.1"},
+            metadata={},
+        )
+        pm = MagicMock()
+        pm.run_adapter.return_value = stored
+        pm.get_adapter_info.return_value = {}
+        pm.load_adapter.return_value = MagicMock(interpret_result=lambda r: "IPv4 detected")
+
+        wrapper = AdapterToolWrapper("public_ip", pm)
+        finding = Finding(
+            title="Missing Strict-Transport-Security",
+            description="header absent",
+            severity=SeverityLevel.HIGH,
+            confidence=0.8,
+            asset_id=1,
+            asset_name=SESSION_ASSET_NAME,
+        )
+
+        def reconcile(findings, **kwargs):
+            for item in findings:
+                item.verification_state = "conflicted"
+            return []
+
+        wrapper.reporting_manager.findings_normalizer.normalize_tool_output = MagicMock(
+            return_value=[finding]
+        )
+        wrapper.reporting_manager.findings_normalizer.reconcile_cross_tool_conflicts = reconcile
+        wrapper.reporting_manager.save_findings_to_database = MagicMock()
+        wrapper.reporting_manager.get_findings_for_asset = MagicMock(return_value=[])
+
+        out = wrapper.execute({})
+
+        assert "Reconciled observations" in out["interpretation"]
+        assert "Missing Strict-Transport-Security" in out["interpretation"]
+
+    def test_normalization_failure_is_warned_and_result_still_returns(self, isolated_db, caplog):
+        stored = AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data={"ipv4": "203.0.113.1"},
+            metadata={"adapter": "public_ip"},
+        )
+        pm = MagicMock()
+        pm.run_adapter.return_value = stored
+        pm.get_adapter_info.return_value = {}
+        pm.load_adapter.return_value = MagicMock(interpret_result=lambda r: "IPv4 detected")
+
+        wrapper = AdapterToolWrapper("public_ip", pm)
+        wrapper.reporting_manager.findings_normalizer.normalize_tool_output = MagicMock(
+            side_effect=RuntimeError("db locked")
+        )
+
+        with caplog.at_level(logging.WARNING):
+            out = wrapper.execute({})
+
+        assert out["ipv4"] == "203.0.113.1"
+        assert "Finding normalization/persistence failed" in caplog.text
+        assert "db locked" in caplog.text
