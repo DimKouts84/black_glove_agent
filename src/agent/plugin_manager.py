@@ -24,6 +24,7 @@ DISCOVERY_SKIP_MODULES = frozenset({
     "rdap_client",
     "crt_sh_client",
     "transient_errors",
+    "extra_flags",
 })
 
 

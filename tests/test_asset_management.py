@@ -126,6 +126,47 @@ class TestDatabaseAssetOperations:
         # Verify asset is removed
         retrieved_asset = db_manager.get_asset(asset_id)
         assert retrieved_asset is None
+
+    def test_remove_asset_with_findings(self):
+        """Scanned assets have findings; delete must remove those rows too."""
+        from src.agent.models import DatabaseManager, AssetModel, AssetType
+
+        db_manager = DatabaseManager()
+        asset_id = db_manager.add_asset(
+            AssetModel(name="scanned", type=AssetType.HOST, value="192.168.1.77")
+        )
+        conn = db_manager.get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO findings (asset_id, title, severity, confidence) VALUES (?, ?, ?, ?)",
+                (asset_id, "Missing CSP", "high", 0.9),
+            )
+            finding_id = cursor.lastrowid
+            cursor.execute(
+                "INSERT INTO finding_observations (finding_id, description) VALUES (?, ?)",
+                (finding_id, "header missing"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        assert db_manager.remove_asset(asset_id) is True
+        assert db_manager.get_asset(asset_id) is None
+
+        conn = db_manager.get_db_connection()
+        try:
+            findings = conn.execute(
+                "SELECT COUNT(*) FROM findings WHERE asset_id = ?", (asset_id,)
+            ).fetchone()[0]
+            observations = conn.execute(
+                "SELECT COUNT(*) FROM finding_observations WHERE finding_id = ?",
+                (finding_id,),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert findings == 0
+        assert observations == 0
     
     def test_remove_asset_not_found(self):
         """Test removal of non-existent asset."""

@@ -129,6 +129,7 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - A `host:port` target uses that port instead of the default 443.
 
 ### `asset_manager`
+- Removing an asset also deletes its findings and finding observations, so a scanned asset can be removed from the Assets page.
 - `add` is idempotent: re-registering an existing `value` returns `success` with `action: exists` and the existing `asset_id` (no spurious error trace).
 - The human-readable message stays in `value`. `action` and `asset_id` from adapter metadata are copied onto the tool result so the agent can see them.
 

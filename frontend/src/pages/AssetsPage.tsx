@@ -12,6 +12,7 @@ export function AssetsPage() {
   const [name, setName] = useState('');
   const [type, setType] = useState('host');
   const [value, setValue] = useState('');
+  const [error, setError] = useState('');
 
   const handleAdd = async () => {
     if (!name || !value) return;
@@ -21,8 +22,13 @@ export function AssetsPage() {
   };
 
   const handleDelete = async (id: number) => {
-    await api.deleteAsset(id);
-    refetch();
+    setError('');
+    try {
+      await api.deleteAsset(id);
+      await refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not remove asset');
+    }
   };
 
   return (
@@ -37,6 +43,7 @@ export function AssetsPage() {
         <input className="bg-panel border border-border rounded px-3 py-2 text-sm" placeholder="IP / domain" value={value} onChange={(e) => setValue(e.target.value)} />
         <NeonButton onClick={handleAdd}>Add Asset</NeonButton>
       </div>
+      {error && <p className="text-glove text-sm mb-3">{error}</p>}
       <table className="w-full text-sm">
         <thead>
           <tr className="text-dim text-left border-b border-border">
@@ -49,7 +56,7 @@ export function AssetsPage() {
               <td className="py-2 text-primary">{a.name}</td>
               <td>{a.type}</td>
               <td>{a.value}</td>
-              <td><NeonButton variant="ghost" className="text-xs py-1" onClick={() => handleDelete(a.id)}>Remove</NeonButton></td>
+              <td><NeonButton type="button" variant="ghost" className="text-xs py-1" onClick={() => handleDelete(a.id)}>Remove</NeonButton></td>
             </tr>
           ))}
         </tbody>

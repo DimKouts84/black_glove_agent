@@ -314,6 +314,56 @@ class TestWebAPI:
         assert 'requires-python = ">=3.9"' in text
         assert 'python_version = "3.9"' in text
 
+    def test_delete_asset_removes_findings(self, tmp_path, monkeypatch):
+        import agent.db as db_module
+
+        monkeypatch.setattr(db_module, "DB_PATH", tmp_path / "homepentest.db")
+        reset_deps()
+        app = create_app()
+        with TestClient(app) as client:
+            created = client.post(
+                "/api/assets",
+                json={"name": "probe", "type": "host", "value": "192.0.2.77"},
+            )
+            assert created.status_code == 200
+            asset_id = created.json()["id"]
+            conn = db_module.get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO findings (asset_id, title, severity, confidence) VALUES (?, ?, ?, ?)",
+                    (asset_id, "probe finding", "low", 0.5),
+                )
+                finding_id = cursor.lastrowid
+                cursor.execute(
+                    "INSERT INTO finding_observations (finding_id, description) VALUES (?, ?)",
+                    (finding_id, "probe"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            deleted = client.delete(f"/api/assets/{asset_id}")
+            assert deleted.status_code == 200
+            assert deleted.json()["deleted"] is True
+
+            listed = client.get("/api/assets")
+            assert all(item["id"] != asset_id for item in listed.json()["assets"])
+            conn = db_module.get_db_connection()
+            try:
+                findings = conn.execute(
+                    "SELECT COUNT(*) FROM findings WHERE asset_id = ?", (asset_id,)
+                ).fetchone()[0]
+                observations = conn.execute(
+                    "SELECT COUNT(*) FROM finding_observations WHERE finding_id = ?",
+                    (finding_id,),
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            assert findings == 0
+            assert observations == 0
+        reset_deps()
+
 
 class TestWebSocketHelpers:
     def test_safe_send_json_success(self):

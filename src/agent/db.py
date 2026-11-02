@@ -478,10 +478,22 @@ def remove_asset(conn: sqlite3.Connection, asset_id: int) -> bool:
         bool: True if asset was removed, False if not found
     """
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
-    rows_affected = cursor.rowcount
-    conn.commit()
-    return rows_affected > 0
+    cursor.execute("SELECT 1 FROM assets WHERE id = ?", (asset_id,))
+    if cursor.fetchone() is None:
+        return False
+    try:
+        cursor.execute(
+            "DELETE FROM finding_observations WHERE finding_id IN "
+            "(SELECT id FROM findings WHERE asset_id = ?)",
+            (asset_id,),
+        )
+        cursor.execute("DELETE FROM findings WHERE asset_id = ?", (asset_id,))
+        cursor.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raise
+    return True
 
 def archive_asset(conn: sqlite3.Connection, asset_id: int) -> bool:
     """
