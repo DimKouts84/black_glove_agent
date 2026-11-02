@@ -142,9 +142,7 @@ class AdapterToolWrapper:
 
 
 
-        target_val = strip_host(
-            target.replace("https://", "").replace("http://", "").strip("/")
-        )
+        target_val = strip_host(str(target))
 
         asset = self.db_manager.get_asset_by_name(target_val)
 

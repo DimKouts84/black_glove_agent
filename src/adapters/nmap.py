@@ -17,12 +17,12 @@ from typing import Any, Dict, List, Optional
 from xml.etree import ElementTree as ET
 
 from .base import BaseAdapter
+from .extra_flags import safe_flag_argv
 from .interface import AdapterResult, AdapterResultStatus
 from utils.process_runner import ProcessRunner
 
 import socket
 
-_SAFE_FLAG_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9\-]*$")
 _SAFE_SCRIPT_RE = re.compile(r"^[A-Za-z0-9_\-\.]+$")
 _PORTS_RE = re.compile(r"^[0-9,\-]+$")  # e.g., 80,443 or 1-1024
 _TARGET_SAFE_RE = re.compile(r"^[A-Za-z0-9\.\-:]+$")  # basic IP/hostname/IPv6 literal
@@ -84,10 +84,7 @@ class NmapAdapter(BaseAdapter):
         if "default_flags" in cfg:
             if not isinstance(cfg["default_flags"], list) or not all(isinstance(x, str) for x in cfg["default_flags"]):
                 raise ValueError("default_flags must be a list of strings")
-            # sanitize flags
-            for f in cfg["default_flags"]:
-                if not _SAFE_FLAG_RE.match(f):
-                    raise ValueError(f"Unsafe default flag: {f}")
+            safe_flag_argv(cfg["default_flags"], strict=True, label="default flag")
         if "rate_limit_rpm" in cfg and cfg["rate_limit_rpm"] is not None:
             if not isinstance(cfg["rate_limit_rpm"], int) or cfg["rate_limit_rpm"] <= 0:
                 raise ValueError("rate_limit_rpm must be a positive integer or None")
@@ -131,9 +128,7 @@ class NmapAdapter(BaseAdapter):
         if extra_flags is not None:
             if not isinstance(extra_flags, list) or not all(isinstance(x, str) for x in extra_flags):
                 raise ValueError("extra_flags must be a list of strings")
-            for f in extra_flags:
-                if not _SAFE_FLAG_RE.match(f):
-                    raise ValueError(f"Unsafe extra flag: {f}")
+            safe_flag_argv(extra_flags, strict=True)
 
         if "output_xml" in params and params["output_xml"] is not True:
             # This adapter always uses -oX - for safety
@@ -272,15 +267,8 @@ class NmapAdapter(BaseAdapter):
 
         cmd: List[str] = ["nmap", "-oX", "-"]
 
-        # default flags first
-        for f in default_flags:
-            if _SAFE_FLAG_RE.match(f):
-                cmd.append(f)
-
-        # sanitized extra flags
-        for f in extra_flags:
-            if _SAFE_FLAG_RE.match(f):
-                cmd.append(f)
+        cmd.extend(safe_flag_argv(default_flags))
+        cmd.extend(safe_flag_argv(extra_flags))
 
         if ports:
             cmd += ["-p", ports]
@@ -446,7 +434,11 @@ class NmapAdapter(BaseAdapter):
                         },
                         "extra_flags": {
                             "type": "array",
-                            "description": "Optional: Additional nmap flags (e.g., ['-Pn', '-sV'])"
+                            "description": (
+                                "Optional nmap flags. A flag that takes a value may be one "
+                                "item ('--version-intensity=5') or two items "
+                                "('--version-intensity', '5')."
+                            ),
                         }
                     },
                     "required": ["target"]

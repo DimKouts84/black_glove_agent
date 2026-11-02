@@ -93,6 +93,9 @@ class TestGobusterValidation:
         with pytest.raises(ValueError):
             adapter.validate_params({"mode": "dir", "url": "http://x", "wordlist": "/tmp/w.txt", "extra_flags": ["-t", "bad;flag"]})
 
+        with pytest.raises(ValueError, match="vhost is not supported"):
+            adapter.validate_params({"mode": "vhost", "url": "https://zebeh.com", "wordlist": "/tmp/w.txt"})
+
 class TestGobusterBuildersParsers:
     def test_build_command_dir(self):
         adapter = create_gobuster_adapter()
@@ -216,6 +219,44 @@ class TestGobusterExecution:
             assert "timed out" in (result.error_message or "").lower()
         finally:
             os.chdir(cwd)
+
+class TestGobusterTlsRetry:
+    def test_https_unknown_authority_retries_with_k(self, tmp_path: Path, monkeypatch):
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            tls_error = (
+                'error on running gobuster: unable to connect to https://66.29.132.181/: '
+                'Get "https://66.29.132.181/": tls: failed to verify certificate: '
+                "x509: certificate signed by unknown authority"
+            )
+            runner = FakeRunner({"status": "error", "exit_code": 1, "stdout": "", "stderr": tls_error, "duration": 0.01})
+            calls = {"n": 0}
+
+            def run(spec):
+                calls["n"] += 1
+                runner.last_spec = spec
+                if calls["n"] == 1:
+                    return {"status": "error", "exit_code": 1, "stdout": "", "stderr": tls_error, "duration": 0.01}
+                return {"status": "success", "exit_code": 0, "stdout": DIR_STDOUT, "stderr": "", "duration": 0.01}
+
+            runner.run = run
+            adapter = create_gobuster_adapter({"_runner": runner})
+            monkeypatch.setattr(adapter, "_probe_soft404_length", lambda url: None)
+            result = adapter.execute({
+                "mode": "dir",
+                "url": "https://66.29.132.181",
+                "wordlist": "/path/to/wordlist.txt",
+            })
+            assert result.status.name == "SUCCESS"
+            assert result.metadata.get("tls_verification") == "skipped"
+            assert any("-k" in (result.metadata.get("warnings") or []) or "certificate checks disabled" in w for w in result.metadata.get("warnings") or [])
+            assert "-k" in runner.last_spec["args"]
+            text = adapter.interpret_result(result)
+            assert "certificate checks disabled" in text
+        finally:
+            os.chdir(cwd)
+
 
 class TestPluginManagerIntegration:
     def test_plugin_manager_load_and_run_dir(self, tmp_path: Path):

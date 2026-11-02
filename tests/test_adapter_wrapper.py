@@ -196,3 +196,24 @@ class TestAdapterToolWrapper:
 
         assert asset is session_asset
         wrapper.db_manager.get_asset_by_name.assert_called_once_with(SESSION_ASSET_NAME)
+
+    def test_query_url_resolves_to_host_asset(self):
+        pm = MagicMock()
+        pm.get_adapter_info.return_value = {}
+        wrapper = AdapterToolWrapper("sqli_scanner", pm)
+        wrapper.db_manager = MagicMock()
+        wrapper.db_manager.get_asset_by_name.return_value = None
+        wrapper.db_manager.get_asset_by_value.return_value = None
+        stored = {}
+
+        def add_asset(model):
+            stored["model"] = model
+            return 9
+
+        wrapper.db_manager.add_asset.side_effect = add_asset
+        wrapper.db_manager.get_asset.return_value = MagicMock()
+
+        wrapper._resolve_asset({"target_url": "https://zebeh.com/?s=test"})
+
+        assert stored["model"].name == "zebeh.com"
+        assert stored["model"].value == "zebeh.com"

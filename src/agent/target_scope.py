@@ -17,10 +17,13 @@ def split_host_port(value: str) -> Tuple[str, Optional[int]]:
     hostnames, IPv4 addresses, and bracketed IPv6 literals.
     """
     host = str(value).strip()
+    host = host.split("#", 1)[0].split("?", 1)[0].strip()
     if "://" in host:
         parsed = urlparse(host)
         host = parsed.netloc or parsed.path or host
     host = host.strip().strip("/")
+    if "/" in host and not host.startswith("["):
+        host = host.split("/", 1)[0]
 
     if host.startswith("[") and "]" in host:
         end = host.index("]")

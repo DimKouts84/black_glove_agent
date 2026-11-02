@@ -86,6 +86,13 @@ class TestNmapValidation:
         with pytest.raises(ValueError):
             adapter.validate_params({"target": "example.com", "scripts": ["good", "bad;name"], "output_xml": True})
 
+        # Flag value as the next token (the form the model sent for --version-intensity)
+        assert adapter.validate_params({
+            "target": "example.com",
+            "extra_flags": ["-Pn", "-sV", "-T4", "--version-intensity", "5", "-O", "--osscan-guess"],
+            "output_xml": True,
+        }) is True
+
         # Unsafe extra flag
         with pytest.raises(ValueError):
             adapter.validate_params({"target": "example.com", "extra_flags": ["-T3", "bad;flag"], "output_xml": True})
@@ -121,6 +128,19 @@ class TestNmapBuildersParsers:
         assert cmd[si + 1] == "http-title,http-server-header"
         # target last
         assert cmd[-1] == "example.com"
+
+    def test_build_command_keeps_flag_values(self):
+        adapter = create_nmap_adapter()
+        cmd = adapter._build_command(
+            params={
+                "target": "66.29.132.181",
+                "extra_flags": ["--version-intensity", "5", "-O"],
+            },
+            cfg={"default_flags": []},
+        )
+        intensity = cmd.index("--version-intensity")
+        assert cmd[intensity + 1] == "5"
+        assert "-O" in cmd
 
     def test_parse_xml_simple(self):
         adapter = create_nmap_adapter()

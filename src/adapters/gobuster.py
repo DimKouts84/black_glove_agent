@@ -14,12 +14,12 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from .base import BaseAdapter
+from .extra_flags import safe_flag_argv
 from .interface import AdapterResult, AdapterResultStatus
 from .url_params import resolve_target_url
 from .domain_params import resolve_domain
 from utils.process_runner import ProcessRunner
 
-_SAFE_FLAG_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9\-]*$")
 _SAFE_EXT_RE = re.compile(r"^[A-Za-z0-9\.]+$")
 _SAFE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 _SAFE_DOMAIN_RE = re.compile(
@@ -127,6 +127,20 @@ class GobusterAdapter(BaseAdapter):
         return bool(_SOFT404_ERROR_PATTERN.search(message))
 
     @staticmethod
+    def _is_tls_verify_error(message: str) -> bool:
+        text = (message or "").lower()
+        return (
+            "certificate signed by unknown authority" in text
+            or "failed to verify certificate" in text
+            or "x509:" in text
+        )
+
+    @staticmethod
+    def _tls_check_disabled(params: Dict[str, Any]) -> bool:
+        flags = [str(flag) for flag in (params.get("extra_flags") or [])]
+        return "-k" in flags or "--no-tls-validation" in flags
+
+    @staticmethod
     def _probe_soft404_length(url: str) -> Optional[int]:
         try:
             import requests
@@ -227,7 +241,7 @@ class GobusterAdapter(BaseAdapter):
 
         mode = params.get("mode") or self.config.get("default_mode", self._defaults["default_mode"])
         if mode not in ("dir", "dns"):
-            raise ValueError("mode must be 'dir' or 'dns'")
+            raise ValueError("mode must be 'dir' or 'dns'; vhost is not supported")
 
         if mode == "dir":
             if "url" not in params:
@@ -269,9 +283,7 @@ class GobusterAdapter(BaseAdapter):
         if extra_flags is not None:
             if not isinstance(extra_flags, list) or not all(isinstance(x, str) for x in extra_flags):
                 raise ValueError("extra_flags must be a list of strings")
-            for f in extra_flags:
-                if not _SAFE_FLAG_RE.match(f):
-                    raise ValueError(f"Unsafe extra flag: {f}")
+            safe_flag_argv(extra_flags, strict=True)
 
         return True
 
@@ -331,6 +343,27 @@ class GobusterAdapter(BaseAdapter):
                     run_result.get("exit_code") not in (None, 0)
                 )
 
+        tls_warning = None
+        if (
+            failed
+            and mode == "dir"
+            and self._is_tls_verify_error(stderr)
+            and not self._tls_check_disabled(params)
+        ):
+            retry_params = dict(params)
+            retry_params["extra_flags"] = list(params.get("extra_flags") or []) + ["-k"]
+            retry_params["exclude_lengths"] = exclude_lengths
+            run_result, cmd = self._run_process(retry_params, wordlist, mode, timeout)
+            stderr = run_result.get("stderr") or ""
+            failed = run_result["status"] == "error" or (
+                run_result.get("exit_code") not in (None, 0)
+            )
+            if not failed:
+                tls_warning = (
+                    "TLS certificate verification failed; retried with "
+                    "certificate checks disabled (-k)."
+                )
+
         if failed:
             if mode == "dir" and self._is_soft404_gobuster_error(stderr):
                 excluded = exclude_lengths[0] if exclude_lengths else "unknown"
@@ -373,6 +406,9 @@ class GobusterAdapter(BaseAdapter):
             metadata_extra["warnings"] = [
                 f"Excluded catch-all response length {exclude_lengths[0]} for SPA soft-404 handling"
             ]
+        if tls_warning:
+            metadata_extra.setdefault("warnings", []).append(tls_warning)
+            metadata_extra["tls_verification"] = "skipped"
         return self._finalize_success(run_result, run_params, mode, metadata_extra)
 
     # ---- Builders/Parsers ----
@@ -411,10 +447,7 @@ class GobusterAdapter(BaseAdapter):
             domain = params["domain"].strip()
             cmd += ["-d", domain]
 
-        # sanitized extra flags
-        for f in extra_flags:
-            if _SAFE_FLAG_RE.match(f):
-                cmd.append(f)
+        cmd.extend(safe_flag_argv(extra_flags))
 
         return cmd
 
@@ -512,7 +545,7 @@ class GobusterAdapter(BaseAdapter):
         mode = data.get("mode")
         
         if not findings:
-            return "Gobuster completed but found no entries."
+            return self._append_warnings("Gobuster completed but found no entries.", result)
             
         if mode == "dir":
             summary = f"Gobuster directory scan found {len(findings)} paths:\n"
@@ -522,7 +555,7 @@ class GobusterAdapter(BaseAdapter):
                 summary += f"  - {path} (Status: {status})\n"
             if len(findings) > 20:
                 summary += f"  ... and {len(findings) - 20} more."
-            return summary
+            return self._append_warnings(summary, result)
             
         elif mode == "dns":
             summary = f"Gobuster DNS scan found {len(findings)} subdomains:\n"
@@ -536,9 +569,21 @@ class GobusterAdapter(BaseAdapter):
                     summary += f"  - {host}\n"
             if len(findings) > 20:
                 summary += f"  ... and {len(findings) - 20} more."
-            return summary
+            return self._append_warnings(summary, result)
             
-        return f"Gobuster found {len(findings)} items in {mode} mode."
+        return self._append_warnings(f"Gobuster found {len(findings)} items in {mode} mode.", result)
+
+    @staticmethod
+    def _append_warnings(summary: str, result: AdapterResult) -> str:
+        warnings = []
+        metadata = result.metadata or {}
+        for item in metadata.get("warnings") or []:
+            text = str(item).strip()
+            if text and text not in warnings:
+                warnings.append(text)
+        if not warnings:
+            return summary
+        return summary.rstrip() + "\n" + "\n".join(warnings)
 
     # ---- Info ----
 
@@ -548,7 +593,10 @@ class GobusterAdapter(BaseAdapter):
             {
                 "name": "GobusterAdapter",
                 "version": self.version,
-                "description": "Local gobuster execution for directory and DNS enumeration",
+                "description": (
+                    "Local gobuster execution for directory (mode=dir) and DNS "
+                    "(mode=dns) enumeration. vhost mode is not supported."
+                ),
                 "capabilities": base_info["capabilities"]
                 + ["dir_enum", "dns_enum", "stdout_parsing", "evidence_storage"],
                 "requirements": ["gobuster"],

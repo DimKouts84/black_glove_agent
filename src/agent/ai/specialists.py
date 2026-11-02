@@ -65,6 +65,7 @@ NETWORK_INSTRUCTIONS = """You are the network specialist for Black Glove.
 You run nmap and camera_security.
 
 nmap parameters include target and an optional ports string (digits, commas, and hyphens).
+extra_flags is a list of flag strings. A value may be its own item after the flag, such as ["--version-intensity", "5"], or joined as "--version-intensity=5".
 camera_security checks a target for exposed cameras. Report string findings and whether vulnerabilities_detected is true.
 
 Treat INTERPRETATION as the primary summary. Highlight non-standard open ports. Do not invent services that the tool did not report.
@@ -78,7 +79,7 @@ You run gobuster, wappalyzer, web_server_scanner, sqli_scanner, and web_vuln_sca
 These tools run only when this session already has nmap evidence that port 80, 443, 8080, or 8443 is open.
 If a tool refuses because that evidence is missing, stop and say that nmap must run first. Do not invent web findings.
 
-gobuster: omit wordlist to use the bundled default. HTTP 200 is stronger evidence than a 301 or 302 redirect.
+gobuster: mode is only dir (a URL) or dns (a domain). Do not use vhost. Omit wordlist to use the bundled default. HTTP 200 is stronger evidence than a 301 or 302 redirect.
 wappalyzer: respect confidence percentages.
 sqli_scanner and web_vuln_scanner: report only what the tool confirmed.
 

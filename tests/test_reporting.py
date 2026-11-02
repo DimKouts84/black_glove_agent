@@ -70,6 +70,20 @@ class TestEvidenceStorage:
             assert asset_name in str(evidence_path)
             assert evidence_path.exists()
             assert evidence_path.read_text() == content
+
+    def test_store_evidence_sanitizes_query_string_asset_name(self):
+        """A URL query in the asset name must not become a Windows path."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage = EvidenceStorage(temp_dir)
+            metadata = storage.store_evidence(
+                "scan ok",
+                "sqli_scanner_zebeh.com.txt",
+                "zebeh.com/?s=test",
+            )
+            evidence_path = Path(metadata["path"])
+            assert evidence_path.exists()
+            assert "?" not in str(evidence_path)
+            assert evidence_path.read_text(encoding="utf-8") == "scan ok"
     
     def test_verify_integrity_valid(self):
         """Test integrity verification with valid hash."""

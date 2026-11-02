@@ -99,13 +99,53 @@ class TestWebServerScannerAdapter:
         mock_trace = MagicMock()
         mock_trace.status_code = 200
 
+        mock_baseline = MagicMock()
+        mock_baseline.status_code = 404
+        mock_baseline.content = b"missing"
+
         mock_put = MagicMock()
         mock_put.status_code = 405
 
-        mock_request.side_effect = [mock_options, mock_trace, mock_put]
+        mock_request.side_effect = [mock_options, mock_trace, mock_baseline, mock_put]
 
         findings = adapter._check_http_methods("http://example.com")
         assert any("TRACE" in f["title"] for f in findings)
+        assert not any(f["title"] == "PUT method accepted" for f in findings)
+
+    @patch("src.adapters.web_server_scanner.requests.request")
+    def test_put_catchall_is_not_a_critical_finding(self, mock_request, adapter):
+        spa = b"<html>app</html>" * 50
+        mock_options = MagicMock()
+        mock_options.headers = {}
+        mock_trace = MagicMock()
+        mock_trace.status_code = 405
+        mock_baseline = MagicMock()
+        mock_baseline.status_code = 200
+        mock_baseline.content = spa
+        mock_put = MagicMock()
+        mock_put.status_code = 200
+        mock_put.content = spa
+        mock_request.side_effect = [mock_options, mock_trace, mock_baseline, mock_put]
+
+        findings = adapter._check_http_methods("https://zebeh.com")
+        assert not any(f["title"] == "PUT method accepted" for f in findings)
+
+    @patch("src.adapters.web_server_scanner.requests.request")
+    def test_put_created_is_still_critical(self, mock_request, adapter):
+        mock_options = MagicMock()
+        mock_options.headers = {}
+        mock_trace = MagicMock()
+        mock_trace.status_code = 405
+        mock_baseline = MagicMock()
+        mock_baseline.status_code = 404
+        mock_baseline.content = b"missing"
+        mock_put = MagicMock()
+        mock_put.status_code = 201
+        mock_put.content = b"created"
+        mock_request.side_effect = [mock_options, mock_trace, mock_baseline, mock_put]
+
+        findings = adapter._check_http_methods("https://example.com")
+        assert any(f["title"] == "PUT method accepted" and f["severity"] == "CRITICAL" for f in findings)
 
     def test_interpret_result_excludes_ok_severity(self, adapter):
         from src.adapters.interface import AdapterResult

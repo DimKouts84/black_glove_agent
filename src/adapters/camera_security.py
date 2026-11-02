@@ -35,6 +35,9 @@ class CameraSecurityAdapter(BaseAdapter):
     4. Default credential testing
     """
     
+    # Ordinary web ports are probed, but they are not camera evidence by themselves.
+    ORDINARY_WEB_PORTS = {80, 443, 8080, 8443}
+
     # Common camera ports (comprehensive list by brand)
     CAMERA_PORTS = {
         # Standard Web/Streaming
@@ -198,7 +201,12 @@ class CameraSecurityAdapter(BaseAdapter):
                     }
                 )
             
-            findings.append(f"Open ports detected: {', '.join([f'{p} ({self.CAMERA_PORTS[p]})' for p in open_ports])}")
+            camera_specific = [p for p in open_ports if p not in self.ORDINARY_WEB_PORTS]
+            if camera_specific:
+                findings.append(
+                    "Open ports detected: "
+                    + ", ".join(f"{p} ({self.CAMERA_PORTS[p]})" for p in camera_specific)
+                )
             
             # Add brand-specific warnings for critical ports
             if 37777 in open_ports:
@@ -549,13 +557,29 @@ class CameraSecurityAdapter(BaseAdapter):
         summary = f"Camera Security Scan for {target}:\n"
 
         if open_ports:
-            port_strs = []
+            camera_ports = []
+            web_ports = []
             for entry in open_ports:
                 if isinstance(entry, dict):
-                    port_strs.append(f"{entry.get('port')}/{entry.get('service', 'unknown')}")
+                    port = entry.get("port")
+                    label = f"{port}/{entry.get('service', 'unknown')}"
                 else:
-                    port_strs.append(str(entry))
-            summary += f"- Open camera-related ports: {', '.join(port_strs)}\n"
+                    port = entry
+                    label = str(entry)
+                if port in self.ORDINARY_WEB_PORTS:
+                    web_ports.append(label)
+                else:
+                    camera_ports.append(label)
+            if camera_ports:
+                summary += f"- Open camera-specific ports: {', '.join(camera_ports)}\n"
+            else:
+                summary += "- No camera-specific ports open.\n"
+            if web_ports:
+                summary += (
+                    "- Ordinary web ports (not camera evidence): "
+                    + ", ".join(web_ports)
+                    + "\n"
+                )
         else:
             summary += "- No common camera ports open.\n"
 

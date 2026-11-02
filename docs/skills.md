@@ -60,8 +60,10 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - URLs without query parameters, and a `params_to_test` filter that matches none of those parameters, → envelope status `not_applicable` with `coverage.scanned_params = 0`, `coverage.untested = true`, and `coverage.reason = no_query_parameters`.
 - That result does not create a finding. A parameterless URL is not reported as "no vulnerabilities found".
 - `web_vuln_scanner` decides this from the URL before opening a connection.
+- A target URL is stored on the host asset (`https://zebeh.com/?s=test` → `zebeh.com`). Evidence directories replace characters that Windows rejects in file names (`?`, `:`, and similar), so a query string cannot fail finding normalization.
 
 ### `web_server_scanner`
+- A PUT response that matches the GET catch-all for the same path (same status and nearly the same body length) is not stored as "PUT method accepted". Status 201 or 204 still is.
 - Missing security headers include the final response URL and HTTP status in evidence.
 - HSTS is classified from the final response URL. Missing HSTS on a final **HTTP** response is `informational`. Missing HSTS on a final **HTTPS** response stays a normal finding and does not say the response was HTTP.
 - HSTS detected by Wappalyzer but absent in the direct header check is stored as `verification_state: conflicted` and severity INFO.
@@ -69,6 +71,7 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - Connection failures are untested coverage (`coverage.untested` / `reason: connection_failed`). They are not saved as findings and they are not a completed "no issues" scan.
 
 ### `camera_security`
+- The spoken summary calls 80/443/8080/8443 ordinary web ports, not camera-specific ports. An inventory line is added only for other open ports.
 - Benign negative results (e.g. "No common camera ports are open") do **not** create findings.
 - An open-port inventory line is not a finding. Ordinary web ports (80, 443, 8080, 8443) stay in the raw `open_ports` list only.
 - A finding is saved only when the text contains `VULNERABILITY`, `RISK`, `CRITICAL`, or `WEAK`.
@@ -76,6 +79,7 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - Ports 443 and 8443 are probed over TLS. Vendor names are matched on the `Server` header and page title. The word `video` alone is not a camera finding.
 
 ### `nmap`
+- `extra_flags` accepts a flag value as the next list item (`--version-intensity`, `5`) or as `--version-intensity=5`. Characters outside letters, digits, and `_.-,:+` are rejected.
 - Port **53/DNS** is not flagged as a high-risk service; open DNS still appears in the informational `Open ports discovered` note.
 - Emits an informational `Open ports discovered (N)` finding listing all open ports (not only high-risk services).
 - Port inventory feeds the report **Scanned Assets** open-ports column when present.
@@ -129,6 +133,8 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - The human-readable message stays in `value`. `action` and `asset_id` from adapter metadata are copied onto the tool result so the agent can see them.
 
 ### `gobuster`
+- `mode` is `dir` or `dns`. `vhost` is rejected.
+- A directory scan that fails TLS certificate verification retries once with `-k` and records that certificate checks were skipped.
 - Bare wordlist filenames that exist under `bin/wordlists/` (e.g. `common.txt`) and config-relative paths (`bin/wordlists/common.txt`) resolve to that file.
 - A bare name that is not in `bin/wordlists/` is an error. It is not replaced with `common.txt`.
 - Omit `wordlist` in tool params to use the bundled default automatically.

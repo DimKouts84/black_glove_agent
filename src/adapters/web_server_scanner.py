@@ -335,16 +335,18 @@ class WebServerScannerAdapter(BaseAdapter):
                 "severity": "MEDIUM",
             })
 
+        probe_url = urljoin(base_url.rstrip("/") + "/", "black_glove_test_put.tmp")
+        baseline = self._request("GET", probe_url, allow_redirects=False)
         try:
             resp = requests.request(
                 "PUT",
-                urljoin(base_url + "/", "black_glove_test_put.tmp"),
+                probe_url,
                 headers={"User-Agent": self._user_agent},
                 data="black_glove_test",
                 timeout=self._timeout,
                 verify=False,
             )
-            if resp.status_code in (200, 201, 204):
+            if resp.status_code in (200, 201, 204) and not self._put_matches_catchall(baseline, resp):
                 findings.append({
                     "check": "methods",
                     "title": "PUT method accepted",
@@ -355,6 +357,19 @@ class WebServerScannerAdapter(BaseAdapter):
             pass
 
         return findings
+
+    @staticmethod
+    def _put_matches_catchall(baseline: Optional[requests.Response], put_resp: requests.Response) -> bool:
+        """True when PUT returned the same catch-all page as a GET of that path."""
+        if baseline is None or put_resp.status_code in (201, 204):
+            return False
+        if put_resp.status_code != baseline.status_code:
+            return False
+        base_len = len(baseline.content or b"")
+        put_len = len(put_resp.content or b"")
+        if base_len == 0 and put_len == 0:
+            return True
+        return abs(put_len - base_len) <= max(64, int(base_len * 0.05))
 
     def _check_server_version(self, base_url: str) -> List[Dict[str, Any]]:
         findings: List[Dict[str, Any]] = []

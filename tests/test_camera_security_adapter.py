@@ -371,6 +371,19 @@ class TestCameraSecurityAdapter:
         # Verify checks_performed doesn't include default_creds
         assert "default_creds" not in result.metadata["checks_performed"]
 
+    @patch.object(CameraSecurityAdapter, "_scan_ports")
+    @patch.object(CameraSecurityAdapter, "_test_http_auth", return_value=None)
+    @patch.object(CameraSecurityAdapter, "_test_default_credentials", return_value=[])
+    def test_ordinary_web_ports_are_not_camera_findings(self, _creds, _http, mock_scan, adapter):
+        mock_scan.return_value = [80, 443]
+        result = adapter.execute({"target": "66.29.132.181"})
+        assert result.status == AdapterResultStatus.SUCCESS
+        assert result.data["findings"] == []
+        summary = adapter.interpret_result(result)
+        assert "No camera-specific ports open." in summary
+        assert "not camera evidence" in summary
+        assert "Open camera-related ports" not in summary
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

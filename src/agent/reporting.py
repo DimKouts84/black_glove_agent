@@ -9,6 +9,7 @@ import json
 import sqlite3
 import hashlib
 import logging
+import re
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Union
 from pathlib import Path
@@ -18,6 +19,16 @@ from enum import Enum
 
 from .models import SeverityLevel, AssetModel, severity_for_db
 from .db import get_db_connection
+
+_ILLEGAL_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _safe_path_component(value: str, fallback: str) -> str:
+    """Turn a label into one Windows-safe path segment."""
+    cleaned = _ILLEGAL_PATH_CHARS.sub("_", str(value)).strip(" .")
+    if not cleaned or cleaned in {".", ".."}:
+        return fallback
+    return cleaned[:120]
 
 def _safe_json_default(obj):
     """
@@ -92,13 +103,14 @@ class EvidenceStorage:
         Returns:
             Dictionary with evidence metadata including hash
         """
+        safe_filename = _safe_path_component(filename, "evidence.txt")
         # Create asset-specific directory if provided
         if asset_name:
-            asset_dir = self.storage_path / asset_name
-            asset_dir.mkdir(exist_ok=True)
-            evidence_path = asset_dir / filename
+            asset_dir = self.storage_path / _safe_path_component(asset_name, "asset")
+            asset_dir.mkdir(parents=True, exist_ok=True)
+            evidence_path = asset_dir / safe_filename
         else:
-            evidence_path = self.storage_path / filename
+            evidence_path = self.storage_path / safe_filename
         
         # Write content to file
         if isinstance(content, str):
@@ -117,7 +129,7 @@ class EvidenceStorage:
             "hash": sha256_hash,
             "size": len(content_bytes),
             "timestamp": datetime.now().isoformat(),
-            "filename": filename
+            "filename": safe_filename
         }
         
         self.logger.debug(f"Evidence stored: {filename} (SHA256: {sha256_hash[:16]}...)")
