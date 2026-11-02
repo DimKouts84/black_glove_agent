@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { ReactNode, useEffect } from 'react';
 import { Routes, Route, NavLink, useNavigate, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AsciiBanner } from './components/AsciiBanner';
 import { ChatPage } from './pages/ChatPage';
 import { SessionsPage } from './pages/SessionsPage';
@@ -10,7 +10,7 @@ import { AssetsPage } from './pages/AssetsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { useAppStore } from './store/appStore';
-import { api } from './api/client';
+import { api, Session } from './api/client';
 import { NeonButton } from './components/NeonButton';
 
 const NAV = [
@@ -23,8 +23,13 @@ const NAV = [
   { to: '/settings', label: 'Settings' },
 ];
 
+function ScrollPage({ children }: { children: ReactNode }) {
+  return <div className="h-full overflow-y-auto">{children}</div>;
+}
+
 function ChatRoute() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: sessions } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => api.listSessions(),
@@ -52,8 +57,13 @@ function ChatRoute() {
   }, [sessionId, sessions, sessionMissing, navigate]);
 
   const handleNew = async () => {
-    const s = await api.createSession('Security Assessment');
-    navigate(`/chat/${s.id}`);
+    const created = await api.createSession('Security Assessment');
+    queryClient.setQueryData<{ sessions: Session[] }>(['sessions'], (current) => {
+      const known = current?.sessions ?? [];
+      if (known.some((session) => session.id === created.id)) return current;
+      return { sessions: [created, ...known] };
+    });
+    navigate(`/chat/${created.id}`);
   };
 
   if (sessionMissing) {
@@ -69,7 +79,11 @@ function ChatRoute() {
     );
   }
 
-  return <ChatPage sessionId={activeId} />;
+  return (
+    <div className="h-full min-h-0 overflow-hidden flex flex-col">
+      <ChatPage sessionId={activeId} onNewSession={handleNew} />
+    </div>
+  );
 }
 
 export default function App() {
@@ -80,8 +94,8 @@ export default function App() {
   }, [loadConfig]);
 
   return (
-    <div className="min-h-screen bg-grid flex flex-col">
-      <header className="border-b border-border px-4 py-3">
+    <div className="h-dvh overflow-hidden bg-grid flex flex-col">
+      <header className="border-b border-border px-4 py-3 shrink-0">
         <AsciiBanner compact />
       </header>
       <div className="flex flex-1 min-h-0">
@@ -102,20 +116,20 @@ export default function App() {
             ))}
           </nav>
         </aside>
-        <main className="flex-1 p-4 overflow-y-auto">
+        <main className="flex-1 min-h-0 p-4 flex flex-col overflow-hidden">
           <Routes>
             <Route path="/" element={<ChatRoute />} />
             <Route path="/chat/:sessionId" element={<ChatRoute />} />
-            <Route path="/sessions" element={<SessionsPage />} />
-            <Route path="/findings" element={<FindingsPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/assets" element={<AssetsPage />} />
-            <Route path="/tools" element={<ToolsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/sessions" element={<ScrollPage><SessionsPage /></ScrollPage>} />
+            <Route path="/findings" element={<ScrollPage><FindingsPage /></ScrollPage>} />
+            <Route path="/reports" element={<ScrollPage><ReportsPage /></ScrollPage>} />
+            <Route path="/assets" element={<ScrollPage><AssetsPage /></ScrollPage>} />
+            <Route path="/tools" element={<ScrollPage><ToolsPage /></ScrollPage>} />
+            <Route path="/settings" element={<ScrollPage><SettingsPage /></ScrollPage>} />
           </Routes>
         </main>
       </div>
-      <footer className="border-t border-border px-4 py-2 text-xs text-dim flex justify-end">
+      <footer className="border-t border-border px-4 py-2 text-xs text-dim flex justify-end shrink-0">
         <span className="text-primary">╰</span>
         <span className="mx-2 text-secondary">
           Provider: {provider} | Model: {model}

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../api/client';
 import { TerminalPanel } from '../components/TerminalPanel';
 import { NeonButton } from '../components/NeonButton';
-import ReactMarkdown from 'react-markdown';
+import { MarkdownBody } from '../components/MarkdownBody';
 
 export function ReportsPage() {
   const [format, setFormat] = useState('markdown');
@@ -48,7 +48,7 @@ export function ReportsPage() {
       </div>
       {content && (
         <div className="border border-border rounded p-4 max-h-[60vh] overflow-y-auto prose prose-invert prose-sm max-w-none">
-          {format === 'markdown' ? <ReactMarkdown>{content}</ReactMarkdown> : (
+          {format === 'markdown' ? <MarkdownBody>{content}</MarkdownBody> : (
             <pre className="text-xs whitespace-pre-wrap">{content}</pre>
           )}
         </div>

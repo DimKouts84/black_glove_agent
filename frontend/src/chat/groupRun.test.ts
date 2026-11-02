@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ActivityEvent } from '../hooks/useChatSocket';
-import { cardSummaryLine, groupRun, traceByMessageIndex } from './groupRun';
+import { cardSummaryLine, groupRun, traceByMessageIndex, workingStatus } from './groupRun';
 
 function event(partial: ActivityEvent): ActivityEvent {
   return partial;
@@ -158,6 +158,26 @@ describe('groupRun', () => {
       target: '10.0.0.8',
       running: true,
     });
+  });
+});
+
+describe('workingStatus', () => {
+  it('is empty before any specialist starts', () => {
+    expect(workingStatus([])).toEqual({});
+  });
+
+  it('names the running specialist and its latest tool', () => {
+    expect(workingStatus([
+      event({ id: 1, type: 'tool_call', agent: 'network_agent', tool: 'network_agent' }),
+      event({ id: 2, type: 'tool_call', agent: 'network_agent', tool: 'nmap', params: { target: '10.0.0.5' } }),
+    ])).toEqual({ specialist: 'network_agent', tool: 'nmap' });
+  });
+
+  it('is empty once every specialist has finished', () => {
+    expect(workingStatus([
+      event({ id: 1, type: 'tool_call', agent: 'recon_agent', tool: 'recon_agent' }),
+      event({ id: 2, type: 'tool_result', agent: 'black_glove', tool: 'recon_agent', content: 'done' }),
+    ])).toEqual({});
   });
 });
 

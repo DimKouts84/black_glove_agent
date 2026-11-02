@@ -211,6 +211,22 @@ export function groupRun(events: ActivityEvent[]): GroupedRun {
   return { cards, answer };
 }
 
+export interface WorkingStatus {
+  specialist?: string;
+  tool?: string;
+}
+
+/** The specialist still running, and the latest scanner it has called. */
+export function workingStatus(events: ActivityEvent[]): WorkingStatus {
+  const running = [...groupRun(events).cards].reverse().find((card) => card.status === 'running');
+  if (!running) return {};
+  const lastTool = [...running.rows].reverse().find((row) => row.kind === 'tool' && row.tool);
+  return {
+    specialist: running.agent,
+    tool: lastTool?.tool?.name,
+  };
+}
+
 /**
  * Attach each assistant message to the run that produced it.
  * Messages saved with run_id win. Older messages match the next run whose query equals the user text.

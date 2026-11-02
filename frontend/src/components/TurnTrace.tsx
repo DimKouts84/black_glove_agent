@@ -17,19 +17,13 @@ const AGENT_COLORS: Record<string, string> = {
 
 interface Props {
   events: ActivityEvent[];
-  acting?: boolean;
 }
 
-export function TurnTrace({ events, acting = false }: Props) {
+export function TurnTrace({ events }: Props) {
   const grouped = groupRun(events);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
 
-  if (grouped.cards.length === 0) {
-    if (!acting) return null;
-    return (
-      <p className="text-primary text-sm animate-pulse">Black Glove is working…</p>
-    );
-  }
+  if (grouped.cards.length === 0) return null;
 
   return (
     <div className="space-y-2 my-2">

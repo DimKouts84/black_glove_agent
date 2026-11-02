@@ -62,7 +62,6 @@ describe('TurnTrace', () => {
   it('keeps the active specialist open', () => {
     render(
       <TurnTrace
-        acting
         events={[
           {
             id: 1,

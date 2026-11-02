@@ -83,6 +83,34 @@ body::after {
 .severity-low { color: #22c55e; border-color: #22c55e; }
 .severity-info { color: #06b6d4; border-color: #06b6d4; }
 
+.markdown-body {
+  overflow-x: auto;
+}
+
+.markdown-body table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #1e293b;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th {
+  color: #06b6d4;
+}
+
+.markdown-body td {
+  color: #d1d5db;
+}
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #111; }
 ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
