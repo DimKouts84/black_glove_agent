@@ -73,10 +73,10 @@ class CredentialTesterAdapter(BaseAdapter):
 
     # -- protocol implementations -------------------------------------------
 
-    def _test_ssh(self, target: str, port: int, user: str, password: str) -> bool:
-        """Attempt SSH login."""
+    def _test_ssh(self, target: str, port: int, user: str, password: str) -> str:
+        """Attempt SSH login. Returns valid, rejected, or transport."""
         if not paramiko:
-            return False
+            return "transport"
         
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -90,28 +90,28 @@ class CredentialTesterAdapter(BaseAdapter):
                 banner_timeout=self._global_timeout
             )
             client.close()
-            return True
-        except (paramiko.AuthenticationException, paramiko.SSHException):
-            return False
+            return "valid"
+        except paramiko.AuthenticationException:
+            return "rejected"
         except Exception as e:
             logger.debug(f"SSH error {target}:{port} - {e}")
-            return False
+            return "transport"
         finally:
             client.close()
 
-    def _test_ftp(self, target: str, port: int, user: str, password: str) -> bool:
-        """Attempt FTP login."""
+    def _test_ftp(self, target: str, port: int, user: str, password: str) -> str:
+        """Attempt FTP login. Returns valid, rejected, or transport."""
         ftp = ftplib.FTP()
         try:
             ftp.connect(target, port=port, timeout=self._global_timeout)
             ftp.login(user, password)
             ftp.quit()
-            return True
+            return "valid"
         except ftplib.error_perm:
-            return False # Auth failed
+            return "rejected"
         except Exception as e:
             logger.debug(f"FTP error {target}:{port} - {e}")
-            return False
+            return "transport"
         finally:
             try:
                 ftp.close()
@@ -153,7 +153,7 @@ class CredentialTesterAdapter(BaseAdapter):
             f"Target returned {resp.status_code} but did not present HTTP Basic auth challenge."
         )
 
-    def _test_http_basic(self, target: str, port: int, user: str, password: str) -> bool:
+    def _test_http_basic(self, target: str, port: int, user: str, password: str) -> str:
         url = self._build_http_url(target, port)
 
         try:
@@ -166,15 +166,17 @@ class CredentialTesterAdapter(BaseAdapter):
             )
         except Exception as e:
             logger.debug(f"HTTP error {url} - {e}")
-            return False
+            return "transport"
 
         if unauth.status_code != 401:
-            return False
+            return "rejected"
 
         if auth.status_code >= 400:
-            return False
+            return "rejected"
 
-        return self._response_fingerprint(auth) != self._response_fingerprint(unauth)
+        if self._response_fingerprint(auth) != self._response_fingerprint(unauth):
+            return "valid"
+        return "rejected"
 
     # -- execution ----------------------------------------------------------
 
@@ -243,19 +245,29 @@ class CredentialTesterAdapter(BaseAdapter):
                 if delay > 0:
                     time.sleep(delay)
             
+            outcomes = []
             for future in concurrent.futures.as_completed(future_to_cred):
                 user, password = future_to_cred[future]
                 try:
-                    is_valid = future.result()
-                    if is_valid:
-                        logger.info(f"VALID CREDENTIALS FOUND: {user}:{password}")
+                    outcome = future.result()
+                    outcomes.append(outcome)
+                    if outcome == "valid":
+                        logger.info("Credential attempt accepted for %s", user)
                         valid_creds.append({"username": user, "password": password})
                 except Exception as exc:
                     logger.error(f"Worker exception for {user}: {exc}")
+                    outcomes.append("transport")
 
-        status = AdapterResultStatus.SUCCESS if valid_creds else AdapterResultStatus.SUCCESS 
-        # (It's a success execution even if no creds found, unless errors occurred. 
-        # If we want to diff failures, we could use empty list)
+        error_message = None
+        if valid_creds:
+            status = AdapterResultStatus.SUCCESS
+        elif outcomes and all(item == "transport" for item in outcomes):
+            status = AdapterResultStatus.ERROR
+            error_message = (
+                "Connection failed before a login exchange completed"
+            )
+        else:
+            status = AdapterResultStatus.SUCCESS
         
         return AdapterResult(
             status=status,
@@ -266,7 +278,8 @@ class CredentialTesterAdapter(BaseAdapter):
                 "valid_credentials": valid_creds,
                 "attempts": len(combinations)
             },
-            metadata={}
+            metadata={},
+            error_message=error_message,
         )
 
     def interpret_result(self, result: AdapterResult) -> str:

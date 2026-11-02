@@ -237,25 +237,13 @@ class WebVulnScannerAdapter(BaseAdapter):
 
         logger.info(f"Starting Web Vuln scan on {target_url}")
 
-        baseline_resp = self._request("GET", target_url)
-        if not baseline_resp:
-            return AdapterResult(
-                status=AdapterResultStatus.FAILURE,
-                data={},
-                error_message="Could not connect to target",
-                metadata={},
-            )
-
-        baseline_text = baseline_resp.text
-        findings: List[Dict[str, Any]] = []
-
         parsed = urllib.parse.urlparse(target_url)
         query_params = urllib.parse.parse_qs(parsed.query)
-
         scan_params = list(query_params.keys())
         if params_to_test:
             scan_params = [p for p in scan_params if p in params_to_test]
 
+        findings: List[Dict[str, Any]] = []
         if not scan_params:
             return AdapterResult(
                 status=AdapterResultStatus.SUCCESS,
@@ -273,6 +261,16 @@ class WebVulnScannerAdapter(BaseAdapter):
                 },
                 metadata={},
             )
+
+        baseline_resp = self._request("GET", target_url)
+        if not baseline_resp:
+            return AdapterResult(
+                status=AdapterResultStatus.FAILURE,
+                data={},
+                error_message="Could not connect to target",
+                metadata={},
+            )
+        baseline_text = baseline_resp.text
 
         for param in scan_params:
             if "xss" in scans:

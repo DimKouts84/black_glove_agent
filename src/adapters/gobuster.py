@@ -31,6 +31,12 @@ _SOFT404_ERROR_PATTERN = re.compile(
 )
 _SOFT404_LENGTH_PATTERN = re.compile(r"Length:\s*(\d+)", re.IGNORECASE)
 
+def _path_matches_marker(path: str, marker: str) -> bool:
+    normalized = (path or "").lower().rstrip("/") or "/"
+    needle = marker.lower().rstrip("/")
+    return normalized == needle or normalized.startswith(needle + "/")
+
+
 class GobusterAdapter(BaseAdapter):
     """
     Safe, local gobuster execution supporting dir and dns modes.
@@ -91,6 +97,11 @@ class GobusterAdapter(BaseAdapter):
             bundled = self._project_root() / "bin" / "wordlists" / candidate.name
             if bundled.is_file() and len(candidate.parts) == 1:
                 return str(bundled.resolve())
+
+            if len(candidate.parts) == 1:
+                raise ValueError(
+                    f"wordlist not found: {wordlist}. Omit wordlist to use the bundled default."
+                )
 
             if candidate.is_absolute() or len(candidate.parts) > 1:
                 return str(candidate)
@@ -476,7 +487,7 @@ class GobusterAdapter(BaseAdapter):
                 continue
             path = (entry.get("path") or "").lower()
             status = entry.get("status")
-            if status == 200 and any(c in path for c in critical_paths):
+            if status == 200 and any(_path_matches_marker(path, marker) for marker in critical_paths):
                 entry["severity"] = "critical"
             elif status == 200:
                 entry["severity"] = "high"

@@ -124,6 +124,18 @@ class TestCameraSecurityAdapter:
         result = adapter._scan_ports("invalid.hostname.local")
         
         assert result == []
+
+    def test_unresolved_hostname_returns_error(self, adapter):
+        def fail(target):
+            adapter._name_resolution_error = socket.gaierror("Name or service not known")
+            return []
+
+        adapter._scan_ports = fail
+        result = adapter.execute({"target": "missing.example"})
+
+        assert result.status == AdapterResultStatus.ERROR
+        assert "could not be resolved" in (result.error_message or "")
+        assert "No common camera ports" not in str(result.data.get("findings"))
     
     @patch('src.adapters.camera_security.socket.socket')
     def test_rtsp_anonymous_access_vulnerable(self, mock_socket_class, adapter):

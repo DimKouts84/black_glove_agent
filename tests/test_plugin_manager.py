@@ -154,7 +154,18 @@ class TestPluginManager:
         assert "url_params" not in adapters
         assert "rdap_client" not in adapters
         assert "crt_sh_client" not in adapters
-    
+        assert "transient_errors" not in adapters
+
+    def test_discover_adapters_skips_transient_errors_helper(self):
+        """transient_errors is a shared helper, not a discoverable adapter."""
+        from adapters.transient_errors import is_transient_adapter_error
+
+        assert callable(is_transient_adapter_error)
+
+        adapters = PluginManager().discover_adapters()
+        assert "transient_errors" not in adapters
+        assert "example" in adapters
+
     def test_plugin_manager_load_adapter(self):
         """Test loading adapters through plugin manager."""
         manager = PluginManager()
@@ -185,8 +196,9 @@ class TestPluginManager:
         manager = PluginManager()
         
         # Run with invalid params (missing required 'command')
-        with pytest.raises(ValueError, match="Invalid parameters"):
-            manager.run_adapter("example", {})
+        result = manager.run_adapter("example", {})
+        assert result.status.value == "error"
+        assert "Invalid parameters" in (result.error_message or "")
     
     def test_plugin_manager_validate_adapter(self):
         """Test adapter validation through plugin manager."""
@@ -336,14 +348,14 @@ class TestPluginManagerIntegration:
                 "nmap": {"timeout": 300},
             },
         })
-        assert manager._get_adapter_config("sublist3r") == {"threads": 20}
-        assert manager._get_adapter_config("nmap") == {"timeout": 300}
-        assert manager._get_adapter_config("whois") == {}
+        assert manager._get_adapter_config("sublist3r") == {"threads": 20, "retries": 3}
+        assert manager._get_adapter_config("nmap") == {"timeout": 300, "retries": 3}
+        assert manager._get_adapter_config("whois") == {"retries": 3}
 
     def test_get_adapter_config_nmap_fallback_scan_timeout(self):
         manager = PluginManager(config={"scan_timeout": 90, "adapters": {}})
         cfg = manager._get_adapter_config("nmap")
-        assert cfg == {"timeout": 90}
+        assert cfg == {"timeout": 90, "retries": 3}
     
     def test_adapter_discovery_with_empty_directory(self):
         """Test adapter discovery with empty directory."""

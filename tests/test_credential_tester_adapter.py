@@ -116,6 +116,25 @@ class TestCredentialTesterAdapter:
         assert len(creds) == 1
         assert creds[0] == {"username": "root", "password": "toor"}
 
+    @patch("src.adapters.credential_tester.paramiko")
+    def test_ssh_transport_failure_is_not_an_empty_success(self, mock_paramiko, adapter):
+        mock_client = MagicMock()
+        mock_paramiko.SSHClient.return_value = mock_client
+        mock_paramiko.AuthenticationException = type("AuthenticationException", (Exception,), {})
+        mock_client.connect.side_effect = OSError("connection refused")
+
+        result = adapter.execute({
+            "target": "192.168.1.1",
+            "protocol": "ssh",
+            "usernames": ["root"],
+            "passwords": ["toor"],
+        })
+
+        assert result.status == AdapterResultStatus.ERROR
+        assert "Connection failed" in (result.error_message or "")
+        text = adapter.interpret_result(result)
+        assert "failed" in text.lower()
+
     @patch("src.adapters.credential_tester.ftplib.FTP")
     def test_ftp_success(self, mock_ftp_cls, adapter):
         mock_ftp = MagicMock()

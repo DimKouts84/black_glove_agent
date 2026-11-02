@@ -9,6 +9,39 @@ from agent.tool_result import ToolResultEnvelope
 
 
 class TestToolResultEnvelope:
+    def test_failure_payload_keeps_evidence_and_finding_ids(self):
+        envelope = ToolResultEnvelope.from_raw(
+            "nmap",
+            {
+                "adapter_status": "failure",
+                "error_message": "nmap exited 1",
+                "evidence_path": "/tmp/nmap.txt",
+                "finding_ids": [4, 5],
+                "warnings": ["partial stdout"],
+                "transient_retry_warnings": ["attempt 1 timed out"],
+            },
+        )
+        assert envelope.status == "error"
+        assert envelope.evidence_paths == ["/tmp/nmap.txt"]
+        assert envelope.finding_ids == [4, 5]
+        assert "attempt 1 timed out" in envelope.warnings
+        assert "nmap exited 1" in envelope.summary
+
+    def test_from_tool_return_reuses_nested_envelope(self):
+        nested = ToolResultEnvelope(
+            status="partial",
+            tool_name="asset_manager",
+            summary="Asset 'lab' already registered",
+            finding_ids=[9],
+            evidence_paths=["/tmp/a.txt"],
+        )
+        envelope = ToolResultEnvelope.from_tool_return(
+            "asset_manager",
+            {"value": "Asset 'lab' already registered", "envelope": nested.model_dump()},
+        )
+        assert envelope.summary == "Asset 'lab' already registered"
+        assert envelope.finding_ids == [9]
+        assert envelope.status == "partial"
     def test_subagent_success_uses_summary(self):
         envelope = ToolResultEnvelope.from_raw(
             "researcher_agent",

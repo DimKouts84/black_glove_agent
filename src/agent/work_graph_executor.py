@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
+from adapters.transient_errors import is_transient_adapter_error
 from agent.audit import write_audit
 from agent.engagement_store import EngagementStore
 from agent.execution_context import ExecutionContext
@@ -40,6 +41,28 @@ from agent.work_graph import (
 )
 
 logger = logging.getLogger("black_glove.work_graph_executor")
+
+
+def finalize_step_params(parameters: Optional[Dict[str, Any]], target: Optional[str]) -> Dict[str, Any]:
+    """Copy the step target into params before approval and execution."""
+    params = dict(parameters or {})
+    if target and "target" not in params:
+        params["target"] = target
+    if target and "domain" not in params:
+        params.setdefault("domain", target)
+    return params
+
+
+def _error_envelope(tool_name: str, exc: BaseException) -> ToolResultEnvelope:
+    message = str(exc)
+    return ToolResultEnvelope(
+        status="error",
+        tool_name=tool_name,
+        summary=message,
+        error=message,
+        retryable=is_transient_adapter_error(message),
+    )
+
 
 ApprovalCallback = Callable[[str, Dict[str, Any]], Awaitable[bool]]
 ActivityCallback = Callable[[Dict[str, Any]], None]
@@ -167,11 +190,7 @@ class WorkGraphExecutor:
         engagement: Engagement,
         ctx: ExecutionContext,
     ) -> ToolResultEnvelope:
-        params = dict(step.parameters)
-        if step.target and "target" not in params:
-            params["target"] = step.target
-        if step.target and "domain" not in params:
-            params.setdefault("domain", step.target)
+        params = finalize_step_params(step.parameters, step.target)
 
         exploit_err = check_exploit_gate(
             step.tool,
@@ -224,7 +243,7 @@ class WorkGraphExecutor:
 
             wrapper = AdapterToolWrapper(step.tool, self.plugin_manager)
             raw = await asyncio.to_thread(wrapper.execute, params)
-            envelope = ToolResultEnvelope.from_raw(step.tool, raw)
+            envelope = ToolResultEnvelope.from_tool_return(step.tool, raw)
             write_audit(
                 "tool_result",
                 {
@@ -247,9 +266,7 @@ class WorkGraphExecutor:
         except Exception as exc:
             logger.error("Step %s failed: %s", step.name, exc)
             write_audit("tool_error", {"tool": step.tool, "target": step.target, "error": str(exc), "step_id": step.id})
-            return ToolResultEnvelope(
-                status="error", tool_name=step.tool, summary=str(exc), error=str(exc), retryable=True
-            )
+            return _error_envelope(step.tool, exc)
 
     def _apply_worker_result(self, step: WorkStep, graph: WorkGraph, result: WorkerResult) -> None:
         step.finished_at = datetime.now().isoformat()
@@ -382,13 +399,7 @@ class WorkGraphExecutor:
                             task_id=step.id,
                             step_id=step.id,
                             status="error",
-                            envelope=ToolResultEnvelope(
-                                status="error",
-                                tool_name=step.tool,
-                                summary=str(exc),
-                                error=str(exc),
-                                retryable=True,
-                            ),
+                            envelope=_error_envelope(step.tool, exc),
                             error=str(exc),
                         )
                     self._apply_worker_result(step, graph, result)
@@ -471,13 +482,7 @@ class WorkGraphExecutor:
                     task_id=step.id,
                     step_id=step.id,
                     status="error",
-                    envelope=ToolResultEnvelope(
-                        status="error",
-                        tool_name=step.tool,
-                        summary=str(exc),
-                        error=str(exc),
-                        retryable=True,
-                    ),
+                    envelope=_error_envelope(step.tool, exc),
                     error=str(exc),
                 )
             self._apply_worker_result(step, graph, result)

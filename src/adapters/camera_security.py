@@ -13,6 +13,7 @@ Unauthorized testing of security cameras may violate laws and privacy regulation
 """
 
 import socket
+import ssl
 import time
 import base64
 import re
@@ -174,6 +175,14 @@ class CameraSecurityAdapter(BaseAdapter):
             # Step 1: Port scanning
             self.logger.info("Scanning common camera ports...")
             open_ports = self._scan_ports(target)
+            resolve_error = getattr(self, "_name_resolution_error", None)
+            if resolve_error:
+                return AdapterResult(
+                    status=AdapterResultStatus.ERROR,
+                    data={"target": target, "open_ports": [], "findings": []},
+                    metadata={"timestamp": time.time()},
+                    error_message=f"Hostname {target} could not be resolved: {resolve_error}",
+                )
             
             if not open_ports:
                 return AdapterResult(
@@ -250,6 +259,31 @@ class CameraSecurityAdapter(BaseAdapter):
                 metadata={"timestamp": time.time()}
             )
     
+    def _open_probe_socket(self, target: str, port: int):
+        """Open a TCP socket, wrapping TLS for HTTPS camera ports."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect((target, port))
+        if port in (443, 8443):
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            return context.wrap_socket(sock, server_hostname=target or None)
+        return sock
+
+    @staticmethod
+    def _vendor_match_text(http_response: str) -> str:
+        server = ""
+        for line in http_response.splitlines():
+            if line.lower().startswith("server:"):
+                server = line.split(":", 1)[1]
+                break
+        title = ""
+        match = re.search(r"<title>(.*?)</title>", http_response, re.IGNORECASE | re.DOTALL)
+        if match:
+            title = match.group(1)
+        return f"{server}\n{title}"
+
     def _scan_ports(self, target: str) -> List[int]:
         """
         Scan common camera ports.
@@ -261,6 +295,7 @@ class CameraSecurityAdapter(BaseAdapter):
             List of open ports
         """
         open_ports = []
+        self._name_resolution_error = None
         
         for port in self.CAMERA_PORTS.keys():
             try:
@@ -273,8 +308,9 @@ class CameraSecurityAdapter(BaseAdapter):
                     open_ports.append(port)
                     self.logger.debug(f"Port {port} is open")
                 
-            except socket.gaierror:
+            except socket.gaierror as exc:
                 self.logger.error(f"Hostname {target} could not be resolved")
+                self._name_resolution_error = exc
                 break
             except socket.error as e:
                 self.logger.debug(f"Port {port} connection error: {str(e)}")
@@ -363,12 +399,8 @@ class CameraSecurityAdapter(BaseAdapter):
         Returns:
             Finding message with vendor info if possible, None otherwise
         """
-        protocol = "https" if port in [443, 8443] else "http"
-        
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(self.timeout)
-            sock.connect((target, port))
+            sock = self._open_probe_socket(target, port)
             
             # Send HTTP GET request
             request = f"GET / HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n"
@@ -384,7 +416,7 @@ class CameraSecurityAdapter(BaseAdapter):
             # Check response
             if "HTTP/1.1 200 OK" in response or "HTTP/1.0 200 OK" in response:
                 # Check if it's a camera interface
-                camera_keywords = ["camera", "dvr", "nvr", "video", "surveillance", "ipcam", "webcam"]
+                camera_keywords = ["camera", "dvr", "nvr", "surveillance", "ipcam", "webcam"]
                 response_lower = response.lower()
                 
                 if any(keyword in response_lower for keyword in camera_keywords) or vendor:
@@ -421,10 +453,10 @@ class CameraSecurityAdapter(BaseAdapter):
             "GeoVision": "GeoVision"
         }
         
-        response_lower = http_response.lower()
+        source = self._vendor_match_text(http_response).lower()
         
         for signature, vendor in vendor_signatures.items():
-            if signature.lower() in response_lower:
+            if signature.lower() in source:
                 self.logger.info(f"Identified vendor: {vendor}")
                 return vendor
         
@@ -453,9 +485,7 @@ class CameraSecurityAdapter(BaseAdapter):
                     break
                 
                 try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(self.timeout)
-                    sock.connect((target, port))
+                    sock = self._open_probe_socket(target, port)
 
                     unauth_request = f"GET / HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n"
                     sock.send(unauth_request.encode())
@@ -465,9 +495,7 @@ class CameraSecurityAdapter(BaseAdapter):
                     if "401 Unauthorized" not in unauth_response and "403 Forbidden" not in unauth_response:
                         continue
 
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(self.timeout)
-                    sock.connect((target, port))
+                    sock = self._open_probe_socket(target, port)
 
                     credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
                     request = (

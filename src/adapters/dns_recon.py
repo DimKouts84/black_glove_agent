@@ -149,7 +149,7 @@ class DNSReconAdapter(BaseAdapter):
             "brute_force": [],
             "errors": [],
             "zone_transfer_attempted": mode in ["zone_transfer", "all"],
-            "brute_force_attempted": mode in ["brute_force", "all"],
+            "brute_force_attempted": False,
         }
 
         # 1. Zone Transfer
@@ -164,6 +164,7 @@ class DNSReconAdapter(BaseAdapter):
         if mode in ["brute_force", "all"]:
             logger.info(f"Starting Subdomain Brute-force on {domain}")
             if wordlist_path and wordlist_path.exists():
+                result_data["brute_force_attempted"] = True
                 bf_results = self._brute_force_subdomains(domain, wordlist_path)
                 result_data["brute_force"] = bf_results
             else:
@@ -186,10 +187,15 @@ class DNSReconAdapter(BaseAdapter):
         evidence_filename = f"dns_recon_{domain.replace('.', '_')}_{int(time.time())}.txt"
         evidence_path = self._store_evidence("\n".join(evidence_lines), evidence_filename)
 
+        error_message = None
+        if result_data["errors"]:
+            error_message = "; ".join(str(item) for item in result_data["errors"])
+
         return AdapterResult(
             status=status,
             data=result_data,
             metadata={"domain": domain},
+            error_message=error_message,
             evidence_path=evidence_path,
         )
 
@@ -221,10 +227,14 @@ class DNSReconAdapter(BaseAdapter):
                 results[ns_clean] = {"status": "success", "records": records}
                 logger.info(f"Zone transfer SUCCESS against {ns_clean}")
                 
+            except dns.exception.Timeout as e:
+                results[ns_clean] = {"status": "timeout", "error": str(e)[:200]}
             except Exception as e:
-                # A refused AXFR is the expected outcome. Keep the nameserver so the
-                # report can say the check ran and was denied.
-                results[ns_clean] = {"status": "denied", "error": str(e)[:200]}
+                text = str(e).lower()
+                if "refus" in text or "notauth" in text:
+                    results[ns_clean] = {"status": "denied", "error": str(e)[:200]}
+                else:
+                    results[ns_clean] = {"status": "failed", "error": str(e)[:200]}
         
         return results
 

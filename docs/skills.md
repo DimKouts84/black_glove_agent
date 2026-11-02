@@ -57,20 +57,23 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - Empty registrar/dates → `partial` with warnings, never a successful registration finding.
 
 ### `web_vuln_scanner` / `sqli_scanner`
-- URLs without query parameters → envelope status `not_applicable` with `coverage.scanned_params = 0`, `coverage.untested = true`, and `coverage.reason = no_query_parameters`.
+- URLs without query parameters, and a `params_to_test` filter that matches none of those parameters, → envelope status `not_applicable` with `coverage.scanned_params = 0`, `coverage.untested = true`, and `coverage.reason = no_query_parameters`.
 - That result does not create a finding. A parameterless URL is not reported as "no vulnerabilities found".
+- `web_vuln_scanner` decides this from the URL before opening a connection.
 
 ### `web_server_scanner`
-- Missing security headers include request URL and HTTP status in evidence.
+- Missing security headers include the final response URL and HTTP status in evidence.
+- HSTS is classified from the final response URL. Missing HSTS on a final **HTTP** response is `informational`. Missing HSTS on a final **HTTPS** response stays a normal finding and does not say the response was HTTP.
 - HSTS detected by Wappalyzer but absent in the direct header check is stored as `verification_state: conflicted` and severity INFO.
-- The tool interpretation then appends `Reconciled observations (not confirmed findings)` for those titles, so the chat summary does not leave the header as a confirmed high finding.
-- Missing HSTS on a plain **HTTP** response is `informational` (not ranked as a high-severity key finding).
-- Connection failures (`ERROR` severity, "Connection failed") are **not** persisted as HIGH findings; they are skipped (coverage only).
+- The reconciled sentence is placed at the start of the tool summary, including when the later tool is the one that detects the conflict.
+- Connection failures are untested coverage (`coverage.untested` / `reason: connection_failed`). They are not saved as findings and they are not a completed "no issues" scan.
 
 ### `camera_security`
 - Benign negative results (e.g. "No common camera ports are open") do **not** create findings.
 - An open-port inventory line is not a finding. Ordinary web ports (80, 443, 8080, 8443) stay in the raw `open_ports` list only.
 - A finding is saved only when the text contains `VULNERABILITY`, `RISK`, `CRITICAL`, or `WEAK`.
+- A hostname that does not resolve is status `error`, not a clean "no ports" result.
+- Ports 443 and 8443 are probed over TLS. Vendor names are matched on the `Server` header and page title. The word `video` alone is not a camera finding.
 
 ### `nmap`
 - Port **53/DNS** is not flagged as a high-risk service; open DNS still appears in the informational `Open ports discovered` note.
@@ -79,6 +82,7 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 
 ### `public_ip`
 - Public IP detection is inventory (`verification_state: informational`); excluded from detailed findings and risk score.
+- The finding is always stored on the session asset `local-agent`, even when the scan step passes another target. The adapter reports the agent machine's address.
 
 ### Web/SSL tool gating (agent behavior)
 - Root and Planner agents should schedule `web_server_scanner`, `ssl_check`, `wappalyzer`, `web_vuln_scanner`, and `sqli_scanner` only when nmap shows HTTP/HTTPS ports (80, 443, 8080, 8443) open.
@@ -88,6 +92,7 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 
 ### `generate_report`
 - Full report markdown is written to `~/.homepentest/evidence/reports/{run_id}.md`.
+- `POST /api/reports` uses the latest `agent_runs` row and returns that run's full report body. It does not mix runs, and it does not return only the 1500-character preview. No runs returns 404. `GET /reports/{run_id}` still loads one named run.
 - Trace events store a short executive `summary` plus `report_path` (not truncated full markdown).
 - Executive summaries use ASCII punctuation (hyphen separators) for Windows-safe trace storage.
 - The **Scanned Assets** table has four columns: target, IP addresses, tech stack, and open ports (from DNS, Wappalyzer, and nmap inventory findings).
@@ -103,20 +108,30 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 
 ### `dns_lookup`
 - Benign empty record types (`No answer for record type`, `Domain does not exist`) do **not** create findings.
-- Genuine resolver failures (timeouts, etc.) emit informational `DNS <type> query issue` findings.
+- Genuine resolver failures (timeouts, etc.) are stored on `records[type].error` and emit informational `DNS <type> query issue` findings. If every queried type fails that way, the adapter status is `partial`.
 
 ### `dns_recon`
-- `mode: zone_transfer` attempts AXFR and records each nameserver as `success` or `denied`. A refusal is an informational `DNS zone transfer denied (N)` finding, not a generic "scan completed" row.
+- `mode: zone_transfer` attempts AXFR and records each nameserver as `success`, `denied`, `timeout`, or `failed`. A refusal is an informational `DNS zone transfer denied (N)` finding. A timeout or other error is `DNS zone transfer failed`, not a refusal and not a generic "scan completed" row.
 - A successful AXFR stays CRITICAL.
-- Brute-force text is included only when that mode actually ran. `zone_transfer` mode does not claim that brute force found nothing.
+- Brute-force text is included only when the wordlist was opened and that mode ran. A missing wordlist is an error, not "found no subdomains".
+
+### `credential_tester`
+- A transport or handshake failure is status `error` with a connection message. It is not `success` with an empty credential list.
+- A completed login exchange that rejects the password stays a successful negative result.
+
+### `ssl_check`
+- `is_not_yet_valid` is high severity, same as an expired certificate, and the description says the certificate is not yet valid.
+- A `host:port` target uses that port instead of the default 443.
 
 ### `asset_manager`
 - `add` is idempotent: re-registering an existing `value` returns `success` with `action: exists` and the existing `asset_id` (no spurious error trace).
 - The human-readable message stays in `value`. `action` and `asset_id` from adapter metadata are copied onto the tool result so the agent can see them.
 
 ### `gobuster`
-- Bare wordlist filenames (e.g. `common.txt`) and config-relative paths (`bin/wordlists/common.txt`) resolve to the bundled wordlist under `bin/wordlists/`.
+- Bare wordlist filenames that exist under `bin/wordlists/` (e.g. `common.txt`) and config-relative paths (`bin/wordlists/common.txt`) resolve to that file.
+- A bare name that is not in `bin/wordlists/` is an error. It is not replaced with `common.txt`.
 - Omit `wordlist` in tool params to use the bundled default automatically.
+- Sensitive paths match on a path boundary (`/.git` does not match `/.github`).
 - SPA catch-all HTTP 200 responses (soft-404): pre-probes a random path, retries with `--exclude-length`, and returns `partial` (not hard `error`) when enumeration cannot proceed after exclusion.
 - Every remaining path is listed in one informational `Paths discovered (N)` finding. Only sensitive paths (admin, login, `.env`, `.git`, backups, and similar) also get their own severity finding. A normal page with HTTP 200 is not stored as a high vulnerability.
 

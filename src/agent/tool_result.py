@@ -210,6 +210,10 @@ class ToolResultEnvelope(BaseModel):
             elif data.get("coverage", {}).get("untested"):
                 status = "partial"
             warnings = list(data.get("warnings") or [])
+            for item in data.get("transient_retry_warnings") or []:
+                text = str(item)
+                if text and text not in warnings:
+                    warnings.append(text)
             coverage = dict(data.get("coverage") or {})
 
         summary = interpretation or ""
@@ -220,8 +224,30 @@ class ToolResultEnvelope(BaseModel):
                 summary = data.get("message", f"{tool_name}: not applicable (no test surface)")
             elif status == "partial":
                 summary = f"{tool_name} returned partial results"
+            elif status == "error":
+                summary = str(
+                    data.get("error_message")
+                    or data.get("error")
+                    or f"{tool_name} failed"
+                )
             else:
-                summary = f"{tool_name} completed"
+                value = data.get("value") if isinstance(data, dict) else None
+                if isinstance(value, str) and value.strip():
+                    summary = value[:500]
+                else:
+                    summary = f"{tool_name} completed"
+
+        finding_ids: List[int] = []
+        if isinstance(data, dict):
+            raw_ids = data.get("finding_ids")
+            if not raw_ids and isinstance(data.get("envelope"), dict):
+                raw_ids = data["envelope"].get("finding_ids")
+            if isinstance(raw_ids, list):
+                for item in raw_ids:
+                    try:
+                        finding_ids.append(int(item))
+                    except (TypeError, ValueError):
+                        continue
 
         digest = json.dumps(data, default=str)
         if len(digest) > 2000:
@@ -231,6 +257,7 @@ class ToolResultEnvelope(BaseModel):
             status=status,
             tool_name=tool_name,
             summary=summary,
+            finding_ids=finding_ids,
             raw_digest=digest,
             data=data if isinstance(data, dict) else None,
             evidence_paths=evidence_paths,
@@ -239,6 +266,22 @@ class ToolResultEnvelope(BaseModel):
             error=summary if status == "error" else None,
             retryable=_is_retryable_error(summary if status == "error" else None, status),
         )
+
+    @classmethod
+    def from_tool_return(cls, tool_name: str, result: Any) -> "ToolResultEnvelope":
+        """Reuse an envelope the wrapper already built, including finding ids."""
+        if isinstance(result, dict):
+            nested = result.get("envelope")
+            if isinstance(nested, dict) and nested.get("status"):
+                env = cls.model_validate(nested)
+                if not env.finding_ids and result.get("finding_ids"):
+                    env.finding_ids = [int(item) for item in result["finding_ids"]]
+                if result.get("evidence_path"):
+                    path = str(result["evidence_path"])
+                    if path not in env.evidence_paths:
+                        env.evidence_paths.append(path)
+                return env
+        return cls.from_raw(tool_name, result)
 
     @classmethod
     def from_adapter_result(
@@ -250,15 +293,19 @@ class ToolResultEnvelope(BaseModel):
     ) -> "ToolResultEnvelope":
         status_value = getattr(getattr(adapter_result, "status", None), "value", "success")
         enriched = dict(payload)
-        if status_value == "failure" and isinstance(payload, dict):
-            if payload.get("errors") or payload.get("warnings") or payload.get("coverage"):
-                status_value = "partial"
         enriched["adapter_status"] = status_value
         if interpretation:
             enriched["interpretation"] = interpretation
-        if adapter_result.metadata:
-            meta_warnings = adapter_result.metadata.get("warnings")
+        if getattr(adapter_result, "metadata", None):
+            meta = adapter_result.metadata
+            meta_warnings = list(meta.get("warnings") or [])
+            meta_warnings.extend(meta.get("transient_retry_warnings") or [])
             if meta_warnings:
                 enriched.setdefault("warnings", [])
-                enriched["warnings"] = list(enriched.get("warnings", [])) + list(meta_warnings)
+                merged = list(enriched.get("warnings") or [])
+                for item in meta_warnings:
+                    text = str(item)
+                    if text and text not in merged:
+                        merged.append(text)
+                enriched["warnings"] = merged
         return cls.from_raw(tool_name, enriched, interpretation=interpretation)

@@ -100,6 +100,26 @@ class TestDNSReconExecution:
         assert "denied by ns1.example.com" in text
         assert "Brute force found no subdomains" not in text
 
+    @patch("src.adapters.dns_recon.dns.resolver.resolve")
+    @patch("src.adapters.dns_recon.dns.query.xfr")
+    def test_zone_transfer_timeout_is_not_a_refusal(self, mock_query_xfr, mock_resolve):
+        adapter = DNSReconAdapter()
+        ns_mock = MagicMock()
+        ns_mock.target = "ns1.example.com."
+        mock_resolve.side_effect = [
+            [ns_mock],
+            [MagicMock(address="1.2.3.4")],
+        ]
+        mock_query_xfr.side_effect = dns.exception.Timeout("timed out")
+
+        result = adapter.execute({"target": "example.com", "mode": "zone_transfer"})
+
+        entry = result.data["zone_transfer"]["ns1.example.com"]
+        assert entry["status"] == "timeout"
+        text = adapter.interpret_result(result)
+        assert "failed on ns1.example.com" in text
+        assert "denied" not in text.lower()
+
     @patch("src.adapters.dns_recon.dns.resolver.Resolver")
     def test_brute_force_success(self, mock_resolver_cls, tmp_path):
         adapter = DNSReconAdapter()

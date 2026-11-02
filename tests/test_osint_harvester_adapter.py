@@ -181,8 +181,12 @@ class TestOSINTHarvesterValidation:
 
 class TestSubdomainHarvesting:
 
+    @patch(
+        "src.adapters.crt_sh_client.fetch_crt_sh_entries",
+        return_value=(json.loads(SAMPLE_CRT_JSON), None),
+    )
     @patch("src.adapters.osint_harvester.requests.get")
-    def test_subdomain_discovery(self, mock_get, tmp_path):
+    def test_subdomain_discovery(self, mock_get, _mock_crt, tmp_path):
         cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
@@ -207,8 +211,12 @@ class TestSubdomainHarvesting:
         finally:
             os.chdir(cwd)
 
+    @patch(
+        "src.adapters.crt_sh_client.fetch_crt_sh_entries",
+        return_value=(json.loads(SAMPLE_CRT_JSON), None),
+    )
     @patch("src.adapters.osint_harvester.requests.get")
-    def test_subdomain_wildcard_stripping(self, mock_get, tmp_path):
+    def test_subdomain_wildcard_stripping(self, mock_get, _mock_crt, tmp_path):
         """Wildcard subdomains (*.test.example.com) should be stripped to test.example.com."""
         cwd = os.getcwd()
         os.chdir(tmp_path)
@@ -233,8 +241,12 @@ class TestSubdomainHarvesting:
         finally:
             os.chdir(cwd)
 
+    @patch(
+        "src.adapters.crt_sh_client.fetch_crt_sh_entries",
+        return_value=([], "connection refused"),
+    )
     @patch("src.adapters.osint_harvester.requests.get")
-    def test_subdomain_error_handling(self, mock_get, tmp_path):
+    def test_subdomain_error_handling(self, mock_get, _mock_crt, tmp_path):
         """crt.sh failure should result in FAILURE status with error info."""
         cwd = os.getcwd()
         os.chdir(tmp_path)
@@ -253,8 +265,12 @@ class TestSubdomainHarvesting:
         finally:
             os.chdir(cwd)
 
+    @patch(
+        "src.adapters.crt_sh_client.fetch_crt_sh_entries",
+        return_value=([], None),
+    )
     @patch("src.adapters.osint_harvester.requests.get")
-    def test_subdomain_crt_sh_404_returns_empty(self, mock_get, tmp_path):
+    def test_subdomain_crt_sh_404_returns_empty(self, mock_get, _mock_crt, tmp_path):
         """crt.sh 404 should be treated as no subdomains, not a hard failure."""
         cwd = os.getcwd()
         os.chdir(tmp_path)
@@ -457,8 +473,12 @@ class TestMetadataExtraction:
 
 class TestEvidenceAndIntegration:
 
+    @patch(
+        "src.adapters.crt_sh_client.fetch_crt_sh_entries",
+        return_value=(json.loads(SAMPLE_CRT_JSON), None),
+    )
     @patch("src.adapters.osint_harvester.requests.get")
-    def test_evidence_storage(self, mock_get, tmp_path):
+    def test_evidence_storage(self, mock_get, _mock_crt, tmp_path):
         """Evidence file should be created with adapter results."""
         cwd = os.getcwd()
         os.chdir(tmp_path)
@@ -483,8 +503,12 @@ class TestEvidenceAndIntegration:
         finally:
             os.chdir(cwd)
 
+    @patch(
+        "src.adapters.crt_sh_client.fetch_crt_sh_entries",
+        return_value=(json.loads(SAMPLE_CRT_JSON), None),
+    )
     @patch("src.adapters.osint_harvester.requests.get")
-    def test_full_execution_all_modules(self, mock_get, tmp_path):
+    def test_full_execution_all_modules(self, mock_get, _mock_crt, tmp_path):
         """Run all three modules and verify combined output structure."""
         cwd = os.getcwd()
         os.chdir(tmp_path)
@@ -557,4 +581,24 @@ class TestEvidenceAndIntegration:
         finally:
             if src_path in sys.path:
                 sys.path.remove(src_path)
+            os.chdir(cwd)
+
+    @patch("src.adapters.crt_sh_client.fetch_crt_sh_entries", return_value=([], "HTTPError 502 for https://crt.sh/"))
+    @patch("src.adapters.osint_harvester.requests.get")
+    def test_crt_sh_502_is_partial_coverage(self, mock_get, _mock_fetch, tmp_path):
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            mock_get.side_effect = Exception("hackertarget down")
+            adapter = create_osint_harvester_adapter()
+            result = adapter.execute({
+                "target": "example.com",
+                "modules": ["subdomains"],
+            })
+
+            assert result.status == AdapterResultStatus.PARTIAL
+            assert result.data["coverage"]["crt_sh_ok"] is False
+            assert result.data["warnings"]
+            assert result.data["subdomains"] == []
+        finally:
             os.chdir(cwd)

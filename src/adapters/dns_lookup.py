@@ -149,9 +149,20 @@ class DnsLookupAdapter(BaseAdapter):
                         "error": "No answer for record type"
                     }
                 except dns.exception.Timeout:
-                    errors[record_type] = f"Timeout after {timeout} seconds"
+                    message = f"Timeout after {timeout} seconds"
+                    errors[record_type] = message
+                    dns_results[record_type] = {
+                        "records": [],
+                        "count": 0,
+                        "error": message,
+                    }
                 except Exception as e:
                     errors[record_type] = str(e)
+                    dns_results[record_type] = {
+                        "records": [],
+                        "count": 0,
+                        "error": str(e),
+                    }
             
             # Store raw evidence
             evidence_filename = f"dns_{domain.replace('.', '_')}_{int(time.time())}.txt"
@@ -166,14 +177,29 @@ class DnsLookupAdapter(BaseAdapter):
                 evidence_data += "\n"
             
             evidence_path = self._store_evidence(evidence_data, evidence_filename)
-            
+
+            benign = {"Domain does not exist", "No answer for record type"}
+            hard_failures = [
+                rtype
+                for rtype, payload in dns_results.items()
+                if payload.get("error") and payload.get("error") not in benign and not payload.get("records")
+            ]
+            status = AdapterResultStatus.SUCCESS
+            error_message = None
+            if dns_results and len(hard_failures) == len(dns_results):
+                status = AdapterResultStatus.PARTIAL
+                error_message = "; ".join(
+                    f"{rtype}: {dns_results[rtype]['error']}" for rtype in hard_failures
+                )
+
             return AdapterResult(
-                status=AdapterResultStatus.SUCCESS,
+                status=status,
                 data={
                     "domain": domain,
                     "records": dns_results,
                     "errors": errors
                 },
+                error_message=error_message,
                 metadata={
                     "adapter": self.name,
                     "domain": domain,
@@ -197,7 +223,7 @@ class DnsLookupAdapter(BaseAdapter):
             )
     
     def interpret_result(self, result: AdapterResult) -> str:
-        if result.status != AdapterResultStatus.SUCCESS:
+        if result.status not in (AdapterResultStatus.SUCCESS, AdapterResultStatus.PARTIAL):
             return f"DNS lookup failed: {result.error_message}"
         
         data = result.data

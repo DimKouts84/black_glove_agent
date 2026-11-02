@@ -31,18 +31,34 @@ function ChatRoute() {
   });
 
   const { sessionId } = useParams();
-  const activeId = sessionId || sessions?.sessions[0]?.id;
+  const sessionsLoaded = !!sessions;
+  const sessionMissing =
+    sessionsLoaded &&
+    !!sessionId &&
+    !sessions.sessions.some((s) => s.id === sessionId);
+  const activeId = sessionMissing
+    ? undefined
+    : sessionId || sessions?.sessions[0]?.id;
 
   useEffect(() => {
+    if (sessionMissing) {
+      const fallback = sessions.sessions[0]?.id;
+      navigate(fallback ? `/chat/${fallback}` : '/', { replace: true });
+      return;
+    }
     if (!sessionId && sessions?.sessions[0]) {
       navigate(`/chat/${sessions.sessions[0].id}`, { replace: true });
     }
-  }, [sessionId, sessions, navigate]);
+  }, [sessionId, sessions, sessionMissing, navigate]);
 
   const handleNew = async () => {
     const s = await api.createSession('Security Assessment');
     navigate(`/chat/${s.id}`);
   };
+
+  if (sessionMissing) {
+    return null;
+  }
 
   if (!activeId) {
     return (

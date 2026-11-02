@@ -4,23 +4,49 @@ Target string normalization utilities.
 
 from __future__ import annotations
 
+import ipaddress
 import re
+from typing import Optional, Tuple
 from urllib.parse import urlparse
+
+
+def split_host_port(value: str) -> Tuple[str, Optional[int]]:
+    """Split a target into a host and an optional numeric port.
+
+    Bare IPv6 addresses stay intact. A trailing ``:port`` is removed only for
+    hostnames, IPv4 addresses, and bracketed IPv6 literals.
+    """
+    host = str(value).strip()
+    if "://" in host:
+        parsed = urlparse(host)
+        host = parsed.netloc or parsed.path or host
+    host = host.strip().strip("/")
+
+    if host.startswith("[") and "]" in host:
+        end = host.index("]")
+        addr = host[1:end]
+        rest = host[end + 1 :]
+        if rest.startswith(":") and rest[1:].isdigit():
+            return addr, int(rest[1:])
+        return addr, None
+
+    try:
+        ipaddress.ip_address(host)
+        return host, None
+    except ValueError:
+        pass
+
+    if ":" in host:
+        host_part, _, port_part = host.rpartition(":")
+        if port_part.isdigit() and host_part and ":" not in host_part:
+            return host_part, int(port_part)
+    return host, None
 
 
 def strip_host(value: str) -> str:
     """Normalize a target string to a bare host or IP."""
-    value = str(value).strip()
-    if "://" in value:
-        parsed = urlparse(value)
-        value = parsed.netloc or value
-    if value.startswith("[") and "]" in value:
-        value = value[1 : value.index("]")]
-    if ":" in value and not value.startswith("["):
-        host_part, _, port_part = value.rpartition(":")
-        if port_part.isdigit():
-            value = host_part
-    return value.strip("/").lower()
+    host, _port = split_host_port(value)
+    return host.strip("/").lower()
 
 
 def normalize_domain(domain: str) -> str:

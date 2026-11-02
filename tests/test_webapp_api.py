@@ -4,6 +4,7 @@ import asyncio
 import sys
 import threading
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -211,6 +212,101 @@ class TestWebAPI:
         assert "user" in roles
         assert "assistant" in roles
         assert any("Completed after disconnect" in m["content"] for m in r.json()["messages"])
+
+    def test_reports_returns_latest_run_full_body(self, client, tmp_path):
+        report = tmp_path / "run-new.md"
+        report.write_text("# Full report\n" + ("detail line\n" * 80), encoding="utf-8")
+        with patch("webapp.routes._latest_run_id", return_value="run-new"), patch(
+            "webapp.routes.ReportTool"
+        ) as tool_cls:
+            tool_cls.return_value.execute.return_value = {
+                "format": "markdown",
+                "report_path": str(report),
+                "report_preview": "short preview",
+                "summary": "one run",
+            }
+            response = client.post("/api/reports", json={"format": "markdown"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["run_id"] == "run-new"
+        assert body["content"] == report.read_text(encoding="utf-8")
+        assert "short preview" not in body["content"]
+
+    def test_reports_404_when_no_runs(self, client):
+        with patch("webapp.routes._latest_run_id", return_value=None):
+            response = client.post("/api/reports", json={"format": "markdown"})
+        assert response.status_code == 404
+
+    def test_reports_endpoint_returns_latest_run_body(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "homepentest.db"
+        monkeypatch.setattr("agent.db.DB_PATH", db_path)
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        from agent.db import get_db_connection, init_db
+
+        init_db()
+        conn = get_db_connection()
+        try:
+            conn.execute("INSERT INTO sessions (id, title) VALUES ('s', 't')")
+            conn.execute(
+                "INSERT INTO agent_runs (id, session_id, query, status, started_at) VALUES (?, ?, ?, ?, ?)",
+                ("run-old", "s", "old", "completed", "2020-01-01T00:00:00"),
+            )
+            conn.execute(
+                "INSERT INTO agent_runs (id, session_id, query, status, started_at) VALUES (?, ?, ?, ?, ?)",
+                ("run-new", "s", "new", "completed", "2026-01-01T00:00:00"),
+            )
+            conn.execute(
+                "INSERT INTO assets (name, type, value) VALUES ('example.com', 'domain', 'example.com')"
+            )
+            asset_id = conn.execute("SELECT id FROM assets").fetchone()[0]
+            conn.execute(
+                "INSERT INTO findings (asset_id, title, severity, confidence, description, run_id) "
+                "VALUES (?, 'OLD-RUN-MARKER', 'high', 0.9, 'old finding', 'run-old')",
+                (asset_id,),
+            )
+            conn.execute(
+                "INSERT INTO findings (asset_id, title, severity, confidence, description, run_id) "
+                "VALUES (?, 'LATEST-ONLY-MARKER', 'high', 0.9, 'latest finding body', 'run-new')",
+                (asset_id,),
+            )
+            old_id = conn.execute(
+                "SELECT id FROM findings WHERE title = 'OLD-RUN-MARKER'"
+            ).fetchone()[0]
+            new_id = conn.execute(
+                "SELECT id FROM findings WHERE title = 'LATEST-ONLY-MARKER'"
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO finding_observations (finding_id, run_id, description) VALUES (?, 'run-old', 'old finding')",
+                (old_id,),
+            )
+            conn.execute(
+                "INSERT INTO finding_observations (finding_id, run_id, description) VALUES (?, 'run-new', 'latest finding body')",
+                (new_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        reset_deps()
+        app = create_app()
+        with TestClient(app) as client:
+            response = client.post("/api/reports", json={"format": "markdown"})
+        reset_deps()
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["run_id"] == "run-new"
+        assert "LATEST-ONLY-MARKER" in body["content"]
+        assert "OLD-RUN-MARKER" not in body["content"]
+        report_path = Path(body["report_path"])
+        assert body["content"] == report_path.read_text(encoding="utf-8")
+        assert len(body["content"]) > len(body.get("summary") or "")
+
+    def test_package_requires_python_39(self):
+        text = open("pyproject.toml", encoding="utf-8").read()
+        assert 'requires-python = ">=3.9"' in text
+        assert 'python_version = "3.9"' in text
 
 
 class TestWebSocketHelpers:

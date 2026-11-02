@@ -47,6 +47,17 @@ export function shouldPollTraceWhileActing(
   return !!(acting && sessionId && !connected);
 }
 
+/** True when getTrace failed because the session is gone (stop acting / polling). */
+export function shouldClearActingOnTraceError(error: unknown): boolean {
+  if (!(error instanceof Error)) return true;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes('not found') ||
+    msg.includes('session not found') ||
+    msg.includes('404')
+  );
+}
+
 export function traceToActivities(runs: RunTrace[]): ActivityEvent[] {
   const events: ActivityEvent[] = [];
   for (const run of runs) {
@@ -152,8 +163,11 @@ export function useChatSocket(sessionId: string | null) {
           })),
         );
       }
-    } catch {
-      // trace may be empty for new sessions
+    } catch (error) {
+      if (shouldClearActingOnTraceError(error)) {
+        setActing(false);
+        activeRunIdRef.current = null;
+      }
     }
   }, [sessionId]);
 

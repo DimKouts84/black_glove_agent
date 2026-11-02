@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   dedupeActivities,
   mergeActivities,
+  shouldClearActingOnTraceError,
   shouldPollTraceWhileActing,
   ActivityEvent,
 } from './useChatSocket';
@@ -78,5 +79,18 @@ describe('shouldPollTraceWhileActing', () => {
     expect(shouldPollTraceWhileActing(true, false, 'session-1')).toBe(true);
     expect(shouldPollTraceWhileActing(false, false, 'session-1')).toBe(false);
     expect(shouldPollTraceWhileActing(true, false, null)).toBe(false);
+  });
+});
+
+describe('shouldClearActingOnTraceError', () => {
+  it('clears acting when the session is missing', () => {
+    expect(shouldClearActingOnTraceError(new Error('Session not found'))).toBe(true);
+    expect(shouldClearActingOnTraceError(new Error('Not Found'))).toBe(true);
+    expect(shouldClearActingOnTraceError(new Error('404'))).toBe(true);
+    expect(shouldClearActingOnTraceError('boom')).toBe(true);
+  });
+
+  it('does not clear acting for unrelated errors', () => {
+    expect(shouldClearActingOnTraceError(new Error('network timeout'))).toBe(false);
   });
 });

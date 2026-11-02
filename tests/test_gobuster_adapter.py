@@ -249,3 +249,18 @@ class TestPluginManagerIntegration:
             assert res.data["mode"] == "dns"
         finally:
             os.chdir(cwd)
+
+
+def test_sensitive_path_does_not_match_substring():
+    from src.adapters.gobuster import _path_matches_marker
+
+    assert _path_matches_marker("/.git", "/.git")
+    assert _path_matches_marker("/.git/config", "/.git")
+    assert not _path_matches_marker("/.github", "/.git")
+    assert not _path_matches_marker("/configuration", "/config")
+
+
+def test_unknown_bare_wordlist_is_not_replaced(tmp_path: Path):
+    adapter = create_gobuster_adapter({})
+    with pytest.raises(ValueError, match="wordlist not found"):
+        adapter._resolve_wordlist_path("raft-medium.txt")

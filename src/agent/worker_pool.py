@@ -19,7 +19,7 @@ from agent.subagent_tool import create_researcher_worker, create_analyst_worker
 from agent.target_scope import strip_host
 from agent.tool_result import ToolResultEnvelope
 from agent.tools.adapter_wrapper import AdapterToolWrapper
-from agent.tool_risk import requires_approval
+from agent.tool_risk import check_exploit_gate, requires_approval
 from agent.worker_models import WorkerKind, WorkerResult, WorkerTask
 from agent.work_graph import ConcurrencyLimits, WorkPhase
 
@@ -119,8 +119,33 @@ class BoundedWorkerPool:
             shard_key=task.shard_key,
             attempt=task.attempt,
         )
+        from agent.work_graph_executor import finalize_step_params
+
+        params = finalize_step_params(task.parameters, task.target)
         started = datetime.now().isoformat()
-        worker_ctx.emit("worker_start", task.tool_name, params=task.parameters)
+        worker_ctx.emit("worker_start", task.tool_name, params=params)
+
+        exploit_err = check_exploit_gate(
+            task.tool_name,
+            enable_exploit_adapters=self.enable_exploit_adapters,
+        )
+        if exploit_err:
+            return WorkerResult(
+                task_id=task.task_id,
+                step_id=task.step_id,
+                status="blocked",
+                envelope=ToolResultEnvelope(
+                    status="blocked",
+                    tool_name=task.tool_name,
+                    summary=exploit_err,
+                    error=exploit_err,
+                    retryable=False,
+                ),
+                error=exploit_err,
+                started_at=started,
+                finished_at=datetime.now().isoformat(),
+                worker_instance_id=worker_ctx.worker_instance_id,
+            )
 
         if ctx.is_cancelled():
             return WorkerResult(
@@ -139,7 +164,7 @@ class BoundedWorkerPool:
                 worker_instance_id=worker_ctx.worker_instance_id,
             )
 
-        if not await self._request_approval(ctx, task.tool_name, task.parameters):
+        if not await self._request_approval(ctx, task.tool_name, params):
             return WorkerResult(
                 task_id=task.task_id,
                 step_id=task.step_id,
@@ -159,7 +184,7 @@ class BoundedWorkerPool:
         async with self._acquire_slots(task):
             try:
                 envelope, structured = await asyncio.wait_for(
-                    self._run_worker(task, worker_ctx),
+                    self._run_worker(task, worker_ctx, params),
                     timeout=task.max_wall_seconds,
                 )
                 if envelope.status in {"success", "partial", "not_applicable"}:
@@ -222,6 +247,7 @@ class BoundedWorkerPool:
         self,
         task: WorkerTask,
         worker_ctx: WorkerContext,
+        params: Optional[Dict[str, Any]] = None,
     ) -> tuple[ToolResultEnvelope, Optional[Dict[str, Any]]]:
         if task.kind == WorkerKind.RESEARCHER and self.llm_factory:
             return await create_researcher_worker(
@@ -240,11 +266,12 @@ class BoundedWorkerPool:
 
         async with self._adapter_locks[task.tool_name]:
             wrapper = AdapterToolWrapper(task.tool_name, self.plugin_manager)
-            params = dict(task.parameters)
-            if task.target and "target" not in params:
-                params["target"] = task.target
+            if params is None:
+                from agent.work_graph_executor import finalize_step_params
+
+                params = finalize_step_params(task.parameters, task.target)
             raw = await asyncio.to_thread(wrapper.execute, params)
-            envelope = ToolResultEnvelope.from_raw(task.tool_name, raw)
+            envelope = ToolResultEnvelope.from_tool_return(task.tool_name, raw)
             write_audit(
                 "tool_result",
                 {

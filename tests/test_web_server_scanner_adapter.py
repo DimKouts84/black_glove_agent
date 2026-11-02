@@ -129,3 +129,45 @@ class TestWebServerScannerAdapter:
         assert "Missing CSP" in text
         assert "X-Frame present" not in text
         assert "1 High/Critical" in text
+
+    @patch("src.adapters.web_server_scanner.requests.request")
+    def test_hsts_uses_final_http_url(self, mock_request, adapter):
+        mock_response = MagicMock()
+        mock_response.headers = {}
+        mock_response.url = "http://example.com/"
+        mock_response.status_code = 200
+        mock_request.return_value = mock_response
+
+        findings = adapter._check_security_headers("https://example.com")
+        hsts = next(item for item in findings if item["title"] == "Missing Strict-Transport-Security")
+
+        assert hsts["severity"] == "INFO"
+        assert hsts["context"] == "http_scan"
+        assert "Direct HTTP" in hsts["note"]
+
+    @patch("src.adapters.web_server_scanner.requests.request")
+    def test_hsts_on_https_stays_a_finding(self, mock_request, adapter):
+        mock_response = MagicMock()
+        mock_response.headers = {}
+        mock_response.url = "https://example.com/"
+        mock_response.status_code = 200
+        mock_request.return_value = mock_response
+
+        findings = adapter._check_security_headers("https://example.com")
+        hsts = next(item for item in findings if item["title"] == "Missing Strict-Transport-Security")
+
+        assert hsts["severity"] == "HIGH"
+        assert "note" not in hsts
+        assert "Direct HTTP" not in hsts["detail"]
+
+    def test_connection_failure_is_untested_coverage(self, adapter):
+        adapter._request = lambda *args, **kwargs: None
+        result = adapter._execute_impl({
+            "target_url": "https://example.com",
+            "checks": ["headers"],
+        })
+
+        assert result.status == AdapterResultStatus.SUCCESS
+        assert result.data["findings"] == []
+        assert result.data["coverage"]["untested"] is True
+        assert result.data["coverage"]["reason"] == "connection_failed"

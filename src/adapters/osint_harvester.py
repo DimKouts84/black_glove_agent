@@ -152,6 +152,7 @@ class OSINTHarvesterAdapter(BaseAdapter):
                 # Run crt.sh and hackertarget in parallel for speed if needed, 
                 # but sequential is fine within this thread for now.
                 subdomains_set = set()
+                crt_sh_ok = True
                 
                 # HackerTarget (Fast & Reliable)
                 try:
@@ -167,8 +168,25 @@ class OSINTHarvesterAdapter(BaseAdapter):
                     subdomains_set.update(crt_subs)
                     self.logger.info(f"Found {len(crt_subs)} subdomains via crt.sh")
                 except Exception as e:
-                    errors["subdomains"] = f"crt.sh error: {e}"
-                    self.logger.warning(f"crt.sh subdomain harvesting failed for {domain}: {e}")
+                    message = str(e)
+                    lowered = message.lower()
+                    degraded = any(
+                        token in lowered
+                        for token in ("502", "503", "504", "timeout", "timed out")
+                    )
+                    if degraded:
+                        crt_sh_ok = False
+                        results.setdefault("warnings", [])
+                        results["warnings"].append(f"crt.sh: {message}")
+                        self.logger.warning(
+                            f"crt.sh subdomain harvesting degraded for {domain}: {e}"
+                        )
+                    else:
+                        errors["subdomains"] = f"crt.sh error: {e}"
+                        self.logger.warning(
+                            f"crt.sh subdomain harvesting failed for {domain}: {e}"
+                        )
+                results["crt_sh_ok"] = crt_sh_ok
 
                 results["subdomains"] = sorted(list(subdomains_set))
                 timings["subdomains_time"] = round(time.time() - t0, 3)
@@ -222,11 +240,14 @@ class OSINTHarvesterAdapter(BaseAdapter):
             or len(results["subdomains"]) > 0
             or bool(results["metadata"])
         )
+        crt_sh_ok = results.get("crt_sh_ok", True)
+        results["coverage"] = {"crt_sh_ok": crt_sh_ok}
+        results.setdefault("warnings", [])
 
-        if errors and has_data:
-            status = AdapterResultStatus.PARTIAL
-        elif errors and not has_data:
+        if errors and not has_data and crt_sh_ok:
             status = AdapterResultStatus.FAILURE
+        elif errors or not crt_sh_ok:
+            status = AdapterResultStatus.PARTIAL
         else:
             status = AdapterResultStatus.SUCCESS
 

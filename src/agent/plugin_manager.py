@@ -23,6 +23,7 @@ DISCOVERY_SKIP_MODULES = frozenset({
     "url_params",
     "rdap_client",
     "crt_sh_client",
+    "transient_errors",
 })
 
 
@@ -361,11 +362,19 @@ class PluginManager:
         
         adapter = self.adapter_manager._loaded_adapters[adapter_name]
         
-        # Validate parameters
+        # Validate parameters. Permanent input errors are a result, not a raise,
+        # so the work graph does not retry them as transient failures.
         try:
             adapter.validate_params(params)
         except Exception as e:
-            raise ValueError(f"Invalid parameters for adapter {adapter_name}: {e}")
+            from adapters.interface import AdapterResultStatus
+
+            return AdapterResult(
+                status=AdapterResultStatus.ERROR,
+                data={"errors": str(e)},
+                metadata={"error": "invalid_parameters"},
+                error_message=f"Invalid parameters for adapter {adapter_name}: {e}",
+            )
 
         # Execute adapter
         try:
@@ -388,39 +397,48 @@ class PluginManager:
         normalized = dict(params)
 
         def _strip_host(value: str) -> str:
-            value = str(value).strip()
-            if "://" in value:
-                from urllib.parse import urlparse
-                parsed = urlparse(value)
-                value = parsed.netloc or value
-            if ":" in value and not value.startswith("["):
-                host_part, _, port_part = value.rpartition(":")
-                if port_part.isdigit():
-                    value = host_part
-            return value.strip("/")
+            from agent.target_scope import split_host_port
+
+            host, _port = split_host_port(value)
+            return host.strip("/")
+
+        def _split(value: str):
+            from agent.target_scope import split_host_port
+
+            return split_host_port(value)
 
         def _strip_domain(value: str) -> str:
             return _strip_host(value)
+
+        def _choose_url() -> Optional[str]:
+            for key in ("target_url", "url"):
+                candidate = normalized.get(key)
+                if candidate and str(candidate).startswith(("http://", "https://")):
+                    return str(candidate)
+            target = (
+                normalized.get("target_url")
+                or normalized.get("url")
+                or normalized.get("target")
+                or normalized.get("domain")
+                or normalized.get("host")
+            )
+            if not target:
+                return None
+            text = str(target)
+            if text.startswith(("http://", "https://")):
+                return text
+            _host, port = _split(text)
+            if port:
+                return f"http://{text}"
+            return f"https://{text}"
 
         url_adapters = {
             "web_vuln_scanner", "sqli_scanner", "web_server_scanner", "wappalyzer",
         }
 
         if adapter_name in url_adapters:
-            target = (
-                normalized.get("target_url")
-                or normalized.get("target")
-                or normalized.get("url")
-                or normalized.get("domain")
-                or normalized.get("host")
-            )
-
-            if target:
-                if not str(target).startswith(("http://", "https://")):
-                    target_url = f"https://{target}"
-                else:
-                    target_url = str(target)
-
+            target_url = _choose_url()
+            if target_url:
                 normalized["target_url"] = target_url
                 normalized["target"] = target_url
                 if adapter_name == "wappalyzer":
@@ -459,29 +477,30 @@ class PluginManager:
                 or normalized.get("url")
             )
             if host:
-                host = _strip_host(host)
-                normalized["host"] = host
+                host_only, port = _split(str(host))
+                normalized["host"] = host_only
+                if port and not normalized.get("port"):
+                    normalized["port"] = port
 
         if adapter_name == "nmap":
             target = (
                 normalized.get("target")
                 or normalized.get("domain")
                 or normalized.get("host")
+                or normalized.get("target_url")
+                or normalized.get("url")
             )
             if target:
-                normalized["target"] = _strip_host(target)
+                host_only, port = _split(str(target))
+                normalized["target"] = host_only
+                if port and not normalized.get("ports"):
+                    normalized["ports"] = str(port)
 
         if adapter_name == "gobuster":
             mode = normalized.get("mode") or "dir"
             if mode == "dir":
-                url = (
-                    normalized.get("url")
-                    or normalized.get("target_url")
-                    or normalized.get("target")
-                )
+                url = _choose_url()
                 if url:
-                    if not str(url).startswith(("http://", "https://")):
-                        url = f"https://{url}"
                     normalized["url"] = url
             else:
                 domain = normalized.get("domain") or normalized.get("target")

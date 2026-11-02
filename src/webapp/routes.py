@@ -264,21 +264,47 @@ def get_report(run_id: str):
     raise HTTPException(status_code=404, detail="Report not found")
 
 
+def _latest_run_id() -> Optional[str]:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM agent_runs ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return row[0] if not isinstance(row, dict) else row.get("id")
+
+
 @router.post("/reports")
 def generate_report(body: ReportGenerateRequest):
+    run_id = _latest_run_id()
+    if not run_id:
+        raise HTTPException(status_code=404, detail="No runs available to report")
     tool = ReportTool()
     result = tool.execute({
         "format": body.format,
         "include_evidence": body.include_evidence,
+        "run_id": run_id,
     })
     if isinstance(result, dict):
+        report_path = result.get("report_path")
+        content = ""
+        if report_path:
+            path = Path(report_path)
+            if path.exists():
+                content = path.read_text(encoding="utf-8")
+        if not content:
+            content = result.get("report_preview") or ""
         return {
             "format": body.format,
+            "run_id": run_id,
             "summary": result.get("summary"),
-            "report_path": result.get("report_path"),
-            "content": result.get("report_preview"),
+            "report_path": report_path,
+            "content": content,
         }
-    return {"format": body.format, "content": result}
+    return {"format": body.format, "run_id": run_id, "content": result}
 
 
 # --- Tools (dynamic decoupling contract) ---

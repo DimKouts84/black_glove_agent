@@ -1,13 +1,29 @@
-import { useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api, RunTrace } from '../api/client';
+import { api, RunTrace, Session } from '../api/client';
 import { TerminalPanel } from '../components/TerminalPanel';
 import { NeonButton } from '../components/NeonButton';
 import { ActivityTimeline } from '../components/ActivityTimeline';
 
 const STALE_MS = 5 * 60 * 1000;
-const POLL_MS = 2000;
+export const POLL_MS = 2000;
+
+export function tracePollIntervalMs(
+  hasError: boolean,
+  runs: { status: string }[],
+  pollMs: number = POLL_MS,
+): number | false {
+  if (hasError) return false;
+  return runs.some((r) => r.status === 'running') ? pollMs : false;
+}
+
+export function sessionsWithoutId(
+  data: { sessions: Session[] } | undefined,
+  id: string,
+): { sessions: Session[] } | undefined {
+  if (!data) return data;
+  return { sessions: data.sessions.filter((s) => s.id !== id) };
+}
 
 function lastEventTs(runs: RunTrace[]): string | null {
   let latest: string | null = null;
@@ -35,6 +51,7 @@ function isStaleRun(runs: RunTrace[]): boolean {
 }
 
 export function SessionsPage() {
+  const queryClient = useQueryClient();
   const { data, refetch } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => api.listSessions(),
@@ -42,7 +59,12 @@ export function SessionsPage() {
 
   const handleDelete = async (id: string) => {
     await api.deleteSession(id);
-    refetch();
+    queryClient.setQueryData<{ sessions: Session[] }>(['sessions'], (prev) =>
+      sessionsWithoutId(prev, id),
+    );
+    queryClient.removeQueries({ queryKey: ['trace', id] });
+    queryClient.removeQueries({ queryKey: ['messages', id] });
+    void refetch();
   };
 
   const handleCreate = async () => {
@@ -74,27 +96,17 @@ function SessionRow({
   session: { id: string; title: string; created_at: string; last_active: string };
   onDelete: () => void;
 }) {
-  const { data: trace, refetch: refetchTrace } = useQuery({
+  const { data: trace } = useQuery({
     queryKey: ['trace', session.id],
     queryFn: () => api.getTrace(session.id),
-    refetchInterval: (query) => {
-      const runs = query.state.data?.runs ?? [];
-      return runs.some((r) => r.status === 'running') ? POLL_MS : false;
-    },
+    refetchInterval: (query) =>
+      tracePollIntervalMs(!!query.state.error, query.state.data?.runs ?? []),
   });
 
   const runs = trace?.runs ?? [];
   const hasRunning = runs.some((r) => r.status === 'running');
   const stale = isStaleRun(runs);
   const lastEvent = lastEventTs(runs);
-
-  useEffect(() => {
-    if (!hasRunning) return;
-    const id = setInterval(() => {
-      void refetchTrace();
-    }, POLL_MS);
-    return () => clearInterval(id);
-  }, [hasRunning, refetchTrace]);
 
   return (
     <div className="border border-border rounded p-3 hover:border-primary/50 transition-colors">

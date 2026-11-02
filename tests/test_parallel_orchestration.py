@@ -186,3 +186,70 @@ def test_execution_context_emit():
     ctx.emit("tool_call", "nmap", agent="work_graph")
     assert events[0]["type"] == "tool_call"
     assert events[0]["run_id"] == "r1"
+
+
+def test_parallel_exploit_gate_blocks_before_approval():
+    from agent.worker_models import WorkerTask
+    from agent.worker_pool import BoundedWorkerPool
+
+    approved = []
+
+    async def approval(tool, params):
+        approved.append((tool, params))
+        return True
+
+    ctx = ExecutionContext(session_id="s", run_id="r", approval_callback=approval)
+    pool = BoundedWorkerPool(
+        MagicMock(),
+        limits=ConcurrencyLimits(),
+        require_approval=True,
+        enable_exploit_adapters=False,
+    )
+    task = WorkerTask(
+        graph_id="g",
+        step_id="step",
+        engagement_id="e",
+        tool_name="sqli_scanner",
+        target="example.com",
+        parameters={},
+    )
+
+    result = asyncio.run(pool.execute_task(task, ctx))
+
+    assert result.status == "blocked"
+    assert result.envelope.status == "blocked"
+    assert result.envelope.retryable is False
+    assert approved == []
+
+
+def test_parallel_approval_receives_finalized_target():
+    from agent.worker_models import WorkerTask
+    from agent.worker_pool import BoundedWorkerPool
+
+    seen = {}
+
+    async def approval(tool, params):
+        seen.update(params)
+        return False
+
+    ctx = ExecutionContext(session_id="s", run_id="r", approval_callback=approval)
+    pool = BoundedWorkerPool(
+        MagicMock(),
+        limits=ConcurrencyLimits(),
+        require_approval=True,
+        enable_exploit_adapters=False,
+    )
+    task = WorkerTask(
+        graph_id="g",
+        step_id="step",
+        engagement_id="e",
+        tool_name="nmap",
+        target="example.com",
+        parameters={},
+    )
+
+    result = asyncio.run(pool.execute_task(task, ctx))
+
+    assert result.status == "blocked"
+    assert seen["target"] == "example.com"
+    assert seen["domain"] == "example.com"

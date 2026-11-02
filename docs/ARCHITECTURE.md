@@ -349,7 +349,7 @@ Adapters execute as local subprocesses via `ProcessRunner` (`shell=False`, argum
 
 ### Local Installation
 - **Method**: pip install from source
-- **Requirements**: Python 3.8+, Nmap, Gobuster
+- **Requirements**: Python 3.9+, Nmap, Gobuster
 - **Usage**: Direct command-line execution
 
 ### Container Deployment

@@ -86,6 +86,7 @@ class TestAdapterToolWrapper:
             data={"errors": {"crt_sh": "timeout", "wayback": "blocked"}},
             metadata={},
             error_message="crt.sh: timeout; wayback: blocked",
+            evidence_path="/tmp/passive.txt",
         )
 
         pm = MagicMock()
@@ -94,9 +95,14 @@ class TestAdapterToolWrapper:
 
         wrapper = AdapterToolWrapper("passive_recon", pm)
         out = wrapper.execute({"domain": "example.com"})
-        assert out.startswith("Error:")
-        assert "crt.sh" in out
-        assert "None" not in out
+        assert isinstance(out, dict)
+        assert out["adapter_status"] == "failure"
+        assert out["evidence_path"] == "/tmp/passive.txt"
+        envelope = out["envelope"]
+        assert envelope["status"] == "error"
+        assert "crt.sh" in (envelope.get("summary") or envelope.get("error") or "")
+        assert "/tmp/passive.txt" in envelope.get("evidence_paths", [])
+        assert "None" not in (envelope.get("summary") or "")
 
     def test_string_result_keeps_metadata(self, isolated_db):
         stored = AdapterResult(
@@ -151,7 +157,8 @@ class TestAdapterToolWrapper:
 
         out = wrapper.execute({})
 
-        assert "Reconciled observations" in out["interpretation"]
+        assert out["interpretation"].startswith("Reconciled observations")
+        assert out["envelope"]["summary"].startswith("Reconciled observations")
         assert "Missing Strict-Transport-Security" in out["interpretation"]
 
     def test_normalization_failure_is_warned_and_result_still_returns(self, isolated_db, caplog):
@@ -176,3 +183,16 @@ class TestAdapterToolWrapper:
         assert out["ipv4"] == "203.0.113.1"
         assert "Finding normalization/persistence failed" in caplog.text
         assert "db locked" in caplog.text
+
+    def test_public_ip_uses_session_asset_when_step_has_a_target(self, isolated_db):
+        pm = MagicMock()
+        pm.get_adapter_info.return_value = {}
+        wrapper = AdapterToolWrapper("public_ip", pm)
+        session_asset = MagicMock(name="session-asset")
+        wrapper.db_manager = MagicMock()
+        wrapper.db_manager.get_asset_by_name.return_value = session_asset
+
+        asset = wrapper._resolve_asset({"target": "example.com"})
+
+        assert asset is session_asset
+        wrapper.db_manager.get_asset_by_name.assert_called_once_with(SESSION_ASSET_NAME)

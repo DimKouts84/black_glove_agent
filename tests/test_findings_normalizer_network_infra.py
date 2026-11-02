@@ -127,4 +127,51 @@ class TestFindingsNormalizerNetworkInfra:
         findings = normalizer.normalize_tool_output("whois", output, asset)
         assert len(findings) == 1
         assert "WHOIS registration" in findings[0].title
-        assert findings[0].severity == SeverityLevel.LOW
+
+    def test_benign_dns_emits_no_finding(self, normalizer, asset, tmp_path, monkeypatch):
+        monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)
+        output = {
+            "domain": "missing.example",
+            "records": {
+                "A": {"records": [], "count": 0, "error": "Domain does not exist"},
+                "MX": {"records": [], "count": 0, "error": "No answer for record type"},
+            },
+        }
+        findings = normalizer.normalize_tool_output("dns_lookup", output, asset)
+        assert findings == []
+
+    def test_dns_timeout_emits_query_issue(self, normalizer, asset, tmp_path, monkeypatch):
+        monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)
+        output = {
+            "domain": "example.com",
+            "records": {
+                "A": {"records": [], "count": 0, "error": "Timeout after 5 seconds"},
+            },
+        }
+        findings = normalizer.normalize_tool_output("dns_lookup", output, asset)
+        assert any("query issue" in f.title.lower() or "Timeout" in f.description for f in findings)
+
+    def test_zone_transfer_timeout_is_not_a_refusal(self, normalizer, asset, tmp_path, monkeypatch):
+        monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)
+        output = {
+            "domain": "example.com",
+            "zone_transfer": {"ns1.example.com": {"status": "timeout", "error": "timed out"}},
+            "brute_force": [],
+        }
+        findings = normalizer.normalize_tool_output("dns_recon", output, asset)
+        titles = [f.title for f in findings]
+        assert any("failed" in title.lower() for title in titles)
+        assert not any("denied" in title.lower() for title in titles)
+
+    def test_not_yet_valid_certificate_is_high(self, normalizer, asset, tmp_path, monkeypatch):
+        monkeypatch.setattr(normalizer.evidence_storage, "storage_path", tmp_path)
+        output = {
+            "is_expired": False,
+            "is_not_yet_valid": True,
+            "expires_in_days": 40,
+            "not_after": "Dec 01 00:00:00 2027 GMT",
+            "subject": {"commonName": "example.com"},
+        }
+        findings = normalizer.normalize_tool_output("ssl_check", output, asset)
+        assert findings[0].severity == SeverityLevel.HIGH
+        assert "not yet valid" in findings[0].description

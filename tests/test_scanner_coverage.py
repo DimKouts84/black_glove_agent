@@ -22,3 +22,13 @@ class TestScannerCoverage:
         assert result.data["not_applicable"] is True
         text = adapter.interpret_result(result)
         assert "not applicable" in text.lower()
+
+    def test_sqli_filtered_params_are_not_applicable(self):
+        adapter = SQLiScannerAdapter()
+        result = adapter._execute_impl({
+            "target_url": "https://example.com?id=1",
+            "params_to_test": ["unused"],
+        })
+        assert result.data["not_applicable"] is True
+        assert result.data["coverage"]["untested"] is True
+        assert result.data["coverage"]["scanned_params"] == 0

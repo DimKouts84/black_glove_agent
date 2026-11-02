@@ -240,11 +240,14 @@ class WebServerScannerAdapter(BaseAdapter):
             })
             return findings
 
+        final_url = getattr(resp, "url", None)
+        if not isinstance(final_url, str) or not final_url:
+            final_url = base_url
         response_meta = {
-            "response_url": resp.url,
+            "response_url": final_url,
             "response_status": resp.status_code,
         }
-        is_http = urlparse(base_url).scheme.lower() == "http"
+        is_http = urlparse(final_url).scheme.lower() == "http"
 
         for header_name, description, severity in SECURITY_HEADERS:
             value = resp.headers.get(header_name)
@@ -256,14 +259,13 @@ class WebServerScannerAdapter(BaseAdapter):
                     "severity": severity,
                     **response_meta,
                 }
-                if header_name == "Strict-Transport-Security":
+                if header_name == "Strict-Transport-Security" and is_http:
                     finding["note"] = (
                         "Direct HTTP response lacked HSTS header. "
                         "Technology fingerprinting may still detect HSTS via redirects or preload lists."
                     )
-                    if is_http:
-                        finding["severity"] = "INFO"
-                        finding["context"] = "http_scan"
+                    finding["severity"] = "INFO"
+                    finding["context"] = "http_scan"
                 findings.append(finding)
             else:
                 findings.append({
@@ -437,7 +439,23 @@ class WebServerScannerAdapter(BaseAdapter):
             "errors": errors,
         }
 
-        if errors and not all_findings:
+        connection_failed = any(
+            item.get("title") == "Connection failed" for item in all_findings
+        )
+        if connection_failed and not any(
+            str(item.get("severity", "")).upper() not in {"ERROR", "OK", "INFO"}
+            for item in all_findings
+        ):
+            result_data["findings"] = [
+                item for item in all_findings if item.get("title") != "Connection failed"
+            ]
+            result_data["coverage"] = {
+                "untested": True,
+                "reason": "connection_failed",
+            }
+            result_data["message"] = f"Could not connect to {base_url}"
+
+        if errors and not result_data["findings"] and not result_data.get("coverage", {}).get("untested"):
             status = AdapterResultStatus.FAILURE
         elif errors:
             status = AdapterResultStatus.PARTIAL

@@ -44,3 +44,19 @@ class TestDnsLookupAdapter:
 
         assert result.status == AdapterResultStatus.SUCCESS
         assert result.data["records"]["A"]["error"] == "Domain does not exist"
+
+    @patch("src.adapters.dns_lookup.dns.resolver.Resolver")
+    def test_timeout_on_every_type_is_partial(self, mock_resolver_cls, tmp_path):
+        mock_resolver = MagicMock()
+        mock_resolver_cls.return_value = mock_resolver
+        mock_resolver.resolve.side_effect = dns.exception.Timeout()
+
+        adapter = DnsLookupAdapter({})
+        adapter._store_evidence = lambda data, name: str(tmp_path / name)
+
+        result = adapter.execute({"domain": "example.com", "record_types": ["A", "MX"]})
+
+        assert result.status == AdapterResultStatus.PARTIAL
+        assert "Timeout" in result.data["records"]["A"]["error"]
+        assert "Timeout" in result.data["records"]["MX"]["error"]
+        assert result.error_message

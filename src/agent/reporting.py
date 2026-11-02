@@ -238,6 +238,30 @@ class Finding:
         return cls(**data)
 
 
+_BENIGN_DNS_ERRORS = {"No answer for record type", "Domain does not exist"}
+
+
+def _dns_records_are_benign(output: Dict[str, Any]) -> bool:
+    records = output.get("records") or {}
+    if not records:
+        return False
+    for payload in records.values():
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("records"):
+            return False
+        if str(payload.get("error") or "") not in _BENIGN_DNS_ERRORS:
+            return False
+    return True
+
+
+def _path_matches_marker(path: str, marker: str) -> bool:
+    """True when marker is the path or a parent directory, not a substring."""
+    normalized = (path or "").lower().rstrip("/") or "/"
+    needle = marker.lower().rstrip("/")
+    return normalized == needle or normalized.startswith(needle + "/")
+
+
 class FindingsNormalizer:
     """
     Normalizes tool adapter outputs to standardized finding format.
@@ -425,7 +449,7 @@ class FindingsNormalizer:
                 if not path:
                     continue
                 discovered.append(str(path))
-                if not any(sensitive in path.lower() for sensitive in sensitive_paths):
+                if not any(_path_matches_marker(path, sensitive) for sensitive in sensitive_paths):
                     continue
                 status = entry.get("status")
                 if entry.get("severity"):
@@ -433,7 +457,7 @@ class FindingsNormalizer:
                 elif status == 200:
                     severity = (
                         SeverityLevel.CRITICAL
-                        if any(c in path.lower() for c in critical_paths)
+                        if any(_path_matches_marker(path, marker) for marker in critical_paths)
                         else SeverityLevel.HIGH
                     )
                 elif status in (401, 403):
@@ -698,12 +722,35 @@ class FindingsNormalizer:
             skip_severities = {"OK", "INFO", "ERROR"}
             for item in items:
                 sev_str = str(item.get("severity", "MEDIUM")).upper()
+                title = item.get("title", "Web server finding")
+                response_url = str(item.get("response_url", ""))
+                is_http_scan = (
+                    item.get("context") == "http_scan"
+                    or response_url.lower().startswith("http://")
+                )
+                if title == "Missing Strict-Transport-Security" and is_http_scan:
+                    detail = item.get("detail", "")
+                    note = item.get("note")
+                    if note:
+                        detail = f"{detail} ({note})"
+                    findings.append(Finding(
+                        title=title,
+                        description=detail,
+                        severity=SeverityLevel.INFO,
+                        confidence=float(item.get("confidence", 0.75)),
+                        asset_id=asset.id,
+                        asset_name=asset.name,
+                        evidence_path=evidence_metadata["path"],
+                        evidence_hash=evidence_metadata["hash"],
+                        source_tool=tool_name,
+                        recommended_fix=item.get("fix", "Review this header on the scanned URL."),
+                        verification_state="informational",
+                    ))
+                    continue
                 if sev_str in skip_severities:
                     continue
                 if self._is_connection_failure_finding(item):
                     continue
-
-                title = item.get("title", "Web server finding")
                 detail = item.get("detail", "")
                 note = item.get("note")
                 if note:
@@ -711,15 +758,6 @@ class FindingsNormalizer:
                 confidence = float(item.get("confidence", 0.75))
                 sev = self._map_severity(sev_str)
                 verification_state = "indicator"
-
-                response_url = str(item.get("response_url", ""))
-                is_http_scan = (
-                    item.get("context") == "http_scan"
-                    or response_url.lower().startswith("http://")
-                )
-                if title == "Missing Strict-Transport-Security" and is_http_scan:
-                    sev = SeverityLevel.INFO
-                    verification_state = "informational"
 
                 findings.append(Finding(
                     title=title,
@@ -1028,6 +1066,44 @@ class FindingsNormalizer:
                     verification_state="informational",
                     source_tool=tool_name,
                 ))
+            zone_transfer = output.get("zone_transfer") or {}
+            if (
+                isinstance(zone_transfer, dict)
+                and isinstance(zone_transfer.get("error"), str)
+                and not any(isinstance(item, dict) for item in zone_transfer.values())
+            ):
+                findings.append(Finding(
+                    title=f"DNS zone transfer failed for {output.get('domain', asset.name)}",
+                    description=f"Nameserver lookup failed: {zone_transfer['error']}",
+                    severity=SeverityLevel.LOW,
+                    confidence=0.8,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Confirm the domain's NS records resolve before repeating AXFR.",
+                    source_tool=tool_name,
+                ))
+            failed_ns = [
+                ns for ns, res in zone_transfer.items()
+                if isinstance(res, dict) and res.get("status") in {"timeout", "failed"}
+            ]
+            if failed_ns:
+                findings.append(Finding(
+                    title=f"DNS zone transfer failed ({len(failed_ns)})",
+                    description=(
+                        "AXFR did not finish against "
+                        + ", ".join(failed_ns[:8])
+                    ),
+                    severity=SeverityLevel.LOW,
+                    confidence=0.8,
+                    asset_id=asset.id,
+                    asset_name=asset.name,
+                    evidence_path=evidence_metadata["path"],
+                    evidence_hash=evidence_metadata["hash"],
+                    recommended_fix="Retry the transfer; a timeout or lookup error is not a refusal.",
+                    source_tool=tool_name,
+                ))
 
         elif tool == "whois":
             domain = output.get("domain", asset.name)
@@ -1088,19 +1164,21 @@ class FindingsNormalizer:
 
         elif tool == "ssl_check":
             is_expired = output.get("is_expired", False)
+            not_yet_valid = output.get("is_not_yet_valid", False)
             expires_in = output.get("expires_in_days")
             subject = output.get("subject", {})
             cn = subject.get("commonName", "unknown") if isinstance(subject, dict) else "unknown"
-            if is_expired:
+            if is_expired or not_yet_valid:
                 sev = SeverityLevel.HIGH
             elif expires_in is not None and expires_in < 30:
                 sev = SeverityLevel.MEDIUM
             else:
                 sev = SeverityLevel.LOW
+            validity = "not yet valid; " if not_yet_valid else ""
             findings.append(Finding(
                 title=f"SSL certificate metadata for {cn}",
                 description=(
-                    f"Expires: {output.get('not_after', 'unknown')}; "
+                    f"{validity}Expires: {output.get('not_after', 'unknown')}; "
                     "metadata only (trust not validated by scanner)"
                 ),
                 severity=sev,
@@ -1137,6 +1215,8 @@ class FindingsNormalizer:
                 ))
 
         if not findings:
+            if tool == "dns_lookup" and _dns_records_are_benign(output):
+                return findings
             description = output.get("interpretation") or f"No actionable issues from {tool_name}."
             findings.append(Finding(
                 title=f"{tool_name} scan completed on {asset.name}",

@@ -98,23 +98,7 @@ class AdapterToolWrapper:
 
     def _resolve_asset(self, params: Dict[str, Any]):
 
-        target = (
-
-            params.get("target_url")
-
-            or params.get("target")
-
-            or params.get("domain")
-
-            or params.get("host")
-
-            or params.get("url")
-
-        )
-
-
-
-        if not target and self.name in SESSION_TOOLS:
+        if self.name in SESSION_TOOLS:
 
             asset = self.db_manager.get_asset_by_name(SESSION_ASSET_NAME)
 
@@ -135,6 +119,20 @@ class AdapterToolWrapper:
                 asset = self.db_manager.get_asset(asset_id)
 
             return asset
+
+        target = (
+
+            params.get("target_url")
+
+            or params.get("target")
+
+            or params.get("domain")
+
+            or params.get("host")
+
+            or params.get("url")
+
+        )
 
 
 
@@ -200,64 +198,51 @@ class AdapterToolWrapper:
 
 
 
+    def _conflict_note(self, findings, mutated) -> str:
+        titles = []
+        for finding in list(findings) + list(mutated):
+            if getattr(finding, "verification_state", None) != "conflicted":
+                continue
+            title = getattr(finding, "title", None)
+            if title and title not in titles:
+                titles.append(title)
+        if not titles:
+            return ""
+        return "Reconciled observations (not confirmed findings): " + "; ".join(titles)
+
     def execute(self, params: Dict[str, Any]) -> Any:
-
         result = self.plugin_manager.run_adapter(self.name, params)
-
         provenance = get_run_context()
+        interpretation = None
+        finding_ids = []
 
-
+        try:
+            adapter_instance = self.plugin_manager.load_adapter(self.name)
+            if hasattr(adapter_instance, "interpret_result"):
+                candidate = adapter_instance.interpret_result(result)
+                if isinstance(candidate, str):
+                    interpretation = candidate
+                    if isinstance(result.data, dict):
+                        result.data["interpretation"] = interpretation
+        except Exception as exc:
+            self.logger.debug("interpret_result failed for %s: %s", self.name, exc)
 
         if self._is_successful_result(result):
-
-            interpretation = None
-
             try:
-
-                adapter_instance = self.plugin_manager.load_adapter(self.name)
-
-                if hasattr(adapter_instance, "interpret_result"):
-
-                    interpretation = adapter_instance.interpret_result(result)
-
-                    if isinstance(result.data, dict):
-
-                        result.data["interpretation"] = interpretation
-
-            except Exception as exc:
-
-                self.logger.debug("interpret_result failed for %s: %s", self.name, exc)
-
-
-
-            try:
-
                 asset = self._resolve_asset(params)
-
                 if asset and isinstance(result.data, dict):
-
                     output_for_normalization = dict(result.data)
-
                     if interpretation:
-
                         output_for_normalization["interpretation"] = interpretation
 
-
-
                     findings = self.reporting_manager.findings_normalizer.normalize_tool_output(
-
                         self.name, output_for_normalization, asset
-
                     )
-
                     self._apply_provenance(findings, provenance)
-
                     run_id = provenance.get("run_id") if provenance else None
-
                     peers = self.reporting_manager.get_findings_for_asset(
                         asset.id, run_id=run_id
                     )
-
                     mutated = (
                         self.reporting_manager.findings_normalizer
                         .reconcile_cross_tool_conflicts(
@@ -266,69 +251,60 @@ class AdapterToolWrapper:
                             current_findings=findings,
                         )
                     )
-
                     to_save = list(findings)
-
                     for peer in mutated:
-
                         if peer not in to_save:
-
                             to_save.append(peer)
-
-
-
                     if to_save:
-
                         self.reporting_manager.save_findings_to_database(to_save)
+                        finding_ids = [
+                            finding.id for finding in to_save if getattr(finding, "id", None)
+                        ]
 
-                    conflicted = [
-                        f.title for f in findings
-                        if getattr(f, "verification_state", None) == "conflicted"
-                    ]
-                    if conflicted and isinstance(result.data, dict):
-                        note = (
-                            "Reconciled observations (not confirmed findings): "
-                            + "; ".join(conflicted)
-                        )
-                        interpretation = ((interpretation or "") + "\n" + note).strip()
-                        result.data["interpretation"] = interpretation
-
+                    note = self._conflict_note(findings, mutated)
+                    if note:
+                        interpretation = (note + "\n" + (interpretation or "")).strip()
+                        if isinstance(result.data, dict):
+                            result.data["interpretation"] = interpretation
             except Exception as exc:
+                self.logger.warning(
+                    "Finding normalization/persistence failed for %s: %s", self.name, exc
+                )
+        elif not interpretation:
+            interpretation = self._format_adapter_error(result)
 
-                self.logger.warning("Finding normalization/persistence failed for %s: %s", self.name, exc)
+        payload = dict(result.data) if isinstance(result.data, dict) else {"value": result.data}
+        if interpretation:
+            payload["interpretation"] = interpretation
+        if isinstance(result.metadata, dict):
+            for key, value in result.metadata.items():
+                payload.setdefault(key, value)
+            retry_warnings = result.metadata.get("transient_retry_warnings") or []
+            if retry_warnings:
+                warnings = list(payload.get("warnings") or [])
+                for item in retry_warnings:
+                    text = str(item)
+                    if text and text not in warnings:
+                        warnings.append(text)
+                payload["warnings"] = warnings
+        if result.evidence_path:
+            payload["evidence_path"] = result.evidence_path
+        if result.error_message:
+            payload.setdefault("error_message", result.error_message)
+        payload["adapter_status"] = getattr(result.status, "value", "success")
+        if finding_ids:
+            payload["finding_ids"] = finding_ids
+        if provenance:
+            payload["provenance"] = provenance
 
-
-
-            payload = dict(result.data) if isinstance(result.data, dict) else {"value": result.data}
-            if isinstance(result.metadata, dict):
-                for key, value in result.metadata.items():
-                    payload.setdefault(key, value)
-
-            if result.evidence_path:
-
-                payload["evidence_path"] = result.evidence_path
-
-            payload["adapter_status"] = getattr(result.status, "value", "success")
-
-            if provenance:
-
-                payload["provenance"] = provenance
-
-
-
-            envelope = ToolResultEnvelope.from_adapter_result(
-
-                self.name, result, payload, interpretation=interpretation
-
-            )
-
-            payload["envelope"] = envelope.model_dump()
-
-            return payload
-
-
-
-        return self._format_adapter_error(result)
+        envelope = ToolResultEnvelope.from_adapter_result(
+            self.name, result, payload, interpretation=interpretation
+        )
+        if finding_ids:
+            envelope.finding_ids = finding_ids
+        payload["envelope"] = envelope.model_dump()
+        payload["finding_ids"] = envelope.finding_ids
+        return payload
 
 
 

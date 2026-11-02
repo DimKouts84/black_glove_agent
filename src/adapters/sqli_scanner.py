@@ -315,8 +315,11 @@ class SQLiScannerAdapter(BaseAdapter):
 
         parsed = urllib.parse.urlparse(target_url)
         query_params = urllib.parse.parse_qs(parsed.query)
+        scan_params = list(query_params.keys())
+        if params_to_test:
+            scan_params = [p for p in scan_params if p in params_to_test]
 
-        if not query_params:
+        if not scan_params:
             return AdapterResult(
                 status=AdapterResultStatus.SUCCESS,
                 data={
@@ -344,9 +347,6 @@ class SQLiScannerAdapter(BaseAdapter):
             )
 
         findings: List[Dict[str, Any]] = []
-        scan_params = list(query_params.keys())
-        if params_to_test:
-            scan_params = [p for p in scan_params if p in params_to_test]
 
         for param in scan_params:
             if "error" in techniques:
