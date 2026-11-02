@@ -150,6 +150,12 @@ class TestWebAPI:
                 thinking = next(m for m in messages if m["type"] == "thinking")
                 assert thinking["agent"] == "planner_agent"
                 assert thinking.get("run_id") == "run-123"
+                answer = next(m for m in messages if m["type"] == "assistant_message")
+                assert answer.get("run_id") == "run-123"
+
+        saved = client.get(f"/api/sessions/{sid}/messages")
+        assistant = next(m for m in saved.json()["messages"] if m["role"] == "assistant")
+        assert assistant["metadata"]["run_id"] == "run-123"
 
     def test_session_trace_endpoint(self, client):
         r = client.post("/api/sessions", json={"title": "Trace Test"})

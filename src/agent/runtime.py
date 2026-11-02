@@ -17,6 +17,7 @@ from agent.agent_library.analyst import ANALYST_AGENT
 from agent.agent_library.planner import PLANNER_AGENT
 from agent.agent_library.researcher import RESEARCHER_AGENT
 from agent.agent_library.root import ROOT_AGENT
+from agent.ai.runner import run_chat_turn
 from agent.config_service import ConfigService, get_config_service
 from agent.db import get_db_connection, init_db
 from agent.engagement_store import EngagementStore
@@ -36,8 +37,6 @@ from agent.execution_provenance import (
     set_run_context,
     set_turn_approval_callback,
 )
-from agent.plan_validator import executable_scan_plan, summarize_plan_execution
-
 logger = logging.getLogger("black_glove.runtime")
 
 ApprovalCallback = Callable[[str, Dict[str, Any]], Awaitable[bool]]
@@ -380,7 +379,13 @@ class AgentRuntime:
         return tools
 
     def available_agents(self) -> List[str]:
-        return ["root_agent", "planner_agent", "researcher_agent", "analyst_agent"]
+        return [
+            "black_glove",
+            "recon_agent",
+            "network_agent",
+            "web_agent",
+            "assessment_agent",
+        ]
 
     async def run_turn(
         self,
@@ -418,36 +423,18 @@ class AgentRuntime:
                     if on_activity:
                         on_activity(enriched)
 
-                turn_executor = AgentExecutor(
-                    agent_definition=ROOT_AGENT,
-                    llm_client=self.llm_client,
+                enriched_history = self._enrich_history(session_id, history)
+                chat_safe_tools = set(self.SAFE_TOOLS) - {"complete_task"}
+                result = await run_chat_turn(
+                    config=self._config,
                     tool_registry=self._tool_registry,
+                    user_query=user_query,
+                    history=enriched_history,
+                    session_id=session_id,
                     require_approval=self._config.require_approval,
-                    safe_tools=self.SAFE_TOOLS,
+                    safe_tools=chat_safe_tools,
                     on_activity=combined_activity,
                     approval_callback=approval_callback,
-                )
-
-                async def plan_runner(scan_plan: Dict[str, Any]) -> Dict[str, Any]:
-                    filtered = executable_scan_plan(scan_plan)
-                    if not filtered.get("steps"):
-                        return summarize_plan_execution({"status": "completed", "steps": []})
-                    executed = await self.execute_scan_plan(
-                        filtered,
-                        session_id=session_id,
-                        run_id=run_id,
-                        on_activity=combined_activity,
-                        approval_callback=approval_callback,
-                    )
-                    return summarize_plan_execution(executed)
-
-                turn_executor.plan_runner = plan_runner
-
-                enriched_history = self._enrich_history(session_id, history)
-
-                result = await turn_executor.run(
-                    {"user_query": user_query},
-                    conversation_history=enriched_history,
                 )
 
                 final_answer = json.dumps(result, default=str)

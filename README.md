@@ -1,7 +1,7 @@
 # 🖤 Black Glove 🖤
 *A pentest agent for home and small business security testing that uses natural language*
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=mit&logoColor=white)](https://opensource.org/licenses/MIT)
 [![Human in the Loop](https://img.shields.io/badge/human--in--the--loop-orange?style=for-the-badge)](#)
 
@@ -163,7 +163,7 @@ See [docs/webapp.md](docs/webapp.md) for architecture and API reference.
 
 ## 📋 Requirements
 
-- **Python**: 3.9 or higher
+- **Python**: 3.11 or higher
 - **LLM Service**: LMStudio, Ollama, or OpenRouter account
 - **Operating System**: Windows, macOS, or Linux
 - **Nmap & Gobuster**: 
@@ -409,7 +409,7 @@ Deployment options:
 - `--full`: Complete deployment process (default)
 
 The deployment process will:
-1. Check prerequisites (Python 3.9+, Nmap, Gobuster)
+1. Check prerequisites (Python 3.11+, Nmap, Gobuster)
 2. Setup virtual environment
 3. Install dependencies
 4. Run all tests

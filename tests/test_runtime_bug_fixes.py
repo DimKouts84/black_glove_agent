@@ -877,53 +877,24 @@ class TestRuntimePlanRunnerWiring:
 
         runtime = AgentRuntime(config=ConfigModel(require_approval=True))
         seen = {}
+        runtime.execute_scan_plan = AsyncMock()
 
-        async def fake_run(self, inputs, conversation_history=None):
+        async def fake_chat(**kwargs):
             from agent.execution_provenance import get_turn_approval_callback
 
-            seen["plan_runner"] = self.plan_runner
             seen["callback"] = get_turn_approval_callback()
-            runtime.execute_scan_plan = AsyncMock(
-                return_value={
-                    "status": "completed",
-                    "steps": [{"tool": "whois", "status": "completed"}],
-                }
-            )
-            seen["summary"] = await self.plan_runner(
-                {
-                    "goal": "g",
-                    "steps": [
-                        {"tool": "whois", "target": "example.com"},
-                        {"tool": "generate_report", "target": "example.com"},
-                    ],
-                }
-            )
+            seen["passed_callback"] = kwargs.get("approval_callback")
             return {"final_answer": {"answer": "ok"}}
 
         approve = AsyncMock(return_value=True)
-        with patch.object(AgentExecutor, "run", new=fake_run):
+        with patch("agent.runtime.run_chat_turn", new=fake_chat):
             result = asyncio.run(
                 runtime.run_turn("sess-plan", "hi", approval_callback=approve)
             )
         assert result["final_answer"]["answer"] == "ok"
-        assert callable(seen["plan_runner"])
         assert seen["callback"] is approve
-        assert seen["summary"]["already_executed"] is True
-        assert "whois" in seen["summary"]["completed_tools"]
-        runtime.execute_scan_plan.assert_awaited()
-        # generate_report stripped before execute_scan_plan
-        called_plan = runtime.execute_scan_plan.await_args.args[0]
-        assert [s["tool"] for s in called_plan["steps"]] == ["whois"]
-        empty = asyncio.run(
-            seen["plan_runner"](
-                {
-                    "goal": "report only",
-                    "steps": [{"tool": "generate_report", "target": "x"}],
-                }
-            )
-        )
-        assert empty["already_executed"] is True
-        assert empty["completed_tools"] == []
+        assert seen["passed_callback"] is approve
+        runtime.execute_scan_plan.assert_not_called()
 
 
 class TestWorkerPoolStatusMapping:

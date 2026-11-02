@@ -19,6 +19,11 @@ const TYPE_ICONS: Record<string, string> = {
 
 const AGENT_COLORS: Record<string, string> = {
   root_agent: 'text-primary',
+  black_glove: 'text-primary',
+  recon_agent: 'text-accent',
+  network_agent: 'text-secondary',
+  web_agent: 'text-green-400',
+  assessment_agent: 'text-accent',
   planner_agent: 'text-accent',
   researcher_agent: 'text-secondary',
   analyst_agent: 'text-green-400',

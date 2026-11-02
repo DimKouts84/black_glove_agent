@@ -113,6 +113,7 @@ async def chat_websocket(websocket: WebSocket, session_id: str):
 
     pending_approval: Dict[str, asyncio.Future] = {}
     activity_queue: asyncio.Queue = asyncio.Queue()
+    latest_run_id: Dict[str, Optional[str]] = {"id": None}
     sender_task: Optional[asyncio.Task] = None
     active_turn_task: Optional[asyncio.Task] = None
 
@@ -134,6 +135,9 @@ async def chat_websocket(websocket: WebSocket, session_id: str):
     sender_task = asyncio.create_task(activity_sender())
 
     def on_activity(event: Dict[str, Any]) -> None:
+        run_id = event.get("run_id")
+        if run_id:
+            latest_run_id["id"] = str(run_id)
         activity_queue.put_nowait(_activity_payload(event))
 
     async def approval_callback(tool_name: str, params: dict) -> bool:
@@ -161,6 +165,7 @@ async def chat_websocket(websocket: WebSocket, session_id: str):
 
     async def _run_turn(content: str, history) -> None:
         nonlocal active_turn_task
+        latest_run_id["id"] = None
         try:
             result = await runtime.run_turn(
                 session_id,
@@ -175,17 +180,24 @@ async def chat_websocket(websocket: WebSocket, session_id: str):
             if not answer_text.strip():
                 answer_text = "No response generated."
 
+            run_id = latest_run_id["id"]
+            metadata: Dict[str, Any] = {"type": "response", "is_final": True}
+            if run_id:
+                metadata["run_id"] = run_id
             sm.save_message(
                 session_id,
                 "assistant",
                 answer_text,
-                metadata={"type": "response", "is_final": True},
+                metadata=metadata,
             )
             if connected.is_set():
-                await _safe_send_json(websocket, {
+                payload: Dict[str, Any] = {
                     "type": "assistant_message",
                     "content": answer_text,
-                }, connected)
+                }
+                if run_id:
+                    payload["run_id"] = run_id
+                await _safe_send_json(websocket, payload, connected)
             else:
                 logger.info(
                     "Client disconnected before assistant reply for session %s; "

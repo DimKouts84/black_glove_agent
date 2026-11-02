@@ -8,8 +8,8 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 
 ```
 ┌─────────────────┐    ┌────────────────────┐    ┌──────────────────┐
-│   CLI Frontend  │◄──►│    AgentExecutor   │◄──►│    LLM Client    │
-│   (Typer)       │    │   (ReAct Loop)     │    │ (LMStudio/Ollama)│
+│   CLI Frontend  │◄──►│  Black Glove chat  │◄──►│   PydanticAI     │
+│   (Typer)       │    │  (domain specialists)│   │ (configured LLM) │
 └─────────────────┘    └────────────────────┘    └──────────────────┘
                                 │
                                 ▼
@@ -44,12 +44,12 @@ Black Glove is a local-first, CLI-driven, LLM-assisted penetration testing agent
 ### 2. Agent Runtime (`src/agent/runtime.py`)
 - **Purpose**: Shared assembly layer for CLI and Web UI
 - **Responsibilities**:
-  - Build `ToolRegistry`, sub-agents, and root `AgentExecutor`
+  - Build `ToolRegistry`, the PydanticAI chat team, and a legacy root `AgentExecutor` kept for the older JSON tool loop
   - Expose `WorkGraphExecutor` for governed multi-step scans
   - Persist run traces (`agent_runs` / `agent_events`) and step summaries
 - **Key APIs**:
-  - `run_turn()`: interactive ReAct chat turn; after `planner_agent` returns a plan, runs it via `execute_scan_plan` and returns an already-executed summary to Root
-  - `execute_scan_plan()`: deterministic execution of planner output (also used by CLI recon)
+  - `run_turn()`: interactive chat. Black Glove summons recon, network, web, and assessment specialists, which call registry tools with provider tool calling. It does not run `execute_scan_plan`.
+  - `execute_scan_plan()`: deterministic execution of a scripted plan (CLI recon)
 
 ### 3. Work Graph Kernel (`src/agent/work_graph_executor.py`)
 - **Purpose**: Deterministic execution engine for pentest steps
@@ -183,8 +183,8 @@ User → CLI → Orchestrator → Database → Confirmation
 
 ### 2. Agentic Chat Workflow
 ```
-User → CLI/Web → AgentRuntime → Root Executor → LLM →
-Tool Registry → tool_risk / approval → Adapter → Findings DB
+User → CLI/Web → AgentRuntime.run_turn → Black Glove coordinator →
+domain specialist → registry tool bridge → approval → Adapter → Findings DB
 ```
 
 ### 3. Governed Scan Workflow
@@ -198,11 +198,14 @@ When `enable_parallel_workers: true`, `WorkGraphExecutor` schedules a DAG ready-
 phase barriers, per-target locks, and CAS checkpointing. Interactive `run_turn()` chat
 remains sequential; only `execute_scan_plan()` uses the parallel kernel.
 
-### 4. Subagent Delegation
+### 4. Chat delegation
 ```
-Root Agent → SubagentTool (inherits approval) → Nested Executor →
-Structured ToolResultEnvelope → Root context
+Black Glove → recon_agent | network_agent | web_agent | assessment_agent →
+registry tool (HTTP port gate for web tools) → Deferred approval →
+ToolResultEnvelope → specialist summary → Black Glove answer
 ```
+
+The older `SubagentTool` / `AgentExecutor` JSON loop remains for tests and is no longer used by `run_turn`. CLI `recon` still uses the work graph, not this chat team.
 
 ### 5. Audit Logging
 ```
@@ -221,8 +224,8 @@ Policy/Tool/Approval events → audit.write_audit() → audit_log table
 - **Default**: `require_approval: true` in config
 - **Fail-closed**: Missing approval callback denies execution
 - **Propagation**: Nested executors read the turn's approval callback from `execution_provenance` context (not a mutable field on the shared `SubagentTool`)
-- **CLI recon**: Chat and standalone `recon` pass the approval callback into `execute_scan_plan`; they do not set `approval_required=False`
-- **Implementation**: `AgentExecutor.approval_callback`, turn context, and WebSocket approval flow
+- **CLI recon**: Standalone `recon` passes the approval callback into `execute_scan_plan`. Interactive chat uses the same callback for specialist tools and does not auto-approve.
+- **Implementation**: chat pauses on `ApprovalRequired` and resumes through the turn `approval_callback`. CLI recon still uses `WorkGraphExecutor` approval. The WebSocket approval flow is unchanged.
 
 ### Process Isolation
 Adapters execute as local subprocesses via `ProcessRunner` (`shell=False`, argument sanitization, timeouts). Docker is optional metadata only; containers are not required for the default execution path.

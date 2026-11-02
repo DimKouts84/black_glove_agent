@@ -47,11 +47,11 @@ def _reset_runtime():
 def test_run_turn_marks_cancelled_on_cancelled_error(memory_db):
     runtime = AgentRuntime(config=ConfigModel())
 
-    mock_executor = AsyncMock()
-    mock_executor.run = AsyncMock(side_effect=asyncio.CancelledError())
-
     async def _run():
-        with patch("agent.runtime.AgentExecutor", return_value=mock_executor):
+        with patch(
+            "agent.runtime.run_chat_turn",
+            new=AsyncMock(side_effect=asyncio.CancelledError()),
+        ):
             with pytest.raises(asyncio.CancelledError):
                 await runtime.run_turn("sess-1", "test query")
 

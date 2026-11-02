@@ -16,52 +16,52 @@ This section adheres to the **Agentic AI Foundation (AAIF)** standards for defin
 
 | Agent Name | Role | Core Responsibility | Responsible File |
 |------------|------|---------------------|------------------|
-| **Root Agent** | Coordinator | Task orchestration, delegation, and user interaction. | `src/agent/agent_library/root.py` |
-| **Planner Agent** | Strategist | decomposing high-level goals into actionable technical plans. | `src/agent/agent_library/planner.py` |
-| **Researcher Agent** | Investigator | Execution of specific tools and data gathering. | `src/agent/agent_library/researcher.py` |
-| **Analyst Agent** | Forensic Analysis | Interpretation of raw data and vulnerability identification. | `src/agent/agent_library/analyst.py` |
+| **Black Glove** | Coordinator | Talks to the user and summons the domain specialist the request needs. | `src/agent/ai/black_glove.py` |
+| **Recon Agent** | Domain specialist | Public IP, DNS, WHOIS, passive OSINT, certificates, and assets. | `src/agent/ai/specialists.py` |
+| **Network Agent** | Domain specialist | Port scans and exposed-camera checks. | `src/agent/ai/specialists.py` |
+| **Web Agent** | Domain specialist | Directory enumeration and web vulnerability checks, after nmap shows an open HTTP port. | `src/agent/ai/specialists.py` |
+| **Assessment Agent** | Domain specialist | Credential testing and the written report. Flags verified credentials as critical. | `src/agent/ai/specialists.py` |
 
 ## Agent Specifications
 
-### 1. Root Agent
-*   **Role**: Primary interface and orchestrator.
-*   **Responsible File**: [`src/agent/agent_library/root.py`](../src/agent/agent_library/root.py)
-*   **Description**: The Root Agent acts as the single point of entry for the user. It assesses the user's request and decides whether to handle it directly (for simple queries) or delegate it to a sub-agent workflow.
+### 1. Black Glove
+*   **Role**: Primary interface and orchestrator for interactive chat.
+*   **Responsible File**: [`src/agent/ai/black_glove.py`](src/agent/ai/black_glove.py)
+*   **Description**: The single point of entry for a chat turn. It answers greetings itself. For a scan it summons one or more domain specialists and answers from their summaries. Its only tools are those specialists.
 *   **Agentic Processing**:
     *   **Persona**: "Black Glove, an elite penetration testing assistant."
-*   **Decision Logic**: Delegates to Planner (complex), Researcher (data), or Analyst (interpretation).
-*   **Key Behavior**: Prioritizes actionable answers and maintains context memory.
+*   **Decision Logic**: Summons `recon_agent`, `network_agent`, `web_agent`, and/or `assessment_agent` according to the request. Tool calls inside one turn stay sequential so approval prompts stay one at a time.
+*   **Key Behavior**: Uses each specialist's summary as evidence and does not invent findings.
 *   **Local-network scope**: Clarifies ambiguity when users request "local network" scans; does not silently substitute `public_ip` WAN output as a LAN gateway without acknowledgement (no LAN-discovery tool).
-*   **Web tool gating**: Runs HTTP/HTTPS scanners only when nmap shows ports 80/443/8080/8443 open.
+*   **Web tool gating**: The web specialist's scanners run only when this session has nmap evidence that port 80, 443, 8080, or 8443 is open. The check is in `src/agent/ai/tool_bridge.py`, not only in the prompt.
 
-### 2. Planner Agent
-*   **Role**: Attack Planner & Strategist.
-*   **Responsible File**: [`src/agent/agent_library/planner.py`](../src/agent/agent_library/planner.py)
-*   **Description**: Translates abstract security goals into a concrete, ordered sequence of technical steps.
-*   **Agentic Processing**:
-    *   **Persona**: "Relentless Investigator."
-    *   **Strategy**: Prioritizes passive recon and secret hunting (Wayback Machine) before active scanning.
+### 2. Recon Agent
+*   **Role**: Passive and DNS reconnaissance.
+*   **Tools**: `public_ip`, `dns_lookup`, `whois`, `passive_recon`, `viewdns`, `sublist3r`, `osint_harvester`, `dns_recon`, `ssl_check`, `asset_manager`.
+*   **Behavior**: Reports tool interpretations without raising severity. Owns the local-network clarification.
+
+### 3. Network Agent
+*   **Role**: Port and camera discovery.
+*   **Tools**: `nmap`, `camera_security`.
+*   **Behavior**: Records open ports from nmap so the web specialist can be gated on them.
+
+### 4. Web Agent
+*   **Role**: Web content and vulnerability checks.
+*   **Tools**: `gobuster`, `wappalyzer`, `web_server_scanner`, `sqli_scanner`, `web_vuln_scanner`.
+*   **Behavior**: Refuses those tools until nmap has shown an open HTTP/HTTPS port.
+
+### 5. Assessment Agent
+*   **Role**: Credential testing and reporting.
+*   **Tools**: `credential_tester`, `generate_report`.
+*   **Behavior**: Flags verified credentials as **CRITICAL**. `credential_tester` always requires approval.
+
+### 6. Planner Agent (scripted scans only)
+*   **Role**: Attack planner for CLI `recon` and `execute_scan_plan`.
+*   **Responsible File**: [`src/agent/agent_library/planner.py`](src/agent/agent_library/planner.py)
+*   **Description**: Translates a scripted goal into an ordered `ScanPlan`. Interactive chat does not call this agent.
 *   **Web tool gating**: Plans `web_server_scanner`, `ssl_check`, `wappalyzer`, and vuln scanners only after nmap when HTTP/HTTPS ports may be open. `validate_scan_plan` auto-wires those steps onto `nmap` when both appear in the plan.
 *   **Completeness warnings**: `AgentRuntime.warn_planner_completeness()` logs when comprehensive or website/domain goals omit recommended recon or checklist tools.
-    *   **Constraint**: Generates plans only; never executes tools directly. After `planner_agent` returns, Root's turn runs the plan through `execute_scan_plan` and Root only calls `generate_report` afterward.
-
-### 3. Researcher Agent
-*   **Role**: Field Agent & Tool Executor.
-*   **Responsible File**: [`src/agent/agent_library/researcher.py`](../src/agent/agent_library/researcher.py)
-*   **Description**: Configures and runs security tools, handling parameter nuances and capturing output.
-*   **Agentic Processing**:
-    *   **Persona**: "Detective."
-    *   **Logic**: Parses raw output for critical details (e.g., specific flags).
-    *   **Secret Detection**: Explicitly scans for leaked secrets (API keys, .env) during passive recon.
-
-### 4. Analyst Agent
-*   **Role**: Forensic Analyst.
-*   **Responsible File**: [`src/agent/agent_library/analyst.py`](../src/agent/agent_library/analyst.py)
-*   **Description**: Consumes raw data to produce high-value intelligence reports.
-*   **Agentic Processing**:
-    *   **Persona**: "Forensic Analyst."
-    *   **Logic**: Identifies non-obvious vulnerabilities.
-    *   **Priority**: Flags leaked credentials as **CRITICAL**.
+*   **Constraint**: Generates plans only. `WorkGraphExecutor` runs the plan.
 
 ## Web Application & Shared Runtime
 
@@ -69,7 +69,8 @@ Black Glove now supports both **CLI** (`black-glove chat`) and **Web UI** (`blac
 
 | Component | File | Role |
 |-----------|------|------|
-| **AgentRuntime** | `src/agent/runtime.py` | Assembles ToolRegistry, sub-agents, root executor, work-graph kernel |
+| **AgentRuntime** | `src/agent/runtime.py` | Assembles ToolRegistry, the PydanticAI chat team, and the work-graph kernel |
+| **Chat team** | `src/agent/ai/` | Black Glove coordinator plus recon, network, web, and assessment specialists |
 | **WorkGraphExecutor** | `src/agent/work_graph_executor.py` | DAG scheduler with optional bounded parallelism (`enable_parallel_workers`) |
 | **BoundedWorkerPool** | `src/agent/worker_pool.py` | Phase/target/LLM/approval-gated concurrent workers |
 | **PlanValidator** | `src/agent/plan_validator.py` | DAG validation, dependency resolution, scope checks |
@@ -77,7 +78,7 @@ Black Glove now supports both **CLI** (`black-glove chat`) and **Web UI** (`blac
 | **Web API** | `src/webapp/` | FastAPI REST + WebSocket; never imports adapters directly |
 | **React UI** | `frontend/` | Terminal-themed SPA; tools loaded dynamically from `/api/tools` |
 
-**Approval gating**: `require_approval` (default `true`) toggles human-in-the-loop via `AgentExecutor.approval_callback`. Nested sub-agents read the same turn callback from a context variable (so approving `researcher_agent` still prompts for later tools). CLI `recon` (chat and standalone) runs through `execute_scan_plan` with that callback; it does not auto-approve. Planner output is executed deterministically via `AgentRuntime.execute_scan_plan()` and `WorkGraphExecutor`. Set `enable_parallel_workers: true` in config to fan out independent passive/active steps under bounded concurrency limits.
+**Approval gating**: `require_approval` (default `true`) pauses a specialist's scanner tool until the turn's `approval_callback` approves it. Safe tools (`public_ip`, `dns_lookup`, `whois`, `asset_manager`, `generate_report`) skip that pause. A missing callback denies the tool. CLI `recon` still runs through `execute_scan_plan` with the same callback; it does not auto-approve. Scripted planner output is executed by `WorkGraphExecutor`. Set `enable_parallel_workers: true` to fan out independent steps in that work graph. Interactive chat keeps tool calls sequential.
 
 **Target scope (warn-only)**: `authorized_networks` and `blocked_targets` in `config.yaml` emit `scope_warning` audit events via `AssetValidator`; scans are not hard-blocked.
 

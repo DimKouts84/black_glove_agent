@@ -85,7 +85,8 @@ When Wappalyzer detects HSTS but `web_server_scanner` reports a missing `Strict-
 - The finding is always stored on the session asset `local-agent`, even when the scan step passes another target. The adapter reports the agent machine's address.
 
 ### Web/SSL tool gating (agent behavior)
-- Root and Planner agents should schedule `web_server_scanner`, `ssl_check`, `wappalyzer`, `web_vuln_scanner`, and `sqli_scanner` only when nmap shows HTTP/HTTPS ports (80, 443, 8080, 8443) open.
+- Interactive chat: `gobuster`, `wappalyzer`, `web_server_scanner`, `web_vuln_scanner`, and `sqli_scanner` refuse to run until this session has nmap evidence of an open port 80, 443, 8080, or 8443. The check is in `src/agent/ai/tool_bridge.py`.
+- Scripted plans: the planner still schedules `web_server_scanner`, `ssl_check`, `wappalyzer`, and the vuln scanners only after nmap, and `validate_scan_plan` auto-wires those steps onto `nmap`.
 
 ### Subdomain findings
 - `passive_recon` and `osint_harvester` share a unified `Subdomains discovered (N)` finding fingerprint per asset (normalized hostname set), avoiding duplicate rows for the same hosts.

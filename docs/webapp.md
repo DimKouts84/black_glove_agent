@@ -77,9 +77,9 @@ cd frontend && npm run dev
 During a chat turn, orchestration events stream over the WebSocket in real time:
 
 - **Event types:** `thinking`, `tool_call`, `tool_result`, `answer`, `warning`, plus `status` / `assistant_message` for turn boundaries
-- **Sub-agents:** Events from `planner_agent`, `researcher_agent`, and `analyst_agent` are forwarded alongside `root_agent` activity
-- **Sidebar:** Desktop (`lg+`) shows a persistent LIVE ORCHESTRATION panel with newest events at the top; hidden on mobile/tablet
-- **Persistence:** Every event is stored in SQLite (`agent_events`). On return to a session, the UI hydrates from `GET /api/sessions/{id}/trace` and polls trace every 2s while a run is active
+- **Sub-agents:** Events from `recon_agent`, `network_agent`, `web_agent`, and `assessment_agent` are forwarded alongside `black_glove` activity
+- **Chat transcript:** Each assistant reply shows those events as specialist cards. A card stays open while that specialist is working and collapses to a one-line summary when it finishes. Scanner calls and warnings sit inside the card. A Raw log control opens the flat timeline. The assistant message stores `run_id` so a reopened session rebuilds the same cards
+- **Persistence:** Every event is stored in SQLite (`agent_events`). On return to a session, the UI hydrates from `GET /api/sessions/{id}/trace` and polls trace every 2s while a run is active and the socket is disconnected
 - **Tool results:** The timeline shows the persisted summary text (including errors), not a generic success label. `tool_result` events include structured metadata when available: `tool`, `status` (`success` / `partial` / `error` / `not_applicable`), `warnings`, `coverage`, and `evidence_paths` (rendered in the Activity Timeline with status-aware styling)
 - **Findings:** `GET /api/findings` includes `description` and supports `?run_id=` (one row per canonical finding, latest observation) plus `?exclude_superseded=true` (default) to hide legacy false-positive rows
 - **Reports:** `POST /api/reports` scopes to the current run when `run_id` is supplied by the runtime; returns `report_path` and executive summary. `GET /api/reports/{run_id}` loads the full markdown from disk. `generate_report` trace events include `report_path` in `details_json`. Report markdown **Scanned Assets** rows include IPs, tech stack, and open ports. Informational inventory (e.g. nmap port list) appears under **Scan Coverage**.

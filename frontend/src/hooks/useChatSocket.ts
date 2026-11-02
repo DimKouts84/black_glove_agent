@@ -24,6 +24,22 @@ export interface ActivityEvent {
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  runId?: string;
+}
+
+export function messageFromApi(message: {
+  role: string;
+  content: string;
+  metadata?: Record<string, unknown> | null;
+}): ChatMessage {
+  const runId = message.metadata && typeof message.metadata.run_id === 'string'
+    ? message.metadata.run_id
+    : undefined;
+  return {
+    role: message.role as ChatMessage['role'],
+    content: message.content,
+    runId,
+  };
 }
 
 const TOOL_RESULT_FALLBACK = 'Tool execution completed';
@@ -129,6 +145,7 @@ export function useChatSocket(sessionId: string | null) {
   const [connected, setConnected] = useState(false);
   const [acting, setActing] = useState(false);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
+  const [runs, setRuns] = useState<RunTrace[]>([]);
   const [pendingApproval, setPendingApproval] = useState<ActivityEvent | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
@@ -137,6 +154,7 @@ export function useChatSocket(sessionId: string | null) {
     try {
       const trace = await api.getTrace(sessionId);
       const runs = trace.runs || [];
+      setRuns(runs);
       let fromTrace = traceToActivities(runs);
       const runningRun = runs.find((r) => r.status === 'running');
       const hasRunning = !!runningRun;
@@ -156,12 +174,7 @@ export function useChatSocket(sessionId: string | null) {
         activeRunIdRef.current = null;
         setActivities(dedupeActivities(fromTrace));
         const history = await api.getMessages(sessionId);
-        setMessages(
-          history.messages.map((m) => ({
-            role: m.role as 'user' | 'assistant' | 'system',
-            content: m.content,
-          })),
-        );
+        setMessages(history.messages.map(messageFromApi));
       }
     } catch (error) {
       if (shouldClearActingOnTraceError(error)) {
@@ -184,16 +197,20 @@ export function useChatSocket(sessionId: string | null) {
     const host = window.location.host;
     const ws = new WebSocket(`${proto}://${host}/ws/chat/${sessionId}`);
     wsRef.current = ws;
+    let cancelled = false;
 
     ws.onopen = () => {
+      if (cancelled) return;
       connectedRef.current = true;
       setConnected(true);
     };
     ws.onclose = () => {
+      if (cancelled) return;
       connectedRef.current = false;
       setConnected(false);
     };
     ws.onmessage = (ev) => {
+      if (cancelled) return;
       const data = JSON.parse(ev.data) as ActivityEvent & { type: string; content?: string };
       if (data.type === 'status' && data.content === 'acting') {
         activeRunIdRef.current = null;
@@ -204,7 +221,11 @@ export function useChatSocket(sessionId: string | null) {
       if (data.type === 'assistant_message') {
         setActing(false);
         activeRunIdRef.current = null;
-        setMessages((prev) => [...prev, { role: 'assistant', content: data.content || '' }]);
+        setMessages((prev) => [...prev, {
+          role: 'assistant',
+          content: data.content || '',
+          runId: data.run_id,
+        }]);
         void loadTraceRef.current?.();
         return;
       }
@@ -226,7 +247,10 @@ export function useChatSocket(sessionId: string | null) {
         setActivities((prev) => mergeActivities(prev, [data]));
       }
     };
-    return () => ws.close();
+    return () => {
+      cancelled = true;
+      ws.close();
+    };
   }, [sessionId]);
 
   useEffect(() => {
@@ -266,6 +290,7 @@ export function useChatSocket(sessionId: string | null) {
     connected,
     acting,
     activities,
+    runs,
     messages,
     setMessages,
     sendMessage,

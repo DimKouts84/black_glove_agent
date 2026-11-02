@@ -1184,7 +1184,7 @@ def chat(
             elif event_type == "tool_result":
                  console.print(f"✅ [dim]{agent_name} tool result received[/dim]")
             elif event_type == "answer":
-                 if agent_name != "root_agent":
+                 if agent_name not in {"root_agent", "black_glove"}:
                      console.print(f"📤 [bold green]{agent_name} finished task[/bold green]")
             elif event_type == "warning":
                  console.print(f"[yellow]⚠️ {content}[/yellow]")
